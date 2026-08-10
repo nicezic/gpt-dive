@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 import inspect
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -51,18 +51,17 @@ class MontyCodeRuntime:
         capture = CollectString()
         mount = MountDir(host_path="/", virtual_path="/", mode="read-write")
 
-        async with AsyncMonty() as monty:
-            async with monty.checkout(type_check=False) as session:
-                state = await session.feed_start(
-                    code,
-                    inputs={"CWD": run_cwd, "CAPABILITIES": registry.describe()},
-                    external_lookup=registry.as_external_lookup(),
-                    print_callback=capture,
-                    mount=mount,
-                    skip_type_check=True,
-                )
-                while not isinstance(state, MontyComplete):
-                    state = await state.resume_auto()
+        async with AsyncMonty() as monty, monty.checkout(type_check=False) as session:
+            state = await session.feed_start(
+                code,
+                inputs={"CWD": run_cwd, "CAPABILITIES": registry.describe()},
+                external_lookup=registry.as_external_lookup(),
+                print_callback=capture,
+                mount=mount,
+                skip_type_check=True,
+            )
+            while not isinstance(state, MontyComplete):
+                state = await state.resume_auto()
 
         result: dict[str, Any] = {"result": state.output}
         if capture.output:

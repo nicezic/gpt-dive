@@ -19,7 +19,6 @@ from .job_manager import JobManager
 from .subagent_runtime import invoke_subagent
 from .tasks_extension import TasksExtension
 
-
 jobs = JobManager()
 tasks_extension = TasksExtension(jobs)
 code_runtime = MontyCodeRuntime()
@@ -95,8 +94,7 @@ def _run_command(
             "exit_code": 124,
             "stdout": stdout,
             "stderr": (
-                f"{stderr}\n"
-                f"[wsl2_sync] timed out after {timeout} seconds"
+                f"{stderr}\n[wsl2_sync] timed out after {timeout} seconds"
             ).lstrip(),
         }
 
@@ -135,7 +133,9 @@ def _parse_required_manifest(manifest_text: str) -> list[str]:
 
     paths = re.findall(r"^\s*\d+\.\s+`([^`]+)`\s*$", match.group("body"), re.MULTILINE)
     if not paths:
-        raise ValueError("bootstrap manifest Required section contains no document paths")
+        raise ValueError(
+            "bootstrap manifest Required section contains no document paths"
+        )
     return paths
 
 
@@ -159,15 +159,19 @@ def _read_bootstrap_packet(log_tail_lines: int = 30) -> dict[str, Any]:
         try:
             candidate.relative_to(wiki)
         except ValueError as exc:
-            raise ValueError(f"bootstrap path escapes trusted wiki: {relative}") from exc
+            raise ValueError(
+                f"bootstrap path escapes trusted wiki: {relative}"
+            ) from exc
 
         if not candidate.is_file():
             warnings.append(f"missing required document: {relative}")
             continue
-        documents.append({
-            "path": relative,
-            "content": candidate.read_text(errors="replace"),
-        })
+        documents.append(
+            {
+                "path": relative,
+                "content": candidate.read_text(errors="replace"),
+            }
+        )
 
     if not documents:
         raise RuntimeError("bootstrap manifest resolved no readable required documents")
@@ -334,7 +338,7 @@ def _cleanup_code_mode_payload(job_id: str) -> None:
         payload = Path(raw).resolve()
         payload.relative_to(_code_mode_payload_dir().resolve())
         payload.unlink(missing_ok=True)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     finally:
         ref.unlink(missing_ok=True)
@@ -357,7 +361,9 @@ def _start_background_code_mode(code: str, cwd: str | None) -> dict[str, Any]:
             payload_path = Path(fh.name)
 
         payload_arg = shlex.quote(str(payload_path))
-        command = f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {payload_arg}"
+        command = (
+            f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {payload_arg}"
+        )
         started = jobs.start(command, cwd, 600.0)
         job_id = str(started["job_id"])
         try:
@@ -398,7 +404,9 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
     _cleanup_code_mode_payload(job_id)
     if raw.get("status") == "cancelled":
         return _background_error(
-            raw, code="background_cancelled", message="Background Code Mode job was cancelled."
+            raw,
+            code="background_cancelled",
+            message="Background Code Mode job was cancelled.",
         )
 
     stdout = str(raw.get("stdout") or "").strip()
@@ -437,10 +445,14 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
     error = envelope.get("error")
     if isinstance(error, dict):
         error_code = str(error.get("code") or "background_execution_error")
-        error_message = str(error.get("message") or "Background Code Mode execution failed.")
+        error_message = str(
+            error.get("message") or "Background Code Mode execution failed."
+        )
     else:
         error_code = "worker_protocol_error"
-        error_message = "Background Code Mode worker exited without a valid error envelope."
+        error_message = (
+            "Background Code Mode worker exited without a valid error envelope."
+        )
     if envelope.get("ok") is True and exit_code != 0:
         error_code = "worker_protocol_error"
         error_message = "Worker reported success but exited with a non-zero status."
@@ -485,7 +497,9 @@ async def code_mode(
     ] = False,
     action: Annotated[
         str | None,
-        Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
+        Field(
+            description="Lifecycle action for a background Code Mode job: status, result, or cancel."
+        ),
     ] = None,
     job_id: Annotated[
         str | None,
@@ -498,7 +512,9 @@ async def code_mode(
 
     if normalized_action is None:
         if not has_code:
-            raise ValueError("code_mode requires code unless action + job_id are provided")
+            raise ValueError(
+                "code_mode requires code unless action + job_id are provided"
+            )
         if job_id is not None:
             raise ValueError("job_id is only valid with a lifecycle action")
         if background:
@@ -557,7 +573,9 @@ def wsl2_async(
     ] = None,
     job_id: Annotated[
         str | None,
-        Field(description="Durable job ID for actions that operate on an existing job."),
+        Field(
+            description="Durable job ID for actions that operate on an existing job."
+        ),
     ] = None,
     cwd: Annotated[
         str | None,
@@ -565,7 +583,10 @@ def wsl2_async(
     ] = None,
     timeout: Annotated[
         float,
-        Field(gt=0, description="Maximum runtime in seconds for job-launch actions. Defaults to 600."),
+        Field(
+            gt=0,
+            description="Maximum runtime in seconds for job-launch actions. Defaults to 600.",
+        ),
     ] = 600.0,
 ) -> dict[str, Any]:
     """Dispatch a durable WSL2 job lifecycle action."""

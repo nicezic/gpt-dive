@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 RETENTION_DAYS = 5
 POLL_INTERVAL_MS = 1000
@@ -27,7 +26,7 @@ def _iso(value: datetime | None = None) -> str:
 
 
 def _parse_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 class JobNotFoundError(KeyError):
@@ -37,7 +36,9 @@ class JobNotFoundError(KeyError):
 class JobManager:
     """Durable local process jobs for long-running WSL2 shell commands."""
 
-    def __init__(self, root: Path | None = None, *, retention_days: int = RETENTION_DAYS) -> None:
+    def __init__(
+        self, root: Path | None = None, *, retention_days: int = RETENTION_DAYS
+    ) -> None:
         self.root = root or (Path.home() / ".local" / "state" / "gpt-dive" / "jobs")
         self.retention_days = retention_days
         self.root.mkdir(parents=True, exist_ok=True)
@@ -45,7 +46,9 @@ class JobManager:
         self._systemd_available = self._detect_user_systemd()
         self.recover()
 
-    def start(self, command: str, cwd: str | None = None, timeout: float = 600.0) -> dict[str, Any]:
+    def start(
+        self, command: str, cwd: str | None = None, timeout: float = 600.0
+    ) -> dict[str, Any]:
         if not command.strip():
             raise ValueError("command must not be empty")
         if timeout <= 0:
@@ -93,16 +96,23 @@ class JobManager:
                     'exit "$code"'
                 )
                 cmd = [
-                    "systemd-run", "--user", "--quiet", "--collect",
+                    "systemd-run",
+                    "--user",
+                    "--quiet",
+                    "--collect",
                     f"--unit={unit.removesuffix('.service')}",
                 ]
                 if run_cwd:
                     cmd.append(f"--working-directory={run_cwd}")
                 cmd.extend(["/bin/bash", "-lc", systemd_runner])
-                launched = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                launched = subprocess.run(
+                    cmd, capture_output=True, text=True, check=False
+                )
                 if launched.returncode != 0:
                     shutil.rmtree(job_dir, ignore_errors=True)
-                    raise RuntimeError(f"systemd-run failed: {launched.stderr.strip() or launched.stdout.strip()}")
+                    raise RuntimeError(
+                        f"systemd-run failed: {launched.stderr.strip() or launched.stdout.strip()}"
+                    )
                 pid = self._systemd_main_pid(unit)
                 proc = self._proc_info(pid) if pid else None
                 pid_start_ticks = proc.get("start_ticks") if proc else None
@@ -161,7 +171,9 @@ class JobManager:
             payload = self._public_status(meta, job_dir=job_dir)
             if meta["status"] not in TERMINAL_STATUSES:
                 payload["ready"] = False
-                payload["message"] = "Job is still running; use wsl2_async action='status' later."
+                payload["message"] = (
+                    "Job is still running; use wsl2_async action='status' later."
+                )
                 return payload
             payload["ready"] = True
             payload["stdout"] = (job_dir / "stdout.log").read_text(errors="replace")
@@ -191,7 +203,7 @@ class JobManager:
             else:
                 try:
                     pid = int(meta["pid"])
-                except (KeyError, TypeError, ValueError):
+                except KeyError, TypeError, ValueError:
                     pid = 0
                 if pid and self._pid_matches(meta):
                     try:
@@ -199,7 +211,9 @@ class JobManager:
                     except ProcessLookupError:
                         pass
                     except PermissionError as exc:
-                        meta["status_message"] = f"Cancellation could not signal process group: {exc}"
+                        meta["status_message"] = (
+                            f"Cancellation could not signal process group: {exc}"
+                        )
                         meta["updated_at"] = _iso()
                         self._write_meta(job_dir, meta)
                 else:
@@ -212,7 +226,7 @@ class JobManager:
                 try:
                     meta = self._read_meta(job_dir)
                     self._refresh(job_dir, meta)
-                except (OSError, ValueError, json.JSONDecodeError):
+                except OSError, ValueError, json.JSONDecodeError:
                     continue
             self.cleanup()
 
@@ -222,13 +236,13 @@ class JobManager:
         for job_dir in self._job_dirs():
             try:
                 meta = self._read_meta(job_dir)
-            except (OSError, ValueError, json.JSONDecodeError):
+            except OSError, ValueError, json.JSONDecodeError:
                 continue
             if meta.get("status") not in TERMINAL_STATUSES:
                 continue
             try:
                 updated = _parse_iso(str(meta["updated_at"]))
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 continue
             if updated < cutoff:
                 shutil.rmtree(job_dir, ignore_errors=True)
@@ -267,10 +281,14 @@ class JobManager:
         self._reap_pid(meta)
         if meta.get("cancel_requested"):
             meta["status"] = "cancelled"
-            meta["status_message"] = "Command was cancelled before producing an exit marker."
+            meta["status_message"] = (
+                "Command was cancelled before producing an exit marker."
+            )
         else:
             meta["status"] = "failed"
-            meta["status_message"] = "Runner disappeared without an exit marker; recovered as an orphaned job."
+            meta["status_message"] = (
+                "Runner disappeared without an exit marker; recovered as an orphaned job."
+            )
         meta["updated_at"] = _iso()
         self._write_meta(job_dir, meta)
         return meta
@@ -281,11 +299,11 @@ class JobManager:
             return
         try:
             pid = int(meta["pid"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             return
         try:
             os.waitpid(pid, os.WNOHANG)
-        except (ChildProcessError, ProcessLookupError):
+        except ChildProcessError, ProcessLookupError:
             # After an MCP restart the runner is no longer our child; init/systemd
             # owns reaping it. The durable marker/PID checks still recover state.
             pass
@@ -301,7 +319,7 @@ class JobManager:
                 timeout=2,
                 check=False,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.TimeoutExpired:
             return False
         return completed.stdout.strip() in {"running", "degraded", "starting"}
 
@@ -334,7 +352,7 @@ class JobManager:
     def _pid_matches(self, meta: dict[str, Any]) -> bool:
         try:
             pid = int(meta["pid"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             return False
         proc = self._proc_info(pid)
         if proc is None or proc["state"] == "Z":
@@ -346,7 +364,7 @@ class JobManager:
     def _proc_info(pid: int) -> dict[str, Any] | None:
         try:
             text = (Path("/proc") / str(pid) / "stat").read_text()
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
+        except FileNotFoundError, ProcessLookupError, PermissionError:
             return None
         end = text.rfind(")")
         if end < 0:
@@ -379,7 +397,9 @@ class JobManager:
         temp.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
         os.replace(temp, job_dir / "meta.json")
 
-    def _public_status(self, meta: dict[str, Any], *, job_dir: Path | None = None) -> dict[str, Any]:
+    def _public_status(
+        self, meta: dict[str, Any], *, job_dir: Path | None = None
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "job_id": meta["job_id"],
             "status": meta["status"],

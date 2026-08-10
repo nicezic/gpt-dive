@@ -47,27 +47,31 @@ def main() -> None:
         try:
             _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "payload": result})
         except (TypeError, ValueError) as exc:
-            _emit({
-                "v": CODE_MODE_WORKER_PROTOCOL,
-                "ok": False,
-                "error": {
-                    "code": "non_json_result",
-                    "message": f"Code Mode result is not strict JSON: {exc}",
-                },
-            })
+            _emit(
+                {
+                    "v": CODE_MODE_WORKER_PROTOCOL,
+                    "ok": False,
+                    "error": {
+                        "code": "non_json_result",
+                        "message": f"Code Mode result is not strict JSON: {exc}",
+                    },
+                }
+            )
             raise SystemExit(1) from exc
     except SystemExit:
         raise
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
-        _emit({
-            "v": CODE_MODE_WORKER_PROTOCOL,
-            "ok": False,
-            "error": {
-                "code": "background_execution_error",
-                "message": str(exc) or type(exc).__name__,
-            },
-        })
+        _emit(
+            {
+                "v": CODE_MODE_WORKER_PROTOCOL,
+                "ok": False,
+                "error": {
+                    "code": "background_execution_error",
+                    "message": str(exc) or type(exc).__name__,
+                },
+            }
+        )
         raise SystemExit(1) from exc
 
 

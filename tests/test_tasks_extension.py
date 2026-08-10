@@ -7,7 +7,11 @@ from gpt_dive.tasks_extension import EXTENSION_ID, TasksExtension
 def test_extension_identifier_and_methods(tmp_path):
     extension = TasksExtension(JobManager(tmp_path))
     assert extension.identifier == EXTENSION_ID
-    assert {binding.method for binding in extension.methods()} == {"tasks/get", "tasks/update", "tasks/cancel"}
+    assert {binding.method for binding in extension.methods()} == {
+        "tasks/get",
+        "tasks/update",
+        "tasks/cancel",
+    }
 
 
 def test_task_shape_maps_running_job(tmp_path):
@@ -55,5 +59,7 @@ def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
         name="wsl2_async",
         arguments={"action": "status", "job_id": task["taskId"]},
     )
-    assert asyncio.run(extension.intercept_tool_call(status, ctx, call_next)) == {"fallback": True}
+    assert asyncio.run(extension.intercept_tool_call(status, ctx, call_next)) == {
+        "fallback": True
+    }
     assert fallback_calls == [True]

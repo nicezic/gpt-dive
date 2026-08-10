@@ -39,25 +39,37 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
     monkeypatch.setattr(
         gpt_dive.jobs,
         "start",
-        lambda command, cwd, timeout: calls.append(("start", command, cwd, timeout)) or {"job_id": "j1"},
+        lambda command, cwd, timeout: (
+            calls.append(("start", command, cwd, timeout)) or {"job_id": "j1"}
+        ),
     )
     monkeypatch.setattr(
         gpt_dive.jobs,
         "status",
-        lambda job_id: calls.append(("status", job_id)) or {"job_id": job_id, "status": "running"},
+        lambda job_id: (
+            calls.append(("status", job_id)) or {"job_id": job_id, "status": "running"}
+        ),
     )
     monkeypatch.setattr(
         gpt_dive.jobs,
         "result",
-        lambda job_id: calls.append(("result", job_id)) or {"job_id": job_id, "ready": True},
+        lambda job_id: (
+            calls.append(("result", job_id)) or {"job_id": job_id, "ready": True}
+        ),
     )
     monkeypatch.setattr(
         gpt_dive.jobs,
         "cancel",
-        lambda job_id: calls.append(("cancel", job_id)) or {"job_id": job_id, "status": "cancelled"},
+        lambda job_id: (
+            calls.append(("cancel", job_id))
+            or {"job_id": job_id, "status": "cancelled"}
+        ),
     )
 
-    assert gpt_dive.wsl2_async("start", command="cmd", cwd="/tmp", timeout=11)["job_id"] == "j1"
+    assert (
+        gpt_dive.wsl2_async("start", command="cmd", cwd="/tmp", timeout=11)["job_id"]
+        == "j1"
+    )
     assert gpt_dive.wsl2_async("status", job_id="j1")["status"] == "running"
     assert gpt_dive.wsl2_async("result", job_id="j1")["ready"] is True
     assert gpt_dive.wsl2_async("cancel", job_id="j1")["status"] == "cancelled"

@@ -62,7 +62,9 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     agent = Agent(model)
     result = await agent.run(
         task,
-        usage_limits=UsageLimits(request_limit=2, output_tokens_limit=output_tokens_limit),
+        usage_limits=UsageLimits(
+            request_limit=2, output_tokens_limit=output_tokens_limit
+        ),
     )
     spec = MODEL_SPECS[alias]
     return {

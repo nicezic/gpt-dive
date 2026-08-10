@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from mcp.server.context import HandlerResult, ServerRequestContext
 from mcp.server.extension import Extension, MethodBinding
-from mcp_types import INTERNAL_ERROR, INVALID_PARAMS, CallToolRequestParams, RequestParams
+from mcp_types import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    CallToolRequestParams,
+    RequestParams,
+)
 from pydantic import Field
 
-from .job_manager import JobManager, JobNotFoundError, TERMINAL_STATUSES
-
+from .job_manager import TERMINAL_STATUSES, JobManager, JobNotFoundError
 
 EXTENSION_ID = "io.modelcontextprotocol/tasks"
 
@@ -21,7 +25,9 @@ class GetTaskParams(RequestParams):
 
 class UpdateTaskParams(RequestParams):
     task_id: str = Field(alias="taskId")
-    input_responses: dict[str, Any] = Field(default_factory=dict, alias="inputResponses")
+    input_responses: dict[str, Any] = Field(
+        default_factory=dict, alias="inputResponses"
+    )
 
 
 class CancelTaskParams(RequestParams):
@@ -39,9 +45,21 @@ class TasksExtension(Extension):
     def methods(self):
         versions = frozenset({"2026-07-28"})
         return (
-            MethodBinding("tasks/get", GetTaskParams, self._get, protocol_versions=versions),
-            MethodBinding("tasks/update", UpdateTaskParams, self._update, protocol_versions=versions),
-            MethodBinding("tasks/cancel", CancelTaskParams, self._cancel, protocol_versions=versions),
+            MethodBinding(
+                "tasks/get", GetTaskParams, self._get, protocol_versions=versions
+            ),
+            MethodBinding(
+                "tasks/update",
+                UpdateTaskParams,
+                self._update,
+                protocol_versions=versions,
+            ),
+            MethodBinding(
+                "tasks/cancel",
+                CancelTaskParams,
+                self._cancel,
+                protocol_versions=versions,
+            ),
         )
 
     async def intercept_tool_call(
@@ -52,7 +70,8 @@ class TasksExtension(Extension):
     ) -> HandlerResult:
         if (
             params.name != "wsl2_async"
-            or str((params.arguments or {}).get("action", "")).strip().lower() != "start"
+            or str((params.arguments or {}).get("action", "")).strip().lower()
+            != "start"
             or ctx.protocol_version != "2026-07-28"
             or not self._client_supports_tasks(ctx)
         ):
@@ -66,7 +85,9 @@ class TasksExtension(Extension):
         )
         return self._create_task(job)
 
-    async def _get(self, ctx: ServerRequestContext[Any, Any], params: GetTaskParams) -> HandlerResult:
+    async def _get(
+        self, ctx: ServerRequestContext[Any, Any], params: GetTaskParams
+    ) -> HandlerResult:
         self._require_tasks(ctx)
         try:
             job = self.jobs.status(params.task_id)
@@ -74,7 +95,9 @@ class TasksExtension(Extension):
             self._unknown(params.task_id, exc)
         return self._detailed_task(job)
 
-    async def _update(self, ctx: ServerRequestContext[Any, Any], params: UpdateTaskParams) -> HandlerResult:
+    async def _update(
+        self, ctx: ServerRequestContext[Any, Any], params: UpdateTaskParams
+    ) -> HandlerResult:
         self._require_tasks(ctx)
         try:
             self.jobs.status(params.task_id)
@@ -84,7 +107,9 @@ class TasksExtension(Extension):
         # inputResponse keys are ignored; an empty complete ack is sufficient here.
         return {"resultType": "complete"}
 
-    async def _cancel(self, ctx: ServerRequestContext[Any, Any], params: CancelTaskParams) -> HandlerResult:
+    async def _cancel(
+        self, ctx: ServerRequestContext[Any, Any], params: CancelTaskParams
+    ) -> HandlerResult:
         self._require_tasks(ctx)
         try:
             self.jobs.cancel(params.task_id)
@@ -132,7 +157,12 @@ class TasksExtension(Extension):
             }
             task["result"] = {
                 "resultType": "complete",
-                "content": [{"type": "text", "text": json.dumps(shell_result, ensure_ascii=False)}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(shell_result, ensure_ascii=False),
+                    }
+                ],
                 "structuredContent": shell_result,
                 "isError": bool(result.get("exit_code")),
             }
@@ -165,8 +195,8 @@ class TasksExtension(Extension):
     def _ttl_ms(self, job: dict[str, Any]) -> int | None:
         if job["status"] not in TERMINAL_STATUSES:
             return None
-        created = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
-        updated = datetime.fromisoformat(job["updated_at"].replace("Z", "+00:00"))
+        created = datetime.fromisoformat(job["created_at"])
+        updated = datetime.fromisoformat(job["updated_at"])
         age_ms = max(0, int((updated - created).total_seconds() * 1000))
         return age_ms + self.jobs.retention_days * 24 * 60 * 60 * 1000
 
@@ -174,6 +204,6 @@ class TasksExtension(Extension):
         job_dir = self.jobs.root / job_id
         try:
             meta = json.loads((job_dir / "meta.json").read_text())
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             return ""
         return str(meta.get("command", ""))

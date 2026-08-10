@@ -7,7 +7,6 @@ import signal
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
@@ -40,11 +39,15 @@ def model_catalog() -> dict[str, dict[str, str]]:
     return {name: dict(spec) for name, spec in MODEL_SPECS.items()}
 
 
-def _validate_call(model: str, task: str, timeout: float, output_tokens_limit: int) -> str:
+def _validate_call(
+    model: str, task: str, timeout: float, output_tokens_limit: int
+) -> str:
     alias = model.strip().lower()
     if alias not in MODEL_SPECS:
         choices = ", ".join(sorted(MODEL_SPECS))
-        raise ValueError(f"unknown subagent model alias {model!r}; choose one of: {choices}")
+        raise ValueError(
+            f"unknown subagent model alias {model!r}; choose one of: {choices}"
+        )
     if not task.strip():
         raise ValueError("task must not be empty")
     if timeout <= 0:
@@ -101,7 +104,9 @@ async def invoke_subagent(
         env=child_env,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(payload), timeout=timeout
+        )
     except TimeoutError:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
