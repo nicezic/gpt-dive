@@ -17,7 +17,7 @@ bootstrap -> code_mode -> registered capabilities -> WSL2
 ## MCP Surface v1
 
 - `bootstrap`: first call in every fresh ChatGPT Web session; loads trusted local Wiki context.
-- `code_mode`: **primary execution root**. Pydantic Monty-backed programmable mode for parallel work, registered local capabilities, filtering, transformation, and compact aggregation. Inspect `CAPABILITIES` at runtime to discover the current registry.
+- `code_mode`: **primary execution root**. Pydantic Monty-backed programmable mode for parallel work, registered local capabilities, filtering, transformation, and compact aggregation. Long programs can be detached with `background=True` and later managed with `action="status"`, `"result"`, or `"cancel"`. Inspect `CAPABILITIES` at runtime to discover the current registry.
 - `wsl2_sync`: lower-level synchronous shell path for short commands that need an immediate result.
 - `wsl2_async`: lower-level durable background-job lifecycle path. Use `action="capabilities"` to discover current actions.
 
@@ -43,14 +43,36 @@ Existing command guards remain active through `guard-bin`. `code_mode` mounts th
 When the client negotiates `io.modelcontextprotocol/tasks` on protocol `2026-07-28`, `wsl2_async(action="start")` can use the standard MCP Tasks lifecycle.
 
 
-## Service reload caution
+## ChatGPT session / service reload caution
 
-Do not restart the active GPT Dive MCP/tunnel service from inside the same live MCP call that depends on it. Restarting the transport before the current response returns can leave the call pending indefinitely. Return control first, then reload the service out-of-band or through a delayed mechanism.
+ChatGPT Web caches the MCP tool schema for the current chat session. If GPT Dive changes a tool signature or other MCP schema, the existing session may keep the old schema; perform live schema acceptance in a fresh ChatGPT session.
+
+Do not restart the active GPT Dive MCP/tunnel service while the current ChatGPT session is using it for an in-flight tool call. The call can remain pending until the user manually interrupts it. During implementation, validate source/schema changes through a separate local process first, return control to ChatGPT, and only reload the service out-of-band when live acceptance is actually needed.
 
 ## Development
 
 ```bash
 uv sync --python 3.14
 uv run --python 3.14 python -m pytest -q
-uv run --python 3.14 python gpt_dive.py
+uv run --python 3.14 python -m gpt_dive
 ```
+
+## Source layout
+
+GPT Dive uses a standard Python `src` package layout:
+
+```text
+src/gpt_dive/
+├── __init__.py
+├── __main__.py
+├── app.py
+├── code_runtime.py
+├── code_mode_worker.py
+├── job_manager.py
+├── subagent_runtime.py
+├── subagent_worker.py
+├── tasks_extension.py
+└── guard-bin/
+```
+
+Workers are launched as package modules (`python -m gpt_dive.code_mode_worker` and `python -m gpt_dive.subagent_worker`) rather than by repository-relative script paths. This keeps imports stable and makes the installed package the same code exercised by tests and runtime.

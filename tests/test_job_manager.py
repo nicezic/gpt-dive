@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 
-from job_manager import JobManager
+from gpt_dive.job_manager import JobManager
 
 
 def wait_done(manager: JobManager, job_id: str, timeout: float = 3.0):

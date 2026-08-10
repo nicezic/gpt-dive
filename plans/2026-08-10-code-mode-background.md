@@ -47,10 +47,10 @@ code_mode(action: Literal["status", "result", "cancel"], job_id: str)
 - SOL polls via `action="status/result"`
 
 ## Files Affected
-- `gpt_dive.py` — MCP tool signature, validation, lifecycle routing
-- `code_runtime.py` — foreground Monty runtime; shared result contract
-- `code_mode_worker.py` — **new small worker entry point** for detached Monty execution
-- `job_manager.py` — lifecycle backend reuse; **prefer unchanged**
+- `src/gpt_dive/app.py` — MCP tool signature, validation, lifecycle routing
+- `src/gpt_dive/code_runtime.py` — foreground Monty runtime; shared result contract
+- `src/gpt_dive/code_mode_worker.py` — **new small worker entry point** for detached Monty execution
+- `src/gpt_dive/job_manager.py` — lifecycle backend reuse; **prefer unchanged**
 - tests — background/lifecycle/regression coverage
 
 ## Implementation Steps
@@ -142,7 +142,7 @@ Approved by Design Council 2026-08-10 (SOL + Opus-5 + User).
 - API improved through review: `background=True` > `sync/start`
 
 ## Open Items for Implementation
-- [ ] `MontyComplete.output` serialization format across the worker process boundary
+- [x] `MontyComplete.output` serialization format across the worker process boundary
 - [x] JobManager failure contract verified: normal exit marker → terminal `completed` + `exit_code`; missing marker → `failed`
 - [x] Job state storage verified: `~/.local/state/gpt-dive/jobs/{job_id}/`
 
@@ -163,3 +163,51 @@ Opus plan skeleton은 유지한다. 단, implementation boundary 하나를 live 
 - 기존 JobManager internals를 가능한 한 변경하지 않는 방향 ✅
 
 따라서 architecture/plan discussion은 종료하고 implementation으로 handoff한다.
+
+
+## Implementation Result — 2026-08-10
+
+**Status:** FULL PASS ✅ — local implementation, local acceptance, and fresh ChatGPT Web MCP E2E acceptance completed.
+
+Implemented:
+
+- `code_mode(code=..., background=True)` launches a fresh `code_mode_worker.py` through the existing `JobManager`.
+- Serializable input crosses the process boundary through a temporary JSON payload file; the worker rebuilds the fresh Monty runtime + callable registry itself.
+- Background lifecycle stays on the same top-level `code_mode` tool through `action="status" | "result" | "cancel"` + `job_id`.
+- Worker output uses one versioned strict-JSON envelope on process stdout. Monty `print()` output remains inside the existing Code Mode payload, not mixed with the worker protocol.
+- Success requires both `exit_code == 0` and a valid `v=1, ok=true` worker envelope. Exceptions and non-JSON Monty results return structured errors.
+- Payload files are removed by the worker on normal startup and by the parent on cancel/result/terminal status; the small mapping sidecar lives inside the JobManager job directory so normal retention cleanup also bounds its lifetime.
+- Existing `JobManager` internals were not changed.
+- README now records ChatGPT Web schema-cache behavior and the rule not to restart the active MCP service during an in-flight call; such a call may remain pending until the user manually interrupts it.
+
+Validation:
+
+```text
+uv run --python 3.14 python -m pytest -q
+33 passed in 5.97s
+
+git diff --check
+PASS
+
+uv lock --check
+PASS
+```
+
+A separate local process also exercised the actual `systemd --user` backend without restarting the live MCP service:
+
+```text
+background start -> running -> completed
+backend: systemd
+result: 3
+stdout: SYSTEMD_BG
+```
+
+Fresh-process MCP schema inspection:
+
+- top-level tools remain exactly 4: `bootstrap`, `code_mode`, `wsl2_sync`, `wsl2_async`;
+- `code_mode` adds optional `background`, `action`, and `job_id`;
+- existing foreground `code_mode(code=..., cwd=...)` calls remain valid.
+
+### Fresh-session Web E2E Acceptance — PASS ✅
+
+A fresh ChatGPT Web session exposed `background`, `action`, and `job_id` on the live `code_mode` schema. A real `background=True` call returned a running systemd-backed `job_id` immediately; subsequent `status` reached `completed`, and `result` returned `3`. This closes the schema-cache acceptance gate.

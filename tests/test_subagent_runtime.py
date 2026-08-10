@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from subagent_runtime import MODEL_SPECS, invoke_subagent, model_catalog
+from gpt_dive.subagent_runtime import MODEL_SPECS, invoke_subagent, model_catalog
 
 
 def test_model_catalog_is_sanitized_and_complete() -> None:

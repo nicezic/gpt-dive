@@ -130,6 +130,58 @@ SOL이 Opus에게 전달할 Council message는 sender를 즉시 식별할 수 �
 # Sol -> Opus
 ```
 
-#### Next Session Start
+#### Historical Handoff — Completed
 
-새 SOL session은 `bootstrap` 후 `docs/architecture-context.md`와 `plans/2026-08-10-code-mode-background.md`를 읽고 implementation부터 시작한다.
+This handoff was completed in the following session; background implementation and fresh-session Web acceptance are now both PASS.
+
+
+### 2026-08-10 — Background Code Mode Local Implementation
+
+**Participants**: SOL (GPT-5.6), User
+**Topic**: approved `code_mode` background plan implementation
+**Status**: ✅ Local PASS; later fresh-session MCP acceptance completed
+
+#### Result
+
+- Existing `JobManager` reused unchanged as the durable process lifecycle backend.
+- Added a small child worker that rebuilds fresh Monty + registry and exchanges a strict JSON result envelope.
+- Local full suite: `33 passed`.
+- Separate-process real `systemd --user` background lifecycle: PASS.
+- MCP surface remains four top-level tools.
+
+#### Operational Lesson Added During Implementation
+
+- ChatGPT Web may keep the old MCP schema for the current chat after a server schema change.
+- Restarting the active MCP service while an MCP call is in flight can leave that call pending until the user manually interrupts it.
+- Therefore schema-changing work is validated first in a separate local process; service reload + live MCP acceptance happens out-of-band / in a fresh ChatGPT session.
+
+### 2026-08-10 — Background Code Mode Web E2E Acceptance
+
+**Participants**: SOL (GPT-5.6), User
+**Status**: ✅ FULL PASS
+
+- Fresh ChatGPT Web discovery exposed `background`, `action`, and `job_id` on `code_mode`.
+- `background=True` returned a running systemd-backed `job_id` without waiting for the detached program to finish.
+- `status` reached `completed` with `exit_code=0`.
+- `result` returned `3`.
+- Background Code Mode is accepted for live Web operation.
+
+### 2026-08-10 — Standard `src/gpt_dive/` Package Layout
+
+**Decision**: move runtime sources into a real Python package under `src/gpt_dive/`.
+
+- package entry: `python -m gpt_dive` / `gpt-dive` script.
+- main MCP implementation: `src/gpt_dive/app.py` (`server.py` avoided).
+- workers launch with `python -m gpt_dive.<worker>` instead of repository-relative file paths.
+- `guard-bin` moved inside the package so execution policy travels with the runtime source.
+- Hatchling build metadata added; built wheel contains the runtime and guard assets.
+- Full suite after refactor: `33 passed`.
+- real systemd background package smoke: `result=3`.
+
+#### Live package reload acceptance
+
+- tunnel command updated to `.venv/bin/python -m gpt_dive`.
+- delayed `nohup` service restart used so the initiating MCP call could return first.
+- first probe coincided with reconnect and failed at transport boundary; the immediate retry confirmed service `active`.
+- live post-reload `code_mode(background=True)` used the systemd backend and returned `result=3`.
+- `src/gpt_dive/` refactor: **FULL PASS ✅**.

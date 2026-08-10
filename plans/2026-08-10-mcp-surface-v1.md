@@ -72,7 +72,7 @@ Expose `CAPABILITIES` inside each Monty run for runtime discovery so the top-lev
 
 ## Result
 
-Implementation + local validation PASS; fresh-session Web MCP acceptance pending.
+FULL PASS ✅ — implementation, local validation, and fresh-session Web MCP discovery/metadata acceptance completed.
 
 - Top-level local MCP discovery is exactly 4 tools: `bootstrap`, `code_mode`, `wsl2_sync`, `wsl2_async`.
 - `code_mode` registry v1 includes `local_exec/start/status/result/cancel` and runtime `CAPABILITIES`.
@@ -81,4 +81,4 @@ Implementation + local validation PASS; fresh-session Web MCP acceptance pending
 - Full regression suite: 24 passed.
 - `code_mode` is documented as the primary execution root; `wsl2_sync` / `wsl2_async` are lower-level direct-control paths.
 - Core `guard-bin` policy is regression-tested across sync and async direct paths, including native `python` prohibition.
-- Backend reload is being issued after local validation; fresh ChatGPT Web discovery acceptance remains.
+- Fresh ChatGPT Web discovery confirmed the stable four-tool surface: `bootstrap`, `code_mode`, `wsl2_sync`, `wsl2_async`.

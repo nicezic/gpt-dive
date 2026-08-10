@@ -112,6 +112,7 @@ def test_local_job_lifecycle_can_aggregate_without_raw_output(monkeypatch) -> No
 
 
 def test_subagent_call_is_registry_capability(monkeypatch) -> None:
+    import gpt_dive.app as app_module
     import gpt_dive
 
     calls: list[dict[str, object]] = []
@@ -124,7 +125,7 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             'output': 'SUBAGENT_OK',
         }
 
-    monkeypatch.setattr(gpt_dive, 'invoke_subagent', fake_invoke_subagent)
+    monkeypatch.setattr(app_module, 'invoke_subagent', fake_invoke_subagent)
     code = '''\nresult = await subagent_call(\n    model='terra',\n    task='review this',\n    timeout=17,\n    output_tokens_limit=321,\n)\n{'ok': result['ok'], 'model': result['model'], 'output': result['output']}\n'''
     assert asyncio.run(gpt_dive.code_mode(code)) == {
         'result': {'ok': True, 'model': 'terra', 'output': 'SUBAGENT_OK'}
@@ -137,3 +138,174 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             'output_tokens_limit': 321,
         }
     ]
+
+
+def _wait_code_mode_job(job_id: str, timeout: float = 4.0) -> dict[str, object]:
+    import time
+
+    import gpt_dive
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = asyncio.run(gpt_dive.code_mode(action="status", job_id=job_id))
+        if state["status"] != "running":
+            return state
+        time.sleep(0.03)
+    raise AssertionError("background Code Mode job did not finish")
+
+
+def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        started = asyncio.run(
+            gpt_dive.code_mode(
+                'await local_exec(command="sleep 0.15")\nprint("BG_STDOUT")\n1 + 2',
+                background=True,
+            )
+        )
+        assert started["status"] == "running"
+        assert "result" not in started
+
+        state = _wait_code_mode_job(str(started["job_id"]))
+        assert state["status"] == "completed"
+        result = asyncio.run(
+            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+        )
+        assert result["job_id"] == started["job_id"]
+        assert result["result"] == 3
+        assert result["stdout"] == "BG_STDOUT\n"
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_background_exception_is_structured(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        started = asyncio.run(
+            gpt_dive.code_mode('raise ValueError("BG_BOOM")', background=True)
+        )
+        _wait_code_mode_job(str(started["job_id"]))
+        result = asyncio.run(
+            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+        )
+        assert result["exit_code"] != 0
+        assert result["error"]["code"] == "background_execution_error"
+        assert "BG_BOOM" in result["error"]["message"]
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_background_rejects_non_json_result(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        started = asyncio.run(
+            gpt_dive.code_mode('float("nan")', background=True)
+        )
+        _wait_code_mode_job(str(started["job_id"]))
+        result = asyncio.run(
+            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+        )
+        assert result["exit_code"] != 0
+        assert result["error"]["code"] == "non_json_result"
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_background_cancel(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        started = asyncio.run(
+            gpt_dive.code_mode(
+                'await local_exec(command="sleep 30")\n"never"',
+                background=True,
+            )
+        )
+        asyncio.run(gpt_dive.code_mode(action="cancel", job_id=str(started["job_id"])))
+        state = _wait_code_mode_job(str(started["job_id"]))
+        assert state["status"] == "cancelled"
+        payload_dir = gpt_dive.jobs.root.parent / "code-mode-inputs"
+        assert not list(payload_dir.glob("*.json"))
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_background_jobs_and_internal_gather_overlap(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        code = """
+import asyncio
+a, b = await asyncio.gather(
+    local_exec(command="sleep 0.25; printf a"),
+    local_exec(command="sleep 0.25; printf b"),
+)
+[a["stdout"], b["stdout"]]
+"""
+        first = asyncio.run(gpt_dive.code_mode(code, background=True))
+        second = asyncio.run(gpt_dive.code_mode(code, background=True))
+        first_while_second_running = asyncio.run(
+            gpt_dive.code_mode(action="status", job_id=str(first["job_id"]))
+        )
+        assert first_while_second_running["status"] == "running"
+        _wait_code_mode_job(str(first["job_id"]))
+        _wait_code_mode_job(str(second["job_id"]))
+        for started in (first, second):
+            result = asyncio.run(
+                gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            )
+            assert result["result"] == ["a", "b"]
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_validates_background_lifecycle_fields() -> None:
+    import pytest
+
+    import gpt_dive
+
+    with pytest.raises(ValueError, match="requires code"):
+        asyncio.run(gpt_dive.code_mode())
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        asyncio.run(gpt_dive.code_mode("1 + 2", action="status", job_id="x"))
+    with pytest.raises(ValueError, match="requires job_id"):
+        asyncio.run(gpt_dive.code_mode(action="status"))
+    with pytest.raises(ValueError, match="unsupported code_mode action"):
+        asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))

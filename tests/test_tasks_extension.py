@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from job_manager import JobManager
-from tasks_extension import EXTENSION_ID, TasksExtension
+from gpt_dive.job_manager import JobManager
+from gpt_dive.tasks_extension import EXTENSION_ID, TasksExtension
 
 
 def test_extension_identifier_and_methods(tmp_path):

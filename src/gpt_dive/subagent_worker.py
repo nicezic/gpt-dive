@@ -12,7 +12,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
-from subagent_runtime import MODEL_SPECS
+from .subagent_runtime import MODEL_SPECS
 
 
 def _build_model(alias: str):

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
+import shlex
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from pydantic import Field
 
-from code_runtime import CallableRegistry, MontyCodeRuntime
-from job_manager import JobManager
-from subagent_runtime import invoke_subagent
-from tasks_extension import TasksExtension
+from .code_runtime import CallableRegistry, MontyCodeRuntime
+from .job_manager import JobManager
+from .subagent_runtime import invoke_subagent
+from .tasks_extension import TasksExtension
 
 
 jobs = JobManager()
@@ -308,28 +312,164 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     return registry
 
 
+CODE_MODE_WORKER_PROTOCOL = 1
+
+
+def _code_mode_payload_dir() -> Path:
+    path = jobs.root.parent / "code-mode-inputs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _code_mode_payload_ref(job_id: str) -> Path:
+    return jobs.root / job_id / "code_mode_payload.ref"
+
+
+def _cleanup_code_mode_payload(job_id: str) -> None:
+    ref = _code_mode_payload_ref(job_id)
+    if not ref.is_file():
+        return
+    try:
+        raw = ref.read_text().strip()
+        payload = Path(raw).resolve()
+        payload.relative_to(_code_mode_payload_dir().resolve())
+        payload.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+    finally:
+        ref.unlink(missing_ok=True)
+
+
+def _start_background_code_mode(code: str, cwd: str | None) -> dict[str, Any]:
+    payload = {"v": CODE_MODE_WORKER_PROTOCOL, "code": code, "cwd": cwd}
+    payload_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".json",
+            prefix="code-mode-",
+            dir=_code_mode_payload_dir(),
+            delete=False,
+        ) as fh:
+            json.dump(payload, fh, ensure_ascii=False, allow_nan=False)
+            fh.write("\n")
+            payload_path = Path(fh.name)
+
+        payload_arg = shlex.quote(str(payload_path))
+        command = f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {payload_arg}"
+        started = jobs.start(command, cwd, 600.0)
+        job_id = str(started["job_id"])
+        try:
+            _code_mode_payload_ref(job_id).write_text(str(payload_path) + "\n")
+        except OSError:
+            jobs.cancel(job_id)
+            payload_path.unlink(missing_ok=True)
+            raise
+        return started
+    except Exception:
+        if payload_path is not None:
+            payload_path.unlink(missing_ok=True)
+        raise
+
+
+def _background_error(
+    raw: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "job_id": raw.get("job_id"),
+        "status": raw.get("status"),
+        "exit_code": raw.get("exit_code"),
+        "error": {"code": code, "message": message},
+    }
+    stderr = str(raw.get("stderr") or "").strip()
+    if stderr:
+        result["worker_stderr"] = stderr[-2000:]
+    return result
+
+
+def _background_code_mode_result(job_id: str) -> dict[str, Any]:
+    raw = jobs.result(job_id)
+    if not raw.get("ready"):
+        raise RuntimeError(f"code_mode background job {job_id!r} is still running")
+    _cleanup_code_mode_payload(job_id)
+    if raw.get("status") == "cancelled":
+        return _background_error(
+            raw, code="background_cancelled", message="Background Code Mode job was cancelled."
+        )
+
+    stdout = str(raw.get("stdout") or "").strip()
+    if not stdout:
+        return _background_error(
+            raw,
+            code="worker_protocol_error",
+            message="Background Code Mode worker produced no result envelope.",
+        )
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError:
+        return _background_error(
+            raw,
+            code="worker_protocol_error",
+            message="Background Code Mode worker produced invalid JSON.",
+        )
+    if not isinstance(envelope, dict) or envelope.get("v") != CODE_MODE_WORKER_PROTOCOL:
+        return _background_error(
+            raw,
+            code="worker_protocol_error",
+            message="Background Code Mode worker used an unsupported result envelope.",
+        )
+
+    exit_code = raw.get("exit_code")
+    if envelope.get("ok") is True and exit_code == 0:
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            return _background_error(
+                raw,
+                code="worker_protocol_error",
+                message="Background Code Mode success envelope has no object payload.",
+            )
+        return {"job_id": job_id, **payload}
+
+    error = envelope.get("error")
+    if isinstance(error, dict):
+        error_code = str(error.get("code") or "background_execution_error")
+        error_message = str(error.get("message") or "Background Code Mode execution failed.")
+    else:
+        error_code = "worker_protocol_error"
+        error_message = "Background Code Mode worker exited without a valid error envelope."
+    if envelope.get("ok") is True and exit_code != 0:
+        error_code = "worker_protocol_error"
+        error_message = "Worker reported success but exited with a non-zero status."
+    return _background_error(raw, code=error_code, message=error_message)
+
+
 @mcp.tool(
     title="Pydantic Monty Code Mode",
     description=(
         "Primary harnessable execution root for GPT Dive, backed by Pydantic Monty and registered "
         "local WSL2 capabilities. Prefer this for normal work so capability policy, composition, "
-        "parallel execution, and local preprocessing remain inside the harness. Combine "
-        "independent operations and filter/transform/"
-        "aggregate large intermediate data before returning only a compact result. The sandbox "
-        "receives CWD and CAPABILITIES; inspect CAPABILITIES at runtime instead of relying on a "
-        "hard-coded capability list. The local WSL2 filesystem is mounted read-write."
+        "parallel execution, and local preprocessing remain inside the harness. Use background=True "
+        "to detach long-running Monty programs, then action='status', 'result', or 'cancel' with the "
+        "returned job_id. Combine independent operations and filter/transform/aggregate large "
+        "intermediate data before returning only a compact result. The sandbox receives CWD and "
+        "CAPABILITIES; inspect CAPABILITIES at runtime instead of relying on a hard-coded capability "
+        "list. The local WSL2 filesystem is mounted read-write."
     ),
 )
 async def code_mode(
     code: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Monty Python code to execute. Process large intermediate results inside the "
                 "sandbox and make the final expression a compact result."
             )
         ),
-    ],
+    ] = None,
     cwd: Annotated[
         str | None,
         Field(
@@ -339,9 +479,52 @@ async def code_mode(
             )
         ),
     ] = None,
+    background: Annotated[
+        bool,
+        Field(description="Detach this Code Mode program as a durable background job."),
+    ] = False,
+    action: Annotated[
+        str | None,
+        Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
+    ] = None,
+    job_id: Annotated[
+        str | None,
+        Field(description="Background Code Mode job ID for lifecycle actions."),
+    ] = None,
 ) -> dict[str, Any]:
-    """Execute one stateless Monty program against the current local capability registry."""
-    return await code_runtime.run(code, _build_code_registry(cwd), cwd=cwd)
+    """Execute or manage one stateless Monty program."""
+    normalized_action = action.strip().lower() if action is not None else None
+    has_code = code is not None and bool(code.strip())
+
+    if normalized_action is None:
+        if not has_code:
+            raise ValueError("code_mode requires code unless action + job_id are provided")
+        if job_id is not None:
+            raise ValueError("job_id is only valid with a lifecycle action")
+        if background:
+            return await asyncio.to_thread(_start_background_code_mode, str(code), cwd)
+        return await code_runtime.run(str(code), _build_code_registry(cwd), cwd=cwd)
+
+    if has_code:
+        raise ValueError("code and lifecycle action are mutually exclusive")
+    if background:
+        raise ValueError("background is only valid when launching code")
+    if cwd is not None:
+        raise ValueError("cwd is only valid when launching code")
+    if job_id is None or not job_id.strip():
+        raise ValueError(f"code_mode action={normalized_action!r} requires job_id")
+    if normalized_action == "status":
+        state = await asyncio.to_thread(jobs.status, job_id)
+        if state.get("status") != "running":
+            await asyncio.to_thread(_cleanup_code_mode_payload, job_id)
+        return state
+    if normalized_action == "result":
+        return await asyncio.to_thread(_background_code_mode_result, job_id)
+    if normalized_action == "cancel":
+        state = await asyncio.to_thread(jobs.cancel, job_id)
+        await asyncio.to_thread(_cleanup_code_mode_payload, job_id)
+        return state
+    raise ValueError("unsupported code_mode action; choose status, result, or cancel")
 
 
 def _required_job_id(action: str, job_id: str | None) -> str:

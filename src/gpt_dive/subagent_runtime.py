@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
 
@@ -80,11 +80,12 @@ async def invoke_subagent(
         str(UV),
         "run",
         "--project",
-        str(ROOT),
+        str(PROJECT_ROOT),
         "--python",
         "3.14",
         "python",
-        str(ROOT / "subagent_worker.py"),
+        "-m",
+        "gpt_dive.subagent_worker",
     ]
 
     child_env = os.environ.copy()

@@ -9,7 +9,7 @@ from mcp.server.extension import Extension, MethodBinding
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS, CallToolRequestParams, RequestParams
 from pydantic import Field
 
-from job_manager import JobManager, JobNotFoundError, TERMINAL_STATUSES
+from .job_manager import JobManager, JobNotFoundError, TERMINAL_STATUSES
 
 
 EXTENSION_ID = "io.modelcontextprotocol/tasks"

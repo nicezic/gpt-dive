@@ -321,15 +321,15 @@ Design Council에서 Opus가 API ergonomics를 challenge했고, 다음 이유로
 
 ---
 
-## 8. Implementation Items to Confirm
+## 8. Implementation Boundary — Confirmed ✅
 
-Architecture decision에는 영향이 없지만 implementation 전에 실제 코드로 확인할 부분:
+Implementation confirmed the agreed process boundary:
 
-- `JobManager.start()`와 code-mode background wrapper의 정확한 연결 방식
-- `MontyComplete.output`을 background result로 어떻게 serialize/store할지
-- background Monty exception/failure를 `result`에서 어떤 contract로 반환할지
-
-현재 방향은 이 세부사항 때문에 다시 architecture discussion을 열 필요는 없는 것으로 판단했다.
+- `JobManager` remains the durable shell/process lifecycle manager.
+- detached Code Mode passes only serializable input to a child worker.
+- the worker rebuilds a fresh Monty runtime + capability registry.
+- worker stdout carries one strict versioned JSON envelope; success requires both a valid envelope and `exit_code == 0`.
+- fresh-session ChatGPT Web E2E acceptance completed successfully.
 
 ---
 
@@ -394,36 +394,32 @@ code_mode + optional background=True
 
 ---
 
-## 10. Current Handoff State — 2026-08-10
+## 10. Current State — 2026-08-10
 
-현재 Design phase는 종료됐다.
+The background Code Mode design and implementation are complete.
 
 - **Architecture**: ✅ Council Converged
-- **Implementation Plan**: ✅ SOL live-code correction + Opus re-validation 완료
-- **Plan**: `plans/2026-08-10-code-mode-background.md`
-- **Implementation**: 아직 시작하지 않음
-- **Remaining design dissent**: 없음
-- **Remaining implementation check**: `MontyComplete.output` serialization contract
+- **Implementation**: ✅ Complete
+- **Local suite**: ✅ 33 passed
+- **Real systemd backend**: ✅ PASS
+- **Fresh ChatGPT Web MCP E2E**: ✅ FULL PASS
+- **Top-level MCP surface**: ✅ exactly 4 tools
+- **Current source layout**: `src/gpt_dive/` Python package
 
-### Live-code correction already agreed
+Current runtime architecture:
 
 ```text
-registry snapshot
-      ❌
-worker-side registry rebuild
-      ✅
+Web SOL
+  ↓
+code_mode(background=True)
+  ↓
+custom JobManager
+  ↓
+durable worker process
+  ↓
+fresh Monty runtime + registry rebuild
+  ↓
+strict JSON result envelope
 ```
 
-`JobManager`는 durable shell/process lifecycle을 담당하고, background Code Mode worker가 fresh Monty runtime + registry를 재구성한다.
-
-### Fresh SOL Session Start
-
-새 session에서 architecture를 처음부터 다시 토론하지 않는다. 다음 순서로 시작한다.
-
-1. `@dive bootstrap`
-2. 이 문서 `docs/architecture-context.md` 확인
-3. `plans/2026-08-10-code-mode-background.md` 확인
-4. volatile implementation fact만 live code로 재확인
-5. implementation 진행
-
-새 evidence가 기존 decision을 깨는 경우에만 Council을 다시 연다.
+For a fresh session, call `bootstrap` first and inspect live state only when volatile facts matter. Reopen architecture discussion only if new evidence breaks an accepted decision.
