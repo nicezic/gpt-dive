@@ -250,7 +250,7 @@ dev = [
 requires-dist = [
     { name = "mcp", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "openai-codex"], editable = "../ref/pydantic-ai-pr-6433/pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "openai-codex"], git = "https://github.com/Wh1isper/pydantic-ai.git?subdirectory=pydantic_ai_slim&rev=af055625bf67" },
     { name = "pydantic-monty", specifier = ">=0.0.19" },
 ]
 
@@ -544,7 +544,8 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai-slim"
-source = { editable = "../ref/pydantic-ai-pr-6433/pydantic_ai_slim" }
+version = "0.0.1.dev2674+af055625"
+source = { git = "https://github.com/Wh1isper/pydantic-ai.git?subdirectory=pydantic_ai_slim&rev=af055625bf67#af055625bf67217a5839d6255900475d9576aa13" }
 dependencies = [
     { name = "anyio" },
     { name = "genai-prices" },
@@ -564,63 +565,6 @@ openai-codex = [
     { name = "filelock" },
     { name = "openai" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.108.0" },
-    { name = "anyio", specifier = ">=4.7.0" },
-    { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
-    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
-    { name = "botocore", marker = "extra == 'bedrock-mantle'", specifier = ">=1.42.63" },
-    { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.20.6" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
-    { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
-    { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
-    { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
-    { name = "filelock", marker = "extra == 'openai-codex'", specifier = ">=3.20.3" },
-    { name = "genai-prices", specifier = ">=0.1.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
-    { name = "griffelib", specifier = ">=2.0" },
-    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
-    { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27.0" },
-    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
-    { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
-    { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.4.2,!=2.4.6" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=2.45.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
-    { name = "openai", marker = "extra == 'openai-codex'", specifier = ">=2.45.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=2.45.0" },
-    { name = "opentelemetry-api", specifier = ">=1.28.0" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
-    { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
-    { name = "pydantic", specifier = ">=2.12" },
-    { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../ref/pydantic-ai-pr-6433/pydantic_evals" },
-    { name = "pydantic-graph", editable = "../ref/pydantic-ai-pr-6433/pydantic_graph" },
-    { name = "pydantic-handlebars", marker = "extra == 'spec'", specifier = ">=0.1.0" },
-    { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
-    { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
-    { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
-    { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
-    { name = "sentence-transformers", marker = "python_full_version < '3.14' and extra == 'sentence-transformers'", specifier = ">=5.2.0" },
-    { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.46.2" },
-    { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.46.2" },
-    { name = "starlette", marker = "extra == 'web'", specifier = ">=0.46.2" },
-    { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.24.0" },
-    { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
-    { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
-    { name = "typing-inspection", specifier = ">=0.4.0" },
-    { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
-    { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
-]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openai-codex", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"
@@ -665,22 +609,14 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-source = { editable = "../ref/pydantic-ai-pr-6433/pydantic_graph" }
+version = "0.0.1.dev2674+af055625"
+source = { git = "https://github.com/Wh1isper/pydantic-ai.git?subdirectory=pydantic_graph&rev=af055625bf67#af055625bf67217a5839d6255900475d9576aa13" }
 dependencies = [
     { name = "anyio" },
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "typing-inspection" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4.7.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "logfire-api", specifier = ">=3.14.1" },
-    { name = "pydantic", specifier = ">=2.12" },
-    { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 
 [[package]]

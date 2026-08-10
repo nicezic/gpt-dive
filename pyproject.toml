@@ -16,7 +16,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-pydantic-ai-slim = { path = "../ref/pydantic-ai-pr-6433/pydantic_ai_slim", editable = true }
+pydantic-ai-slim = { git = "https://github.com/Wh1isper/pydantic-ai.git", rev = "af055625bf67", subdirectory = "pydantic_ai_slim" }
 
 [project.scripts]
 gpt-dive = "gpt_dive.__main__:main"

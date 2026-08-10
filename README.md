@@ -57,6 +57,8 @@ uv run --python 3.14 python -m pytest -q
 uv run --python 3.14 python -m gpt_dive
 ```
 
+> Note: `pydantic-ai-slim` is temporarily pinned to a specific Git commit that provides the Codex subscription provider required by GPT Dive. This pin can be removed once the required support is available in an upstream release.
+
 ## Source layout
 
 GPT Dive uses a standard Python `src` package layout:
