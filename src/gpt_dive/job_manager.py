@@ -88,6 +88,7 @@ class JobManager:
             pid_start_ticks: int | None = None
 
             if backend == "systemd":
+                assert unit is not None
                 systemd_runner = (
                     f"set +e; ({inner}) > {shlex.quote(str(stdout_path))} "
                     f"2> {shlex.quote(str(stderr_path))}; code=$?; "

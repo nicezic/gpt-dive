@@ -12,7 +12,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1.411",
     "pytest>=8.0",
+    "ruff>=0.16.2",
 ]
 
 [tool.uv.sources]
@@ -27,3 +29,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gpt_dive"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+
+[tool.ruff]
+target-version = "py314"
