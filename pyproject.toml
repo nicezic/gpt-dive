@@ -1,0 +1,19 @@
+[project]
+name = "gpt-dive"
+version = "0.1.0"
+description = "MCP runtime for GPT to dive into the user's local development environment"
+requires-python = ">=3.14"
+dependencies = [
+    "mcp>=2.0.0",
+    "pydantic>=2.13.4",
+    "pydantic-monty>=0.0.19",
+    "pydantic-ai-slim[anthropic,openai-codex]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv.sources]
+pydantic-ai-slim = { path = "../ref/pydantic-ai-pr-6433/pydantic_ai_slim", editable = true }

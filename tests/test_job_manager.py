@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import time
+from datetime import UTC, datetime, timedelta
+
+from job_manager import JobManager
+
+
+def wait_done(manager: JobManager, job_id: str, timeout: float = 3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = manager.status(job_id)
+        if state["status"] != "running":
+            return state
+        time.sleep(0.03)
+    raise AssertionError("job did not finish")
+
+
+def test_async_job_survives_new_manager_instance(tmp_path):
+    manager = JobManager(tmp_path)
+    started = manager.start("printf 'JOB_OK\\n'; sleep 0.15; printf 'DONE\\n'", timeout=2)
+    reloaded = JobManager(tmp_path)
+    state = wait_done(reloaded, started["job_id"])
+    assert state["status"] == "completed"
+    result = reloaded.result(started["job_id"])
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "JOB_OK\nDONE\n"
+
+
+def test_cancel_marks_job_cancelled(tmp_path):
+    manager = JobManager(tmp_path)
+    started = manager.start("sleep 30", timeout=60)
+    manager.cancel(started["job_id"])
+    state = wait_done(manager, started["job_id"])
+    assert state["status"] == "cancelled"
+
+
+def test_cleanup_removes_terminal_job_older_than_retention(tmp_path):
+    manager = JobManager(tmp_path, retention_days=5)
+    started = manager.start("true", timeout=2)
+    wait_done(manager, started["job_id"])
+    job_dir = tmp_path / started["job_id"]
+    meta = manager._read_meta(job_dir)
+    meta["updated_at"] = (datetime.now(UTC) - timedelta(days=6)).isoformat().replace("+00:00", "Z")
+    manager._write_meta(job_dir, meta)
+    assert manager.cleanup() == 1
+    assert not job_dir.exists()
+
+
+def test_completed_child_is_reaped(tmp_path):
+    manager = JobManager(tmp_path)
+    started = manager.start("true", timeout=2)
+    wait_done(manager, started["job_id"])
+    proc = manager._proc_info(started["pid"])
+    assert proc is None or proc["state"] != "Z"
+
+
+def test_cancel_requested_wins_even_if_exit_marker_exists(tmp_path):
+    manager = JobManager(tmp_path)
+    started = manager.start("sleep 30", timeout=60)
+    job_dir = tmp_path / started["job_id"]
+    meta = manager._read_meta(job_dir)
+    meta["cancel_requested"] = True
+    manager._write_meta(job_dir, meta)
+    (job_dir / "exit_code").write_text("143\n")
+    state = manager.status(started["job_id"])
+    assert state["status"] == "cancelled"
+    unit = started.get("systemd_unit")
+    if unit:
+        import subprocess
+        subprocess.run(["systemctl", "--user", "stop", unit], check=False)
