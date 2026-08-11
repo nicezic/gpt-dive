@@ -1,6 +1,6 @@
 # Council — Shared Multi-Model Discussion Workspace
 
-> Status: Approved direction / ready for implementation planning
+> Status: Implemented / Council v1 FULL PASS
 > Created: 2026-08-12
 > Scope: GPT Dive generation 3
 
@@ -177,6 +177,10 @@ Git already provides an atomic, durable, timestamped event timeline and makes th
 **Consequence**
 
 `chat.md` stays intentionally dumb; protocol state lives in Git.
+
+**Implementation choice**
+
+Council intentionally uses the official `git` CLI through a narrow Python subprocess seam rather than adding GitPython, pygit2/libgit2, or Dulwich. The v1 protocol depends on a small set of Git plumbing operations (`commit`, `rev-parse`, `show`, `merge-base --is-ancestor`, `update-ref`), so direct Git CLI usage keeps Git semantics authoritative and avoids an extra abstraction/dependency without a demonstrated benefit. Revisit only if deployment without a Git executable or substantially heavier embedded Git workloads become real requirements.
 
 ### 3. Explicit Git refs are participant context cursors
 
@@ -534,6 +538,52 @@ Only after v1 evidence justifies them:
 
 ## Result
 
-**PENDING IMPLEMENTATION**
+**FULL PASS — Council v1 implemented and accepted on 2026-08-12.**
 
-After implementation, update this section with delivered behavior, validation evidence, meaningful deviations, and follow-up decisions. Do not rewrite the decisions above to hide implementation discoveries; record supersession explicitly.
+### Delivered
+
+- **T1 Council Repo Protocol** — `init.md` + append-only `chat.md`, one speaking event per commit, explicit `refs/council/context/{sol,opus}`, pure unread transcript suffix extraction, append-only validation, dirty-transcript rejection, and explicit cursor advancement.
+- **T2 To OPUS** — real `opus5` Pydantic path, shared-room context reconstruction, one OPUS response commit, cursor advancement only after success, failure-safe retry without duplicate USER commits.
+- **T3 To SOL** — persistent input-only Playwright/Edge CDP bridge, Web SOL output through `code_mode -> council_emit`, Git commit as completion signal, `expected_head` stale/duplicate-response guard, retry and late-response reconciliation without DOM output scraping.
+- **T4 Shared Room UI** — top-level Svelte 5 + Vite + TypeScript UI backed by a local Starlette/Uvicorn REST server, real Git transcript rendering, `To SOL`, `To OPUS`, status/error/retry feedback, and explicit Council-owned SOL bridge lifecycle.
+
+### Final validation evidence
+
+```text
+Python Ruff                PASS
+Python full pytest         PASS — 60 passed
+Council/App Pyright        PASS — 0 errors, 0 warnings
+Svelte type check          PASS — 0 errors, 0 warnings
+Vite production build      PASS
+Council repo protocol      PASS
+To OPUS real provider E2E  PASS
+Shared-room Svelte UI E2E  PASS
+To SOL real Web E2E        PASS
+```
+
+The final real SOL acceptance traversed the integrated path:
+
+```text
+Svelte `To SOL`
+  -> local Python Council server
+  -> persistent Edge/CDP input
+  -> existing ChatGPT Web SOL
+  -> code_mode / council_emit(expected_head=...)
+  -> one SOL Git commit
+  -> context/sol advancement
+  -> UI-visible Git state
+```
+
+Acceptance evidence from the throwaway Council repo showed the USER turn at `fad1287790170b5962ec877a3c6516a3e13a403b`, the SOL response commit at `d4a998a761f033b96cbf9cc5ec8779aa683c4dc9`, and final `HEAD == refs/council/context/sol` at that SOL commit. Playwright remained input-only throughout.
+
+### Meaningful implementation discoveries / deviations
+
+1. **Opus Pydantic calls are stateless across worker invocations.** Git cursor semantics remain authoritative, while the Opus adapter reconstructs previously synchronized transcript context plus the new unread suffix for each call. No separate conversation database was added.
+2. **The SOL bridge is Council-owned rather than a generic 600-second background job.** `SolBridge` has explicit start/close lifecycle, avoiding the timeout/stale-socket behavior seen in the feasibility probe.
+3. **SOL output gained an `expected_head` guard.** `council_emit` remains backward compatible, while integrated SOL turns use compare-and-swap-style HEAD validation so late or duplicate responses cannot silently attach to the wrong Council state.
+4. **Retries preserve the original USER event.** OPUS and SOL retry paths reuse unchanged unread context instead of committing duplicate USER turns; a late SOL commit can be reconciled before reconnecting the browser.
+5. **The UI transport is simple REST, not WebSocket.** Starlette + Uvicorn is sufficient for the single-room v1 because one user-triggered turn can await its participant result while the Python process owns the persistent SOL bridge.
+6. **Default Council port is 8791.** Port 8787 was already occupied by the local Hermes UI during acceptance.
+7. **Git CLI is intentionally retained.** Council uses a narrow subprocess adapter around official Git plumbing rather than adding GitPython, pygit2/libgit2, or Dulwich.
+
+The deferred list above remains deferred; v1 success does not implicitly approve multi-room management, automatic summarization, autonomous debate, or richer history/navigation.

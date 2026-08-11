@@ -1,18 +1,21 @@
 # GPT Dive — Current Continuation
 
 > Updated: 2026-08-12
-> Purpose: compact fresh-session handoff only. Durable Why/history belongs in `docs/`; implementation artifacts belong in `plans/` and `specs/`.
+> Purpose: compact fresh-session handoff only. Durable Why/history belongs in `docs/`; implementation/decision artifacts belong in `plans/` and `specs/`.
 
 ## Current Position
 
 - **v1 Local MCP Runtime**: stable
 - **v2 Pydantic AI Harness**: stable and extensible
-- **v3 Council**: `/to-spec` complete; `specs/council.md` is the implementation SSOT; implementation has not started
-- Last verified local suite before this cleanup: **39 passed**
+- **v3 Council / Council v1 product slice**: **implemented / FULL PASS**
+- Council implementation/decision SSOT: `specs/council.md`
+- Final implementation tickets: `plans/council/2026-08-12-council-v3-tickets.md`
+- Latest verified local suite: **60 passed**
+- Ruff PASS; Council/App Pyright 0 errors; Svelte check 0 errors/0 warnings; Vite build PASS
 
 ## Stable Web MCP Surface
 
-Exactly four top-level tools:
+Exactly four top-level tools remain:
 
 ```text
 bootstrap
@@ -21,13 +24,9 @@ wsl2_sync
 wsl2_async
 ```
 
-`code_mode` remains the primary execution root. Current registry includes local sync/durable execution, subagent support, `gz64`, and the experimental `council_emit` transport capability.
+Council does **not** add a fifth Web-facing MCP tool. Web SOL returns through the registered `council_emit` Code Mode capability.
 
-## Council — Current Decisions
-
-Feature name: **Council**. Korean "회의" / "카운실" / `Council` all refer to the same workflow.
-
-Current mental model:
+## Council — Delivered Mental Model
 
 ```text
 Shared Council Room
@@ -36,15 +35,15 @@ SOL  = primary engineer
 OPUS = independent peer
 ```
 
-Principles:
+Principles remain:
 
-- **Shared Context** — participants reason over the chronological Council conversation.
-- **Judgment Independence** — seeing another participant's argument does not imply agreeing with it.
+- **Shared Context** — one chronological Council conversation.
+- **Judgment Independence** — shared context does not imply agreement.
 - **Preserve Why** — keep causal context, disagreement, rejected alternatives, and reasons behind changed decisions.
 - **Human Controls Turns** — automate transport, not judgment.
-- **No premature summarization** in early v3.
+- **No automatic transcript summarization/compression in v1.**
 
-Current minimal storage direction:
+## Delivered Storage / Protocol
 
 ```text
 init.md
@@ -54,87 +53,104 @@ refs/council/context/sol
 refs/council/context/opus
 ```
 
-`chat.md` stays append-only and human-readable. Git refs represent participant context cursors; do not infer transport state by parsing the last role heading.
+- `chat.md` is append-only and human-readable.
+- One USER/SOL/OPUS speaking event becomes one Git commit.
+- Participant refs are explicit synchronization cursors.
+- Unread input is the pure appended transcript suffix between cursor snapshot and target HEAD.
+- Non-append mutation and dirty transcript state are rejected.
+- Cursor advances only after a successful participant response commit.
+- Git backend intentionally remains the official `git` CLI through a narrow subprocess seam; no GitPython/pygit2/Dulwich dependency was added.
 
-## Verified Web SOL Transport Probe
+## Delivered Participant Paths
 
-**FULL PASS**:
+### To OPUS
 
 ```text
-local Council input
-  -> persistent Playwright / Edge CDP
-  -> real ChatGPT Web SOL
-  -> code_mode -> council_emit
-  -> chat.md
-  -> Git commit
+Svelte / REST
+  -> USER Git commit
+  -> Pydantic `opus5`
+  -> OPUS Git commit
+  -> refs/council/context/opus advance
 ```
 
-Playwright is input-only. No assistant-output scraping, Copy button, clipboard extraction, or DOM completion detection is used.
+Pydantic worker calls are stateless, so the Opus adapter reconstructs previously synchronized transcript context plus the new unread suffix each turn. Failed calls preserve the USER commit and unchanged cursor; retry does not duplicate the USER turn.
 
-Persistent CDP removed repeated Edge approval prompts. The generic async-job default timeout of 600 seconds was too short for the bridge, so final bridge lifecycle remains a v3 spec/implementation decision.
-
-Evidence: `plans/council/2026-08-11-web-sol-e2e.md`.
-
-## UI Decision
-
-Council Web UI stack is decided:
+### To SOL
 
 ```text
-Svelte 5 + Vite + TypeScript
+Svelte / REST
+  -> USER Git commit
+  -> persistent input-only Playwright / Edge CDP
+  -> existing ChatGPT Web SOL
+  -> code_mode -> council_emit(expected_head=...)
+  -> SOL Git commit
+  -> refs/council/context/sol advance
 ```
 
-Planned location: top-level `web/` rather than inside the Python `src/` package.
+Playwright never scrapes assistant output, Copy buttons, clipboard data, or streaming completion. Git commit is the completion signal. `expected_head` prevents stale/duplicate SOL responses from attaching to the wrong Council state. Late SOL commits can be reconciled before browser resend.
 
-## Current Task Boundary
+The bridge is an explicit Council-owned `SolBridge` lifecycle rather than a generic 600-second durable job.
 
-Pre-v3 cleanup and Matt-P `/to-spec` are complete. The durable implementation/decision record is `specs/council.md`.
+## Local UI / Runtime
 
-Next fresh-session workflow:
+- Frontend: **Svelte 5 + Vite + TypeScript**, top-level `web/`.
+- Backend: **Starlette + Uvicorn REST** in `src/gpt_dive/council/server.py`.
+- CLI entry point: `gpt-dive-council`.
+- Current invocation shape:
 
 ```text
-read CONTINUATION.md + specs/council.md
-  -> compact User + SOL + Opus spec review if needed
-  -> /to-tickets
-  -> v3 implementation
+gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>
 ```
 
-Do not repeat the completed Grill/design interview. Treat the spec as the settled starting point unless implementation reveals a genuinely new consequential decision.
+- Default bind: `127.0.0.1:8791` (`8787` is already used by Hermes locally).
+- One room / one turn at a time in v1; server serializes participant turns with a lock.
 
-## Key Documents
+## Final Acceptance — FULL PASS
 
 ```text
-docs/runtime/architecture.md
-docs/runtime/history.md
-docs/runtime/operations.md
-docs/council/history.md
-plans/council/2026-08-11-web-sol-e2e.md
-specs/council.md
+Ruff                       PASS
+pytest                     PASS — 60 passed
+Council/App Pyright        PASS — 0 errors, 0 warnings
+Svelte check               PASS — 0 errors, 0 warnings
+Vite build                 PASS
+Repo protocol              PASS
+Real OPUS provider E2E     PASS
+Real Svelte To OPUS E2E    PASS
+Real Web SOL E2E           PASS
+```
+
+Final integrated SOL acceptance traversed Svelte -> Python -> persistent CDP -> current Web SOL -> `council_emit` -> Git -> SOL cursor. Throwaway-room evidence: USER HEAD `fad1287790170b5962ec877a3c6516a3e13a403b`, SOL commit `d4a998a761f033b96cbf9cc5ec8779aa683c4dc9`, final `HEAD == refs/council/context/sol`.
+
+## Key Implementation Commits
+
+```text
+597f79e docs: define Council v3 implementation tickets
+e4713ec feat: implement Council repo protocol
+afcbf07 feat: scaffold Council room UI
+3423723 feat: implement Council Opus turn
+79484ad fix: retry Council Opus turn without duplicate user commit
+d4aa608 feat: implement Council Web SOL turn
+80ac9fe feat: integrate Council shared room UI
+a8fdf9f fix: preserve subagent failure diagnostics
 ```
 
 ## Runtime Reload Rule
 
-Do not restart the active MCP service inline during its own in-flight call. When live reload is needed, schedule the restart out-of-band with the documented 5-second buffer. See `docs/runtime/operations.md`.
+Do not restart the active GPT Dive MCP service inline during its own in-flight call. Schedule live reload out-of-band with the documented 5-second buffer. See `docs/runtime/operations.md`.
 
-## Fresh-Session Handoff — 2026-08-12
+## Deferred / Not Approved by v1 Success
 
-### Verified State
+- Independent Challenge mode
+- transcript/context compression
+- richer history/navigation
+- multiple rooms
+- automatic room naming/management
+- more participants
+- autonomous debate/routing
+- speculative bridge hardening
 
-- Council v3 `/to-spec` is complete and `specs/council.md` is the implementation/decision SSOT.
-- Opus reviewed the completed spec and returned **A+ / production-ready** with no blocking concern.
-- GPT Dive worktree was clean at handoff time.
-- Council Web SOL transport primitive is already FULL PASS; do not redo the old transport experiment before implementation planning.
-- `~/wiki/log.md` contains the 2026-08-12 Council v3 design/to-spec summary for bootstrap continuity.
+## Next Candidate
 
-### Next Task
+The next useful product step is **Council start/reopen ergonomics**: reduce the current manual `--council-dir` + `--sol-url` startup into a convenient everyday flow (create/reopen repo, resolve/remember SOL target, start server, open UI). Treat this as the next candidate for consultation, not as already-approved implementation scope.
 
-Run `/to-tickets` against `specs/council.md`, then begin Council v3 implementation from the resulting small implementation slices. Do not reopen settled Shared Room / Git cursor / Playwright input-only / Svelte 5 decisions unless implementation exposes a genuinely new consequential problem.
-
-### Suggested Skills
-
-- `/to-tickets` — immediate next step.
-- `/code-review` — after implementation slices are complete.
-- `/handoff` — only when another fresh session needs continuation again.
-
-### Communication Note
-
-When a technical term may be unfamiliar, keep the English term and explain it immediately in parentheses. Example: `durable artifact` (세션이 끝나도 남아 있는 영구 기록물들 ex: spec, plan, ADR, commit 등).
+Do not redo the completed Council design interview, transport feasibility probe, or v1 implementation acceptance unless new evidence exposes a real regression.

@@ -1,7 +1,7 @@
 # Council v3 — Implementation Tickets
 
 > Parent spec: `specs/council.md`
-> Status: Approved execution breakdown
+> Status: COMPLETE — T1/T2/T3/T4 PASS
 > Created: 2026-08-12
 
 ## T1 — Council Repo Protocol
@@ -35,6 +35,9 @@ No database, queue, autonomous retry, transcript metadata, generalized event fra
 ### Done Condition / Result Format
 Targeted Council tests pass; existing suite remains green for touched behavior; diff is limited to Council protocol seams and required imports/tests.
 
+### Result — PASS
+Implemented in `e4713ec` (`feat: implement Council repo protocol`). Final suite remains green at 60 passed.
+
 ---
 
 ## T2 — To OPUS End-to-End Turn
@@ -65,6 +68,9 @@ No browser automation, autonomous debate loop, automatic retries, context summar
 
 ### Done Condition / Result Format
 Targeted tests plus a real provider E2E pass with commit/cursor evidence.
+
+### Result — PASS
+Implemented in `3423723` with retry correction in `79484ad`. Real `opus5` provider E2E created one OPUS response commit and advanced only `context/opus`; failure/retry preserves the original USER commit.
 
 ---
 
@@ -98,6 +104,9 @@ No generalized browser automation framework, DOM output parser, autonomous retri
 ### Done Condition / Result Format
 Targeted tests plus real Web SOL E2E pass with Git commit/cursor evidence.
 
+### Result — PASS
+Implemented in `d4aa608`. Final integrated Web SOL acceptance used input-only persistent Edge/CDP, `council_emit(expected_head=...)`, one SOL Git commit, and `context/sol` advancement with no DOM assistant-output scraping.
+
 ---
 
 ## T4 — Shared Room UI Integration
@@ -128,4 +137,7 @@ No SvelteKit, second Node backend, auth system, multi-user collaboration, multip
 
 ### Done Condition / Result Format
 Minimal Council room works end to end and the parent spec acceptance matrix is green; update the spec Result and continuation docs only with verified delivered behavior.
+
+### Result — PASS
+Integrated in `80ac9fe`. Starlette/Uvicorn REST serves the Svelte room, real `To OPUS` API and Svelte-button E2Es pass, and final `To SOL` full-path acceptance returned through Git. Frontend check/build and the parent acceptance matrix are green.
 
