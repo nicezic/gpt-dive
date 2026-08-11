@@ -41,7 +41,7 @@ v3  Council              <- current design work
 
 These labels describe architecture generations, not the package semantic version.
 
-Council grew from the manual SOL + User + Opus review workflow. Its goal is to automate transport while preserving human steering, shared reasoning context, independent judgment, and the Why behind decisions. The Council protocol is being specified after the current pre-v3 cleanup.
+Council grew from the manual SOL + User + Opus review workflow. Its goal is to automate transport while preserving human steering, shared reasoning context, independent judgment, and the Why behind decisions. The current v3 implementation/decision SSOT is [`specs/council.md`](specs/council.md).
 
 See [`docs/council/history.md`](docs/council/history.md) for the reasoning lineage.
 
@@ -63,7 +63,7 @@ Operational notes, including safe MCP reload and Web schema-cache behavior, live
 - [`docs/council/history.md`](docs/council/history.md) — Council evolution and current pre-spec direction
 - [`plans/runtime/`](plans/runtime/) — completed/runtime implementation plans
 - [`plans/council/`](plans/council/) — Council experiments and implementation plans
-- `specs/` — approved feature specs; Council spec will be created by the next `to-spec` step
+- [`specs/council.md`](specs/council.md) — Council v3 implementation/decision SSOT
 
 ## Source Layout
 

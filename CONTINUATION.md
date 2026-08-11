@@ -7,7 +7,7 @@
 
 - **v1 Local MCP Runtime**: stable
 - **v2 Pydantic AI Harness**: stable and extensible
-- **v3 Council**: design converged enough to enter `to-spec`; implementation has not started
+- **v3 Council**: `/to-spec` complete; `specs/council.md` is the implementation SSOT; implementation has not started
 - Last verified local suite before this cleanup: **39 passed**
 
 ## Stable Web MCP Surface
@@ -87,19 +87,18 @@ Planned location: top-level `web/` rather than inside the Python `src/` package.
 
 ## Current Task Boundary
 
-Pre-v3 documentation restructure is the current cleanup step.
+Pre-v3 cleanup and Matt-P `/to-spec` are complete. The durable implementation/decision record is `specs/council.md`.
 
-Next workflow after cleanup:
+Next fresh-session workflow:
 
 ```text
-Matt-P to-spec
-  -> specs/council.md
-  -> User + SOL + Opus review
-  -> to-tickets
+read CONTINUATION.md + specs/council.md
+  -> compact User + SOL + Opus spec review if needed
+  -> /to-tickets
   -> v3 implementation
 ```
 
-Do **not** create the Council spec during the cleanup commit.
+Do not repeat the completed Grill/design interview. Treat the spec as the settled starting point unless implementation reveals a genuinely new consequential decision.
 
 ## Key Documents
 
@@ -109,6 +108,7 @@ docs/runtime/history.md
 docs/runtime/operations.md
 docs/council/history.md
 plans/council/2026-08-11-web-sol-e2e.md
+specs/council.md
 ```
 
 ## Runtime Reload Rule

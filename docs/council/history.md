@@ -119,7 +119,7 @@ Council repo
 
 The context refs are explicit participant cursors: each ref identifies the commit through which that participant's native/model context is known to be synchronized. The unread transcript can be derived from Git snapshots while preserving the append-only invariant.
 
-The exact v3 protocol is **not yet a formal spec**. The next step after repository cleanup is Matt-P `to-spec`, which will create the Council SSOT under `specs/`.
+The v3 direction was subsequently formalized by Matt-P `/to-spec` as [`specs/council.md`](../../specs/council.md). This history remains the causal record for why the spec has its current shape.
 
 ## Current Product Naming
 
