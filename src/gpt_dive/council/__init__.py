@@ -16,7 +16,12 @@ from .repo import (
     transcript_suffix,
     unread_transcript,
 )
-from .sol import build_sol_transport_message, retry_sol_turn, run_sol_turn
+from .sol import (
+    build_sol_transport_message,
+    reconcile_sol_response,
+    retry_sol_turn,
+    run_sol_turn,
+)
 
 
 def emit_sol_response(
@@ -49,6 +54,7 @@ __all__ = [
     "emit_sol_response",
     "head",
     "initialize_council",
+    "reconcile_sol_response",
     "retry_opus_turn",
     "retry_sol_turn",
     "run_opus_turn",

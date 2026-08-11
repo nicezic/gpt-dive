@@ -1,80 +1,172 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+
   type Speaker = 'USER' | 'SOL' | 'OPUS'
-  type Turn = { speaker: Speaker; text: string; time: string; tone?: 'error' }
+  type Target = 'SOL' | 'OPUS'
+  type Turn = { speaker: Speaker; text: string }
+  type RoomState = {
+    ok: boolean
+    title: string
+    turns: Turn[]
+    bridge_started: boolean
+    head: string
+    contexts: Record<Target, string>
+  }
+  type TurnResult = {
+    ok: boolean
+    participant?: Target
+    error?: string
+  }
 
   let draft = ''
-  let selectedTarget: 'SOL' | 'OPUS' = 'SOL'
-  let isRetrying = false
-  let turns: Turn[] = [
-    { speaker: 'USER', text: 'How should we frame the next decision?', time: '09:41' },
-    { speaker: 'SOL', text: 'I suggest we start with the constraint, then make the trade-off explicit.', time: '09:42' },
-    { speaker: 'OPUS', text: 'Agreed. I’ll pressure-test that framing against the options on the table.', time: '09:43' }
-  ]
+  let selectedTarget: Target = 'SOL'
+  let turns: Turn[] = []
+  let roomTitle = 'Council'
+  let bridgeStarted = false
+  let loading = true
+  let busy: Target | null = null
+  let errorMessage = ''
+  let failedTarget: Target | null = null
 
-  const prompts = {
-    SOL: 'Mock response from SOL: constraint noted. I would make the smallest reversible move first.',
-    OPUS: 'Mock response from OPUS: the framing holds up. I see one assumption worth surfacing.'
+  onMount(() => {
+    void refresh()
+  })
+
+  async function readJson<T>(response: Response): Promise<T> {
+    const body = await response.json()
+    if (!response.ok) {
+      throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
+    }
+    return body as T
   }
 
-  function sendTo(target: 'SOL' | 'OPUS') {
+  async function refresh() {
+    try {
+      const state = await readJson<RoomState>(await fetch('/api/state'))
+      roomTitle = state.title
+      turns = state.turns
+      bridgeStarted = state.bridge_started
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error)
+    } finally {
+      loading = false
+    }
+  }
+
+  async function sendTo(target: Target) {
     const text = draft.trim()
     selectedTarget = target
-    if (!text) return
+    if (!text || busy) return
 
-    turns = [...turns, { speaker: 'USER', text, time: now() }, { speaker: target, text: prompts[target], time: now() }]
-    draft = ''
+    busy = target
+    errorMessage = ''
+    failedTarget = null
+    try {
+      const result = await readJson<TurnResult>(
+        await fetch('/api/turn', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ target, message: text })
+        })
+      )
+      if (!result.ok) {
+        errorMessage = result.error ?? `${target} turn failed`
+        failedTarget = target
+      } else {
+        draft = ''
+      }
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error)
+      failedTarget = target
+    } finally {
+      await refresh()
+      busy = null
+    }
   }
 
-  function retry() {
-    isRetrying = true
-    window.setTimeout(() => (isRetrying = false), 700)
-  }
+  async function retry() {
+    const target = failedTarget
+    if (!target || busy) return
 
-  function now() {
-    return new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
+    busy = target
+    errorMessage = ''
+    try {
+      const result = await readJson<TurnResult>(
+        await fetch('/api/retry', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ target })
+        })
+      )
+      if (!result.ok) {
+        errorMessage = result.error ?? `${target} retry failed`
+      } else {
+        failedTarget = null
+      }
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error)
+    } finally {
+      await refresh()
+      busy = null
+    }
   }
 </script>
 
 <svelte:head>
-  <meta name="description" content="A local mock Council room shell" />
+  <meta name="description" content="GPT Dive Council shared room" />
+  <title>{roomTitle} · Council</title>
 </svelte:head>
 
 <div class="app-shell">
   <header class="topbar">
     <div class="brand"><span class="brand-mark">C</span><span>Council <em>/</em> room</span></div>
-    <div class="session"><span class="live-dot"></span> Local mock session <span class="session-id">#04</span></div>
+    <div class="session"><span class="live-dot"></span> Local Council</div>
   </header>
 
   <main class="room">
     <section class="room-heading">
       <div>
-        <p class="eyebrow">WORKSPACE / DECISION ROOM</p>
-        <h1>Untitled council</h1>
-        <p class="subheading">A quiet place to put the question in the middle.</p>
+        <p class="eyebrow">WORKSPACE / SHARED ROOM</p>
+        <h1>{roomTitle}</h1>
+        <p class="subheading">USER moderates. SOL and OPUS share the same chronological discussion.</p>
       </div>
-      <div class="room-meta"><span>3 participants</span><span class="meta-divider"></span><span>Mock only</span></div>
+      <div class="room-meta"><span>3 participants</span><span class="meta-divider"></span><span>Git-backed</span></div>
     </section>
 
     <div class="workspace">
       <section class="transcript-panel" aria-label="Council transcript">
         <div class="panel-label"><span>TRANSCRIPT</span><span class="turn-count">{turns.length} turns</span></div>
         <div class="transcript">
+          {#if loading}
+            <p class="empty-state">Loading Council…</p>
+          {:else if turns.length === 0}
+            <p class="empty-state">No turns yet. Put the first question in the room.</p>
+          {/if}
+
           {#each turns as turn}
-            <article class:has-error={turn.tone === 'error'} class="turn">
+            <article class="turn">
               <div class="turn-gutter">
                 <span class="avatar {turn.speaker.toLowerCase()}">{turn.speaker[0]}</span>
                 <span class="turn-line"></span>
               </div>
               <div class="turn-body">
-                <div class="turn-header"><strong>{turn.speaker}</strong><time>{turn.time}</time></div>
+                <div class="turn-header"><strong>{turn.speaker}</strong></div>
                 <p>{turn.text}</p>
               </div>
             </article>
           {/each}
-          <article class="turn pending-turn">
-            <div class="turn-gutter"><span class="avatar opus">O</span></div>
-            <div class="turn-body"><div class="turn-header"><strong>OPUS</strong><span class="thinking"><i></i><i></i><i></i> thinking</span></div></div>
-          </article>
+
+          {#if busy}
+            <article class="turn pending-turn">
+              <div class="turn-gutter"><span class="avatar {busy.toLowerCase()}">{busy[0]}</span></div>
+              <div class="turn-body">
+                <div class="turn-header">
+                  <strong>{busy}</strong>
+                  <span class="thinking"><i></i><i></i><i></i> working</span>
+                </div>
+              </div>
+            </article>
+          {/if}
         </div>
       </section>
 
@@ -83,22 +175,43 @@
         <div class="participants">
           <div class="participant"><span class="avatar sol">S</span><div><strong>SOL</strong><small>Primary engineer</small></div><span class="status-dot ready"></span></div>
           <div class="participant"><span class="avatar opus">O</span><div><strong>OPUS</strong><small>Independent peer</small></div><span class="status-dot ready"></span></div>
-          <div class="participant"><span class="avatar user">U</span><div><strong>YOU</strong><small>Room owner</small></div><span class="status-dot you"></span></div>
+          <div class="participant"><span class="avatar user">U</span><div><strong>YOU</strong><small>Moderator / owner</small></div><span class="status-dot you"></span></div>
         </div>
 
         <div class="side-divider"></div>
         <div class="panel-label">ROOM STATUS</div>
-        <div class="status-card"><span class="status-icon">✓</span><div><strong>Listening</strong><small>All participants are ready</small></div></div>
-        <div class="error-card"><div class="error-title"><span class="warning">!</span><strong>Connection paused</strong></div><p>This is a simulated error state. Nothing has been sent.</p><button onclick={retry} disabled={isRetrying}>{isRetrying ? 'Trying again…' : 'Try again'}</button></div>
-        <p class="safe-note">Mock actions are local only. No backend is connected yet.</p>
+        <div class="status-card">
+          <span class="status-icon">{busy ? '…' : '✓'}</span>
+          <div>
+            <strong>{busy ? `${busy} turn in progress` : 'Ready'}</strong>
+            <small>{bridgeStarted ? 'Web SOL bridge connected' : 'Web SOL bridge connects on first SOL turn'}</small>
+          </div>
+        </div>
+
+        {#if errorMessage}
+          <div class="error-card">
+            <div class="error-title"><span class="warning">!</span><strong>Turn paused</strong></div>
+            <p>{errorMessage}</p>
+            {#if failedTarget}
+              <button onclick={retry} disabled={busy !== null}>{busy ? 'Retrying…' : `Retry ${failedTarget}`}</button>
+            {/if}
+          </div>
+        {/if}
+        <p class="safe-note">The transcript and participant cursors are stored in the local Council Git repository.</p>
       </aside>
     </div>
 
     <section class="composer-wrap" aria-label="Message composer">
       <div class="composer-label"><span>YOUR TURN</span><span class="target-label">Target: <b>{selectedTarget}</b></span></div>
-      <textarea bind:value={draft} placeholder="Add a thought to the room…" rows="3" onkeydown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) sendTo(selectedTarget) }}></textarea>
-      <div class="composer-footer"><span class="hint">⌘ Enter to send</span><div class="send-actions"><button class="target-button sol-button" onclick={() => sendTo('SOL')}><span>↗</span> To SOL</button><button class="target-button opus-button" onclick={() => sendTo('OPUS')}><span>↗</span> To OPUS</button></div></div>
+      <textarea bind:value={draft} placeholder="Add a thought to the room…" rows="3" disabled={busy !== null} onkeydown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) void sendTo(selectedTarget) }}></textarea>
+      <div class="composer-footer">
+        <span class="hint">Ctrl / ⌘ Enter to send</span>
+        <div class="send-actions">
+          <button class="target-button sol-button" onclick={() => void sendTo('SOL')} disabled={busy !== null || !draft.trim()}><span>↗</span> To SOL</button>
+          <button class="target-button opus-button" onclick={() => void sendTo('OPUS')} disabled={busy !== null || !draft.trim()}><span>↗</span> To OPUS</button>
+        </div>
+      </div>
     </section>
-    <footer><span>COUNCIL ROOM SHELL</span><span>Built for a focused exchange <b>·</b> v0.1</span></footer>
+    <footer><span>GPT DIVE COUNCIL</span><span>Automate transport <b>·</b> preserve judgment</span></footer>
   </main>
 </div>

@@ -179,6 +179,27 @@ async def run_sol_turn(
     return {"user_commit": user["commit"], **result}
 
 
+def reconcile_sol_response(council_dir: str | Path) -> dict[str, Any] | None:
+    """Advance SOL's cursor if a late response commit already reached Git."""
+    repo = Path(council_dir).expanduser().resolve()
+    current = head(repo)
+    before_context = context_commit(repo, "SOL")
+    if (
+        current == before_context
+        or _commit_subject(repo, current) != "council: SOL turn"
+    ):
+        return None
+    after_context = advance_context(repo, "SOL", current)
+    return {
+        "ok": True,
+        "participant": "SOL",
+        "response_commit": current,
+        "context_before": before_context,
+        "context_after": after_context,
+        "recovered_late_response": True,
+    }
+
+
 async def retry_sol_turn(
     council_dir: str | Path,
     *,
@@ -189,21 +210,10 @@ async def retry_sol_turn(
 ) -> dict[str, Any]:
     """Retry SOL without a duplicate USER commit, or reconcile a late response commit."""
     repo = Path(council_dir).expanduser().resolve()
+    recovered = reconcile_sol_response(repo)
+    if recovered is not None:
+        return recovered
     current = head(repo)
-    before_context = context_commit(repo, "SOL")
-    if (
-        current != before_context
-        and _commit_subject(repo, current) == "council: SOL turn"
-    ):
-        after_context = advance_context(repo, "SOL", current)
-        return {
-            "ok": True,
-            "participant": "SOL",
-            "response_commit": current,
-            "context_before": before_context,
-            "context_after": after_context,
-            "recovered_late_response": True,
-        }
     return await _complete_sol_turn(
         repo,
         current,
