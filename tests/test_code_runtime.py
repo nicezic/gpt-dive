@@ -82,6 +82,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "local_result",
         "local_cancel",
         "subagent_call",
+        "council_emit",
         "gz64",
     }
     assert "signature" in result["local_start"]
@@ -178,6 +179,22 @@ def test_subagent_call_inherits_code_mode_workspace(monkeypatch, tmp_path: Path)
         "result": "WORKSPACE_OK"
     }
     assert calls[0]["workspace_dir"] == str(tmp_path)
+
+
+def test_council_emit_is_registry_capability(monkeypatch, tmp_path: Path) -> None:
+    import gpt_dive.app as app_module
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_emit(council_dir: str, message: str):
+        calls.append((council_dir, message))
+        return {"ok": True, "commit": "abc123"}
+
+    monkeypatch.setattr(app_module, "emit_sol_response", fake_emit)
+    code = f"await council_emit(council_dir={str(tmp_path)!r}, message=\"SOL_OK\")"
+    result = asyncio.run(code_mode(code))["result"]
+    assert result == {"ok": True, "commit": "abc123"}
+    assert calls == [(str(tmp_path), "SOL_OK")]
 
 
 def _wait_code_mode_job(job_id: str, timeout: float = 4.0) -> dict[str, object]:

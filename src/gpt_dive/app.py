@@ -17,6 +17,7 @@ from mcp.server import MCPServer
 from pydantic import Field
 
 from .code_runtime import CallableRegistry, MontyCodeRuntime
+from .council import emit_sol_response
 from .job_manager import JobManager
 from .subagent_runtime import invoke_subagent
 from .tasks_extension import TasksExtension
@@ -311,6 +312,10 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
+    async def council_emit(*, council_dir: str, message: str) -> dict[str, Any]:
+        """Persist one Web SOL Council response as an append-only Git event."""
+        return await asyncio.to_thread(emit_sol_response, council_dir, message)
+
     async def gz64(payload: str) -> dict[str, Any]:
         """Decode Base64+gzip UTF-8 command text and execute it locally."""
         compressed = base64.b64decode(payload, validate=True)
@@ -323,6 +328,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("local_result", local_result)
     registry.register("local_cancel", local_cancel)
     registry.register("subagent_call", subagent_call)
+    registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)
     return registry
 
