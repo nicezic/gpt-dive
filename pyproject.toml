@@ -9,6 +9,7 @@ dependencies = [
     "pydantic-monty>=0.0.19",
     "pydantic-ai-slim[anthropic,openai-codex]",
     "pydantic-ai-harness==0.18.1",
+    "playwright>=1.62.0",
 ]
 
 [dependency-groups]

@@ -312,9 +312,16 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
-    async def council_emit(*, council_dir: str, message: str) -> dict[str, Any]:
+    async def council_emit(
+        *,
+        council_dir: str,
+        message: str,
+        expected_head: str | None = None,
+    ) -> dict[str, Any]:
         """Persist one Web SOL Council response as an append-only Git event."""
-        return await asyncio.to_thread(emit_sol_response, council_dir, message)
+        return await asyncio.to_thread(
+            emit_sol_response, council_dir, message, expected_head
+        )
 
     async def gz64(payload: str) -> dict[str, Any]:
         """Decode Base64+gzip UTF-8 command text and execute it locally."""

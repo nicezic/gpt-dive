@@ -163,7 +163,9 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
     ]
 
 
-def test_subagent_call_inherits_code_mode_workspace(monkeypatch, tmp_path: Path) -> None:
+def test_subagent_call_inherits_code_mode_workspace(
+    monkeypatch, tmp_path: Path
+) -> None:
     import gpt_dive
     import gpt_dive.app as app_module
 
@@ -184,17 +186,20 @@ def test_subagent_call_inherits_code_mode_workspace(monkeypatch, tmp_path: Path)
 def test_council_emit_is_registry_capability(monkeypatch, tmp_path: Path) -> None:
     import gpt_dive.app as app_module
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str | None]] = []
 
-    def fake_emit(council_dir: str, message: str):
-        calls.append((council_dir, message))
+    def fake_emit(council_dir: str, message: str, expected_head: str | None = None):
+        calls.append((council_dir, message, expected_head))
         return {"ok": True, "commit": "abc123"}
 
     monkeypatch.setattr(app_module, "emit_sol_response", fake_emit)
-    code = f"await council_emit(council_dir={str(tmp_path)!r}, message=\"SOL_OK\")"
+    code = (
+        f"await council_emit(council_dir={str(tmp_path)!r}, "
+        'message="SOL_OK", expected_head="deadbeef")'
+    )
     result = asyncio.run(code_mode(code))["result"]
     assert result == {"ok": True, "commit": "abc123"}
-    assert calls == [(str(tmp_path), "SOL_OK")]
+    assert calls == [(str(tmp_path), "SOL_OK", "deadbeef")]
 
 
 def _wait_code_mode_job(job_id: str, timeout: float = 4.0) -> dict[str, object]:
