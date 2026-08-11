@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .opus import run_opus_turn
 from .repo import (
     CouncilProtocolError,
     advance_context,
@@ -31,6 +32,7 @@ __all__ = [
     "emit_sol_response",
     "head",
     "initialize_council",
+    "run_opus_turn",
     "transcript_suffix",
     "unread_transcript",
 ]
