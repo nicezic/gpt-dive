@@ -52,7 +52,7 @@ Do not restart the active GPT Dive MCP/tunnel service while the current ChatGPT 
 When a reload is required from the active ChatGPT session, schedule it after the current MCP call has had time to return:
 
 ```bash
-nohup sh -c 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' \
+nohup sh -c 'sleep 5; systemctl --user restart chatgpt-wsl2-mcp.service' \
   >/tmp/gpt-dive-restart.log 2>&1 &
 ```
 
