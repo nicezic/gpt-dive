@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent, UsageLimits
@@ -11,6 +12,10 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+from pydantic_ai_harness import FileSystem, Shell
+from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from .subagent_runtime import MODEL_SPECS
 
@@ -32,6 +37,39 @@ def _build_model(alias: str):
         model_name = "gpt-5.6-terra" if alias == "terra" else "gpt-5.6-luna"
         return OpenAIResponsesModel(model_name, provider=OpenAICodexProvider())
     raise ValueError(f"unknown model alias: {alias}")
+
+
+def _build_worker_capabilities(workspace_dir: str):
+    """Build the default coding-worker capability bundle for one local workspace."""
+    workspace = Path(workspace_dir).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"workspace_dir is not a directory: {workspace}")
+
+    guard_bin = Path(__file__).resolve().parent / "guard-bin"
+    pnpm_bin = Path.home() / ".local" / "share" / "pnpm"
+    shell_env = os.environ.copy()
+    shell_env["PATH"] = f"{guard_bin}:{pnpm_bin}:{shell_env.get('PATH', '')}"
+    denied_env_patterns = [
+        *LLM_API_KEY_ENV_PATTERNS,
+        "MINIMAX_*",
+        "AIAPIFLOW_*",
+    ]
+
+    return [
+        FileSystem(root_dir=workspace),
+        Shell(
+            cwd=workspace,
+            env=shell_env,
+            denied_env_patterns=denied_env_patterns,
+            default_timeout=60.0,
+            max_output_chars=50_000,
+        ),
+        RepoContext(
+            workspace_dir=workspace,
+            nested_traversal=True,
+        ),
+        ToolOutputLimits(),
+    ]
 
 
 def _usage_summary(result: Any) -> dict[str, Any]:
@@ -59,11 +97,13 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     task = str(payload["task"])
     output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
     model = _build_model(alias)
-    agent = Agent(model)
+    workspace_dir = payload.get("workspace_dir")
+    capabilities = _build_worker_capabilities(str(workspace_dir)) if workspace_dir else []
+    agent = Agent(model, capabilities=capabilities)
     result = await agent.run(
         task,
         usage_limits=UsageLimits(
-            request_limit=2, output_tokens_limit=output_tokens_limit
+            output_tokens_limit=output_tokens_limit
         ),
     )
     spec = MODEL_SPECS[alias]

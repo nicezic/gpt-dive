@@ -63,6 +63,7 @@ async def invoke_subagent(
     task: str,
     timeout: float = 120.0,
     output_tokens_limit: int = 4096,
+    workspace_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run one registered model call with credentials scoped to a child process."""
     alias = _validate_call(model, task, timeout, output_tokens_limit)
@@ -71,6 +72,7 @@ async def invoke_subagent(
             "model": alias,
             "task": task,
             "output_tokens_limit": output_tokens_limit,
+            "workspace_dir": workspace_dir,
         },
         ensure_ascii=False,
     ).encode()

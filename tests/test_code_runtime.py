@@ -82,9 +82,24 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "local_result",
         "local_cancel",
         "subagent_call",
+        "gz64",
     }
     assert "signature" in result["local_start"]
     assert "durable" in result["local_start"]["description"].lower()
+
+
+def test_gz64_capability_round_trip() -> None:
+    import base64
+    import gzip
+
+    command = "printf 'GZ64_EXEC_OK\\n'"
+    payload = base64.b64encode(
+        gzip.compress(command.encode("utf-8"), compresslevel=1, mtime=0)
+    ).decode("ascii")
+    code = f"await gz64({payload!r})"
+    result = asyncio.run(code_mode(code))["result"]
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "GZ64_EXEC_OK\n"
 
 
 def test_local_job_lifecycle_can_aggregate_without_raw_output(monkeypatch) -> None:
@@ -142,8 +157,27 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             "task": "review this",
             "timeout": 17,
             "output_tokens_limit": 321,
+            "workspace_dir": None,
         }
     ]
+
+
+def test_subagent_call_inherits_code_mode_workspace(monkeypatch, tmp_path: Path) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_invoke_subagent(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "model": kwargs["model"], "output": "WORKSPACE_OK"}
+
+    monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
+    code = "result = await subagent_call(model='terra', task='edit file'); result['output']"
+    assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
+        "result": "WORKSPACE_OK"
+    }
+    assert calls[0]["workspace_dir"] == str(tmp_path)
 
 
 def _wait_code_mode_job(job_id: str, timeout: float = 4.0) -> dict[str, object]:

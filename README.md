@@ -17,7 +17,7 @@ bootstrap -> code_mode -> registered capabilities -> WSL2
 ## MCP Surface v1
 
 - `bootstrap`: first call in every fresh ChatGPT Web session; loads trusted local Wiki context.
-- `code_mode`: **primary execution root**. Pydantic Monty-backed programmable mode for parallel work, registered local capabilities, filtering, transformation, and compact aggregation. Long programs can be detached with `background=True` and later managed with `action="status"`, `"result"`, or `"cancel"`. Inspect `CAPABILITIES` at runtime to discover the current registry.
+- `code_mode`: **primary execution root**. Pydantic Monty-backed programmable mode for parallel work, registered local capabilities, filtering, transformation, and compact aggregation. Long programs can be detached with `background=True` and later managed with `action="status"`, `"result"`, or `"cancel"`. `CAPABILITIES` is discovery metadata only; invoke discovered capabilities directly by async name.
 - `wsl2_sync`: lower-level synchronous shell path for short commands that need an immediate result.
 - `wsl2_async`: lower-level durable background-job lifecycle path. Use `action="capabilities"` to discover current actions.
 
@@ -78,3 +78,14 @@ src/gpt_dive/
 ```
 
 Workers are launched as package modules (`python -m gpt_dive.code_mode_worker` and `python -m gpt_dive.subagent_worker`) rather than by repository-relative script paths. This keeps imports stable and makes the installed package the same code exercised by tests and runtime.
+
+### Workspace subagents
+
+`subagent_call` inherits the parent Code Mode `cwd` unless an explicit `cwd` is supplied. A workspace-enabled child uses the official Pydantic AI Harness coding bundle rather than bespoke one-off tools:
+
+- `FileSystem`: scoped read/write/edit/list/search/find/create/info with sensitive-path protection.
+- `Shell`: generic command and background-process execution rooted at the workspace; Dive `guard-bin` stays first on `PATH`, and AI-provider credential variables are stripped from spawned commands.
+- `RepoContext`: repository instruction/context discovery while traversing files.
+- `ToolOutputLimits`: bounds oversized tool returns in the child history.
+
+`FileSystem` enforces workspace path containment. `Shell` is intentionally broader and is not an OS sandbox; its denylist is defense-in-depth, not a hard isolation boundary.

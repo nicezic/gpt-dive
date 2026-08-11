@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-monty>=0.0.19",
     "pydantic-ai-slim[anthropic,openai-codex]",
+    "pydantic-ai-harness==0.18.1",
 ]
 
 [dependency-groups]
@@ -19,6 +20,12 @@ dev = [
 
 [tool.uv.sources]
 pydantic-ai-slim = { git = "https://github.com/Wh1isper/pydantic-ai.git", rev = "af055625bf67", subdirectory = "pydantic_ai_slim" }
+
+[tool.uv]
+# Harness targets upstream Pydantic AI version metadata; keep Dive's Codex-enabled fork.
+exclude-dependencies = [
+    { package = { name = "pydantic-ai-harness" }, dependencies = ["pydantic-ai-slim"] },
+]
 
 [project.scripts]
 gpt-dive = "gpt_dive.__main__:main"

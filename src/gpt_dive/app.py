@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import gzip
 import json
 import os
 import re
@@ -298,14 +300,22 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         task: str,
         timeout: float = 120.0,
         output_tokens_limit: int = 4096,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Call a registered subagent model alias: opus5, m3, terra, or luna."""
+        """Call a registered subagent with file tools scoped to cwd."""
         return await invoke_subagent(
             model=model,
             task=task,
             timeout=timeout,
             output_tokens_limit=output_tokens_limit,
+            workspace_dir=cwd if cwd is not None else default_cwd,
         )
+
+    async def gz64(payload: str) -> dict[str, Any]:
+        """Decode Base64+gzip UTF-8 command text and execute it locally."""
+        compressed = base64.b64decode(payload, validate=True)
+        command = gzip.decompress(compressed).decode("utf-8")
+        return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
     registry.register("local_exec", local_exec)
     registry.register("local_start", local_start)
@@ -313,6 +323,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("local_result", local_result)
     registry.register("local_cancel", local_cancel)
     registry.register("subagent_call", subagent_call)
+    registry.register("gz64", gz64)
     return registry
 
 
@@ -468,8 +479,11 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
         "to detach long-running Monty programs, then action='status', 'result', or 'cancel' with the "
         "returned job_id. Combine independent operations and filter/transform/aggregate large "
         "intermediate data before returning only a compact result. The sandbox receives CWD and "
-        "CAPABILITIES; inspect CAPABILITIES at runtime instead of relying on a hard-coded capability "
-        "list. The local WSL2 filesystem is mounted read-write."
+        "CAPABILITIES; CAPABILITIES is discovery metadata only (signature + description), not a "
+        "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
+        "by async name, e.g. await local_exec(...) or await subagent_call(...). A subagent_call "
+        "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
+        "Pydantic Harness FileSystem + Shell coding toolkit, RepoContext, and bounded tool outputs. The local WSL2 filesystem is mounted read-write."
     ),
 )
 async def code_mode(
