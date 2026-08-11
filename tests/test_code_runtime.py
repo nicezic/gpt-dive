@@ -163,6 +163,32 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
     ]
 
 
+def test_subagent_call_preserves_failure_diagnostics(monkeypatch) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    async def fake_invoke_subagent(**kwargs):
+        return {
+            "ok": False,
+            "model": kwargs["model"],
+            "provider": "openai-codex",
+            "error": "SUBAGENT_FAILED",
+            "stderr": "worker detail",
+        }
+
+    monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
+    result = asyncio.run(
+        gpt_dive.code_mode("await subagent_call(model='luna', task='fail')")
+    )["result"]
+    assert result == {
+        "ok": False,
+        "model": "luna",
+        "provider": "openai-codex",
+        "error": "SUBAGENT_FAILED",
+        "stderr": "worker detail",
+    }
+
+
 def test_subagent_call_inherits_code_mode_workspace(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -246,6 +272,30 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
     finally:
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> None:
+    import json
+
+    import gpt_dive.app as app_module
+
+    failure = {"ok": False, "model": "luna", "error": "SUBAGENT_FAILED"}
+    envelope = {"v": 1, "ok": True, "payload": {"result": failure}}
+    monkeypatch.setattr(
+        app_module.jobs,
+        "result",
+        lambda _job_id: {
+            "job_id": "job",
+            "ready": True,
+            "status": "completed",
+            "exit_code": 0,
+            "stdout": json.dumps(envelope),
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(app_module, "_cleanup_code_mode_payload", lambda _job_id: None)
+
+    assert app_module._background_code_mode_result("job")["result"] == failure
 
 
 def test_code_mode_background_exception_is_structured(tmp_path: Path) -> None:

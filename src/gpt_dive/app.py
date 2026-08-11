@@ -303,7 +303,11 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         output_tokens_limit: int = 4096,
         cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Call a registered subagent with file tools scoped to cwd."""
+        """Call a registered subagent with file tools scoped to cwd.
+
+        If ok is false, preserve the full result including error/stderr diagnostics;
+        do not project the failure down to only ok/model/output.
+        """
         return await invoke_subagent(
             model=model,
             task=task,
