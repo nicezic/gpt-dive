@@ -177,6 +177,52 @@ After PASS/FAIL, return the evidence to Design Council before deciding the next 
 
 ## Result
 
-**PENDING**
+**FULL PASS — 2026-08-11**
 
-Append the actual experiment evidence, deviations, and PASS/FAIL verdict here after execution.
+The one-loop Web SOL transport was validated end to end.
+
+### Evidence
+
+- Edge remote debugging was enabled from `edge://inspect/#remote-debugging`.
+- Edge wrote `DevToolsActivePort` with port `9222` and a browser WebSocket path.
+- Playwright attached to the already-running default Edge profile and resolved the exact existing ChatGPT conversation tab.
+- One-shot `connect_over_cdp()` worked, but each new attach triggered an Edge approval prompt.
+- Replacing one-shot attachment with a persistent CDP WebSocket bridge removed the repeated approval prompt: the first connection required approval, subsequent sends reused the same connection without another prompt.
+- The persistent bridge accepts local send requests over `/tmp/gpt-dive-council-edge.sock`; it does not scrape assistant output or inspect response completion.
+- The final Playwright-injected marker reached the real Web SOL conversation.
+- Web SOL invoked `council_emit` through the existing `code_mode` capability surface.
+- `council_emit` appended exactly one `# SOL` block to `/home/nicezic/council-e2e-260811/chat.md` and created exactly one Git commit.
+- Council repo HEAD advanced from `bb2cb2e37286bbcde932db93a970fc2b4a21c8ec` to `df6630b0c58420c611532bded028f7a3f65037d3`.
+- Resulting transcript content was:
+
+```markdown
+# SOL
+
+COUNCIL_FULL_E2E_OK
+
+---
+```
+
+### Test Contract Verdict
+
+1. **Input delivery — PASS**
+2. **SOL receipt — PASS**
+3. **MCP return path — PASS**
+4. **Transcript persistence — PASS**
+5. **Git persistence — PASS**
+6. **Git commit as completion signal — PASS**
+
+### Useful Deviations / Findings
+
+- `council_emit` did **not** require a fifth top-level MCP tool. It works as a registered `code_mode` capability, preserving the existing four-tool MCP surface.
+- The practical browser adapter should be **persistent for the Council session**. Reconnecting CDP for every message creates repeated Edge approval friction.
+- The first bridge run used the normal durable-job default timeout of 600 seconds and terminated exactly at that timeout, leaving a stale Unix socket. This is an operational lifecycle issue, not a transport failure. A Council-owned bridge should have an explicit session lifetime or explicit start/stop lifecycle.
+- Delayed MCP service reload using `nohup + sleep` is required to avoid cutting off the active MCP response. The documented buffer was increased from 3 seconds to 5 seconds after live acceptance showed 3 seconds was tight.
+
+### Decision
+
+The feasibility hypothesis is proven:
+
+> **Playwright can provide input to the real Web SOL session while MCP + Git provide an explicit, non-scraping output and completion path.**
+
+This PASS does not by itself approve the full Design Council runtime. The next Council decision should promote only the proven primitives and decide the durable Council protocol/lifecycle around them.
