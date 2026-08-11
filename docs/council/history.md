@@ -130,3 +130,9 @@ The feature name is **Council**.
 - Natural Korean trigger: "회의", "카운실", or "Council"
 
 Council is intentionally broader than architecture review. It is meant for difficult debugging, brainstorming, design, and technical decision-making.
+
+## Council Web UI Stack
+
+Council UI uses **Svelte 5 + Vite + TypeScript**.
+
+The main reason is **AI friendliness**. Svelte 5 has unusually strong AI coding support, while also offering fast development and a lightweight frontend.
