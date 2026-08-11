@@ -1,14 +1,14 @@
 # GPT Dive — Current Continuation
 
-> Updated: 2026-08-10
-> Purpose: compact fresh-session handoff. Durable design history lives in `plans/` and `docs/`.
+> Updated: 2026-08-12
+> Purpose: compact fresh-session handoff only. Durable Why/history belongs in `docs/`; implementation artifacts belong in `plans/` and `specs/`.
 
-## Current Verdict
+## Current Position
 
-- MCP Surface v1: **FULL PASS ✅**
-- Background Code Mode: **FULL PASS ✅**
-- Full test suite before package refactor: **33 passed**
-- Source layout refactor: `src/gpt_dive/` **FULL PASS ✅**
+- **v1 Local MCP Runtime**: stable
+- **v2 Pydantic AI Harness**: stable and extensible
+- **v3 Council**: design converged enough to enter `to-spec`; implementation has not started
+- Last verified local suite before this cleanup: **39 passed**
 
 ## Stable Web MCP Surface
 
@@ -21,79 +21,96 @@ wsl2_sync
 wsl2_async
 ```
 
-`code_mode` is the primary harnessable execution root. It supports foreground execution plus detached execution through `background=True` and lifecycle actions `status`, `result`, and `cancel`.
+`code_mode` remains the primary execution root. Current registry includes local sync/durable execution, subagent support, `gz64`, and the experimental `council_emit` transport capability.
 
-## Background Architecture
+## Council — Current Decisions
 
-```text
-code_mode(background=True)
-        ↓
-custom JobManager
-        ↓
-durable worker process
-        ↓
-fresh Monty runtime + registry rebuild
-        ↓
-strict JSON result envelope
-```
+Feature name: **Council**. Korean "회의" / "카운실" / `Council` all refer to the same workflow.
 
-`JobManager` is GPT Dive's custom durable process lifecycle manager, normally backed by `systemd --user`; it is not a Pydantic feature.
-
-Fresh ChatGPT Web E2E acceptance completed with a real detached job: start returned `running`, status reached `completed`, and result returned `3`.
-
-## Source Layout
+Current mental model:
 
 ```text
-src/gpt_dive/
-├── __init__.py
-├── __main__.py
-├── app.py
-├── code_runtime.py
-├── code_mode_worker.py
-├── job_manager.py
-├── subagent_runtime.py
-├── subagent_worker.py
-├── tasks_extension.py
-└── guard-bin/
+Shared Council Room
+USER = moderator / domain owner
+SOL  = primary engineer
+OPUS = independent peer
 ```
 
-Package entrypoints:
+Principles:
+
+- **Shared Context** — participants reason over the chronological Council conversation.
+- **Judgment Independence** — seeing another participant's argument does not imply agreeing with it.
+- **Preserve Why** — keep causal context, disagreement, rejected alternatives, and reasons behind changed decisions.
+- **Human Controls Turns** — automate transport, not judgment.
+- **No premature summarization** in early v3.
+
+Current minimal storage direction:
 
 ```text
-python -m gpt_dive
-gpt-dive
+init.md
+chat.md
+.git/commits
+refs/council/context/sol
+refs/council/context/opus
 ```
 
-Workers use module execution rather than repository-relative script paths.
+`chat.md` stays append-only and human-readable. Git refs represent participant context cursors; do not infer transport state by parsing the last role heading.
 
-## Current Validation
+## Verified Web SOL Transport Probe
 
-After the `src/gpt_dive/` refactor:
+**FULL PASS**:
 
 ```text
-uv sync --python 3.14       PASS
-pytest                      33 passed
-uv lock --check             PASS
-git diff --check            PASS
-real systemd background     PASS, result=3
-uv build                    PASS (sdist + wheel)
-wheel guard assets          PASS
+local Council input
+  -> persistent Playwright / Edge CDP
+  -> real ChatGPT Web SOL
+  -> code_mode -> council_emit
+  -> chat.md
+  -> Git commit
 ```
 
-## Runtime Reload Rule
+Playwright is input-only. No assistant-output scraping, Copy button, clipboard extraction, or DOM completion detection is used.
 
-When changing the active MCP runtime, do not restart the service inside the same in-flight MCP call. Schedule an out-of-band/delayed restart so the current call returns first. Schema-changing acceptance should be done in a fresh ChatGPT session because Web may cache MCP schemas.
+Persistent CDP removed repeated Edge approval prompts. The generic async-job default timeout of 600 seconds was too short for the bridge, so final bridge lifecycle remains a v3 spec/implementation decision.
+
+Evidence: `plans/council/2026-08-11-web-sol-e2e.md`.
+
+## UI Decision
+
+Council Web UI stack is decided:
+
+```text
+Svelte 5 + Vite + TypeScript
+```
+
+Planned location: top-level `web/` rather than inside the Python `src/` package.
+
+## Current Task Boundary
+
+Pre-v3 documentation restructure is the current cleanup step.
+
+Next workflow after cleanup:
+
+```text
+Matt-P to-spec
+  -> specs/council.md
+  -> User + SOL + Opus review
+  -> to-tickets
+  -> v3 implementation
+```
+
+Do **not** create the Council spec during the cleanup commit.
 
 ## Key Documents
 
 ```text
-plans/2026-08-10-code-mode-background.md
-plans/2026-08-10-src-layout.md
-docs/architecture-context.md
-docs/design-council-log.md
-docs/meeting-notes.md
+docs/runtime/architecture.md
+docs/runtime/history.md
+docs/runtime/operations.md
+docs/council/history.md
+plans/council/2026-08-11-web-sol-e2e.md
 ```
 
-## Current Runtime
+## Runtime Reload Rule
 
-The tunnel launches `.venv/bin/python -m gpt_dive`. Safe delayed reload completed and a post-reload live Web MCP background smoke returned `result=3`. No acceptance gate remains for this refactor.
+Do not restart the active MCP service inline during its own in-flight call. When live reload is needed, schedule the restart out-of-band with the documented 5-second buffer. See `docs/runtime/operations.md`.
