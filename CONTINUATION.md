@@ -114,3 +114,27 @@ specs/council.md
 ## Runtime Reload Rule
 
 Do not restart the active MCP service inline during its own in-flight call. When live reload is needed, schedule the restart out-of-band with the documented 5-second buffer. See `docs/runtime/operations.md`.
+
+## Fresh-Session Handoff — 2026-08-12
+
+### Verified State
+
+- Council v3 `/to-spec` is complete and `specs/council.md` is the implementation/decision SSOT.
+- Opus reviewed the completed spec and returned **A+ / production-ready** with no blocking concern.
+- GPT Dive worktree was clean at handoff time.
+- Council Web SOL transport primitive is already FULL PASS; do not redo the old transport experiment before implementation planning.
+- `~/wiki/log.md` contains the 2026-08-12 Council v3 design/to-spec summary for bootstrap continuity.
+
+### Next Task
+
+Run `/to-tickets` against `specs/council.md`, then begin Council v3 implementation from the resulting small implementation slices. Do not reopen settled Shared Room / Git cursor / Playwright input-only / Svelte 5 decisions unless implementation exposes a genuinely new consequential problem.
+
+### Suggested Skills
+
+- `/to-tickets` — immediate next step.
+- `/code-review` — after implementation slices are complete.
+- `/handoff` — only when another fresh session needs continuation again.
+
+### Communication Note
+
+When a technical term may be unfamiliar, keep the English term and explain it immediately in parentheses. Example: `durable artifact` (세션이 끝나도 남아 있는 영구 기록물들 ex: spec, plan, ADR, commit 등).
