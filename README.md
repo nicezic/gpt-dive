@@ -49,6 +49,15 @@ ChatGPT Web caches the MCP tool schema for the current chat session. If GPT Dive
 
 Do not restart the active GPT Dive MCP/tunnel service while the current ChatGPT session is using it for an in-flight tool call. The call can remain pending until the user manually interrupts it. During implementation, validate source/schema changes through a separate local process first, return control to ChatGPT, and only reload the service out-of-band when live acceptance is actually needed.
 
+When a reload is required from the active ChatGPT session, schedule it after the current MCP call has had time to return:
+
+```bash
+nohup sh -c 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' \
+  >/tmp/gpt-dive-restart.log 2>&1 &
+```
+
+The delayed `nohup` restart is preferred over restarting the service inline: the tool call returns first, then the tunnel/MCP process is replaced a few seconds later. Check `/tmp/gpt-dive-restart.log` and the service state after reconnecting if verification is needed.
+
 ## Development
 
 ```bash
