@@ -100,3 +100,34 @@ def test_opus_receives_prior_synchronized_context_plus_only_new_unread_suffix(
     assert "First answer" not in unread
     assert context_commit(repo, "OPUS") == result["response_commit"]
     assert first_user["commit"] != result["user_commit"]
+
+
+def test_opus_retry_reuses_existing_unread_user_turn(tmp_path: Path) -> None:
+    from gpt_dive.council import retry_opus_turn
+
+    repo = tmp_path / "council"
+    initialized = initialize_council(repo, "# Council")
+    attempts = 0
+
+    async def fake_invoke(**kwargs: Any) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return {"ok": False, "error": "temporary failure"}
+        return {"ok": True, "output": "Recovered"}
+
+    failed = asyncio.run(run_opus_turn(repo, "One user turn", invoke=fake_invoke))
+    failed_head = _git(repo, "rev-parse", "HEAD")
+    retried = asyncio.run(retry_opus_turn(repo, invoke=fake_invoke))
+
+    assert failed["ok"] is False
+    assert failed_head == failed["user_commit"]
+    assert retried["ok"] is True
+    assert (
+        _git(repo, "rev-list", "--count", f"{initialized['initial_commit']}..HEAD")
+        == "2"
+    )
+    assert (repo / "chat.md").read_text(encoding="utf-8") == (
+        "# USER\n\nOne user turn\n\n---\n# OPUS\n\nRecovered\n\n---\n"
+    )
+    assert context_commit(repo, "OPUS") == retried["response_commit"]

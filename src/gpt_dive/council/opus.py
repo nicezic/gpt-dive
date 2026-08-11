@@ -10,6 +10,7 @@ from .repo import (
     append_turn,
     chat_at,
     context_commit,
+    head,
     unread_transcript,
 )
 
@@ -43,19 +44,18 @@ def _build_opus_task(
     )
 
 
-async def run_opus_turn(
-    council_dir: str | Path,
-    user_message: str,
+async def _complete_opus_turn(
+    repo: Path,
+    target_commit: str,
     *,
-    invoke: OpusInvoker = invoke_subagent,
-    timeout: float = 180.0,
-    output_tokens_limit: int = 4096,
+    invoke: OpusInvoker,
+    timeout: float,
+    output_tokens_limit: int,
 ) -> dict[str, Any]:
-    """Commit one USER turn, ask OPUS, commit its response, then advance its cursor."""
-    repo = Path(council_dir).expanduser().resolve()
     before_context = context_commit(repo, "OPUS")
-    user = append_turn(repo, "USER", user_message)
-    unread = unread_transcript(repo, "OPUS", user["commit"])
+    unread = unread_transcript(repo, "OPUS", target_commit)
+    if not unread.strip():
+        raise ValueError("OPUS has no unread Council context to process")
     synchronized = chat_at(repo, before_context)
     init_text = (repo / "init.md").read_text(encoding="utf-8")
     task = _build_opus_task(
@@ -75,7 +75,7 @@ async def run_opus_turn(
         return {
             "ok": False,
             "participant": "OPUS",
-            "user_commit": user["commit"],
+            "target_commit": target_commit,
             "context_before": before_context,
             "context_after": before_context,
             "error": result.get("error", "OPUS provider call failed"),
@@ -87,7 +87,7 @@ async def run_opus_turn(
         return {
             "ok": False,
             "participant": "OPUS",
-            "user_commit": user["commit"],
+            "target_commit": target_commit,
             "context_before": before_context,
             "context_after": before_context,
             "error": "OPUS returned an empty response",
@@ -99,10 +99,50 @@ async def run_opus_turn(
     return {
         "ok": True,
         "participant": "OPUS",
-        "user_commit": user["commit"],
+        "target_commit": target_commit,
         "response_commit": response["commit"],
         "context_before": before_context,
         "context_after": after_context,
         "output": output,
         "usage": result.get("usage", {}),
     }
+
+
+async def run_opus_turn(
+    council_dir: str | Path,
+    user_message: str,
+    *,
+    invoke: OpusInvoker = invoke_subagent,
+    timeout: float = 180.0,
+    output_tokens_limit: int = 4096,
+) -> dict[str, Any]:
+    """Commit one USER turn, ask OPUS, commit its response, then advance its cursor."""
+    repo = Path(council_dir).expanduser().resolve()
+    user = append_turn(repo, "USER", user_message)
+    result = await _complete_opus_turn(
+        repo,
+        user["commit"],
+        invoke=invoke,
+        timeout=timeout,
+        output_tokens_limit=output_tokens_limit,
+    )
+    return {"user_commit": user["commit"], **result}
+
+
+async def retry_opus_turn(
+    council_dir: str | Path,
+    *,
+    invoke: OpusInvoker = invoke_subagent,
+    timeout: float = 180.0,
+    output_tokens_limit: int = 4096,
+) -> dict[str, Any]:
+    """Retry OPUS from its unchanged cursor without appending a duplicate USER turn."""
+    repo = Path(council_dir).expanduser().resolve()
+    target = head(repo)
+    return await _complete_opus_turn(
+        repo,
+        target,
+        invoke=invoke,
+        timeout=timeout,
+        output_tokens_limit=output_tokens_limit,
+    )
