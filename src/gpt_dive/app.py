@@ -20,6 +20,7 @@ from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .job_manager import JobManager
+from .repo_search import search_repo
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
 from .tasks_extension import TasksExtension
@@ -333,6 +334,23 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             output_tokens_limit=output_tokens_limit,
         )
 
+    async def repo_search(
+        *,
+        query: str,
+        path: str | None = None,
+        max_results: int = 8,
+        max_tokens: int = 6000,
+        allow_tests: bool = False,
+    ) -> dict[str, Any]:
+        """Search local code/docs with Probe using BM25 ranking and AST-aware blocks."""
+        return await search_repo(
+            query=query,
+            path=path if path is not None else (default_cwd or str(Path.home())),
+            max_results=max_results,
+            max_tokens=max_tokens,
+            allow_tests=allow_tests,
+        )
+
     async def council_emit(
         *,
         council_dir: str,
@@ -357,6 +375,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("local_cancel", local_cancel)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)
+    registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)
     return registry

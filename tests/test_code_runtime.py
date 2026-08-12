@@ -83,6 +83,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "local_cancel",
         "subagent_call",
         "bare",
+        "repo_search",
         "council_emit",
         "gz64",
     }
@@ -185,6 +186,32 @@ def test_bare_is_registry_capability(monkeypatch) -> None:
             "prompt": "think",
             "timeout": 120.0,
             "output_tokens_limit": 4096,
+        }
+    ]
+
+
+def test_repo_search_is_registry_capability(monkeypatch, tmp_path: Path) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_search_repo(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "engine": "probe", "count": 1, "results": []}
+
+    monkeypatch.setattr(app_module, "search_repo", fake_search_repo)
+    code = "result = await repo_search(query='model AND provider'); result['engine']"
+    assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
+        "result": "probe"
+    }
+    assert calls == [
+        {
+            "query": "model AND provider",
+            "path": str(tmp_path),
+            "max_results": 8,
+            "max_tokens": 6000,
+            "allow_tests": False,
         }
     ]
 
