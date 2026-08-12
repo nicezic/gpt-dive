@@ -342,7 +342,11 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         max_tokens: int = 6000,
         allow_tests: bool = False,
     ) -> dict[str, Any]:
-        """Search local code/docs with Probe using BM25 ranking and AST-aware blocks."""
+        """Search local code/docs with Probe using BM25 ranking and AST-aware blocks.
+
+        Prefer this for exploring unfamiliar repositories and locating relevant code by concept.
+        Use precise technical keywords when possible.
+        """
         return await search_repo(
             query=query,
             path=path if path is not None else (default_cwd or str(Path.home())),
