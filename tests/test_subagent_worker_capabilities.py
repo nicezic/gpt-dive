@@ -46,7 +46,9 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     assert "OPENAI_*" in shell.denied_env_patterns
     assert "MINIMAX_*" in shell.denied_env_patterns
     assert "AIAPIFLOW_*" in shell.denied_env_patterns
-    assert shell.env["PATH"].split(":", 1)[0].endswith("gpt_dive/guard-bin")
+    path_entries = shell.env["PATH"].split(":")
+    assert path_entries[0].endswith("gpt_dive/guard-bin")
+    assert str(Path.home() / ".bun" / "bin") in path_entries
 
 
 def test_worker_filesystem_keeps_sensitive_defaults_protected(tmp_path: Path) -> None:

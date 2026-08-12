@@ -7,47 +7,21 @@ import signal
 from pathlib import Path
 from typing import Any
 
+from .model_registry import ModelAlias, model_catalog, resolve_model
+from .runtime_env import build_runtime_path
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
 
-MODEL_SPECS: dict[str, dict[str, str]] = {
-    "opus5": {
-        "provider": "aiapiflow",
-        "model": "claude-opus-5",
-        "transport": "anthropic-compatible",
-    },
-    "m3": {
-        "provider": "minimax",
-        "model": "MiniMax-M3",
-        "transport": "anthropic-compatible",
-    },
-    "terra": {
-        "provider": "openai-codex",
-        "model": "gpt-5.6-terra",
-        "transport": "codex-subscription",
-    },
-    "luna": {
-        "provider": "openai-codex",
-        "model": "gpt-5.6-luna",
-        "transport": "codex-subscription",
-    },
-}
-
-
-def model_catalog() -> dict[str, dict[str, str]]:
-    return {name: dict(spec) for name, spec in MODEL_SPECS.items()}
+# Backward-compatible derived view. ModelAlias remains the SSOT.
+MODEL_SPECS = model_catalog()
 
 
 def _validate_call(
     model: str, task: str, timeout: float, output_tokens_limit: int
-) -> str:
-    alias = model.strip().lower()
-    if alias not in MODEL_SPECS:
-        choices = ", ".join(sorted(MODEL_SPECS))
-        raise ValueError(
-            f"unknown subagent model alias {model!r}; choose one of: {choices}"
-        )
+) -> ModelAlias:
+    alias = resolve_model(model, lane="subagent")
     if not task.strip():
         raise ValueError("task must not be empty")
     if timeout <= 0:
@@ -65,11 +39,11 @@ async def invoke_subagent(
     output_tokens_limit: int = 4096,
     workspace_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Run one registered model call with credentials scoped to a child process."""
+    """Run one registered coding subagent with credentials scoped to a child process."""
     alias = _validate_call(model, task, timeout, output_tokens_limit)
     payload = json.dumps(
         {
-            "model": alias,
+            "model": alias.value,
             "task": task,
             "output_tokens_limit": output_tokens_limit,
             "workspace_dir": workspace_dir,
@@ -94,8 +68,7 @@ async def invoke_subagent(
     ]
 
     child_env = os.environ.copy()
-    local_bin = str(Path.home() / ".local" / "bin")
-    child_env["PATH"] = f"{local_bin}:{child_env.get('PATH', '')}"
+    child_env["PATH"] = build_runtime_path(inherited=child_env.get("PATH"))
 
     proc = await asyncio.create_subprocess_exec(
         *command,
@@ -117,8 +90,8 @@ async def invoke_subagent(
         await proc.wait()
         return {
             "ok": False,
-            "model": alias,
-            "provider": MODEL_SPECS[alias]["provider"],
+            "model": alias.value,
+            "provider": alias.provider,
             "error": f"subagent call timed out after {timeout} seconds",
         }
 
@@ -127,8 +100,8 @@ async def invoke_subagent(
     if proc.returncode != 0:
         return {
             "ok": False,
-            "model": alias,
-            "provider": MODEL_SPECS[alias]["provider"],
+            "model": alias.value,
+            "provider": alias.provider,
             "error": f"subagent worker exited with code {proc.returncode}",
             "stderr": stderr_text[-2000:],
         }
@@ -138,8 +111,8 @@ async def invoke_subagent(
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
-            "model": alias,
-            "provider": MODEL_SPECS[alias]["provider"],
+            "model": alias.value,
+            "provider": alias.provider,
             "error": f"invalid subagent worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_text[-2000:],

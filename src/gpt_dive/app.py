@@ -16,9 +16,11 @@ from typing import Annotated, Any
 from mcp.server import MCPServer
 from pydantic import Field
 
+from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .job_manager import JobManager
+from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
 from .tasks_extension import TasksExtension
 
@@ -63,8 +65,8 @@ def _run_command(
 
     run_cwd = str(Path(cwd).expanduser()) if cwd else None
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
-    pnpm_bin = Path.home() / ".local" / "share" / "pnpm"
-    guarded_command = f'export PATH="{guard_bin}:{pnpm_bin}:$PATH"; {command}'
+    runtime_path = build_runtime_path(guard_bin)
+    guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
 
     try:
         completed = subprocess.run(
@@ -316,6 +318,21 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
+    async def bare(
+        *,
+        model: str,
+        prompt: str,
+        timeout: float = 120.0,
+        output_tokens_limit: int = 4096,
+    ) -> dict[str, Any]:
+        """Call a model with no tools, filesystem, shell, workspace, or extra instructions."""
+        return await invoke_bare(
+            model=model,
+            prompt=prompt,
+            timeout=timeout,
+            output_tokens_limit=output_tokens_limit,
+        )
+
     async def council_emit(
         *,
         council_dir: str,
@@ -339,6 +356,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("local_result", local_result)
     registry.register("local_cancel", local_cancel)
     registry.register("subagent_call", subagent_call)
+    registry.register("bare", bare)
     registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)
     return registry

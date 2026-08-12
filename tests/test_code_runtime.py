@@ -82,6 +82,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "local_result",
         "local_cancel",
         "subagent_call",
+        "bare",
         "council_emit",
         "gz64",
     }
@@ -159,6 +160,31 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             "timeout": 17,
             "output_tokens_limit": 321,
             "workspace_dir": None,
+        }
+    ]
+
+
+def test_bare_is_registry_capability(monkeypatch) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_invoke_bare(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "model": kwargs["model"], "output": "BARE_OK"}
+
+    monkeypatch.setattr(app_module, "invoke_bare", fake_invoke_bare)
+    code = "result = await bare(model='opus5', prompt='think'); result['output']"
+    assert asyncio.run(gpt_dive.code_mode(code, cwd="/tmp/ignored")) == {
+        "result": "BARE_OK"
+    }
+    assert calls == [
+        {
+            "model": "opus5",
+            "prompt": "think",
+            "timeout": 120.0,
+            "output_tokens_limit": 4096,
         }
     ]
 
