@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .runtime_env import build_runtime_path
+
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 RETENTION_DAYS = 5
 POLL_INTERVAL_MS = 1000
@@ -69,8 +71,8 @@ class JobManager:
             exit_path = job_dir / "exit_code"
 
             guard_bin = Path(__file__).resolve().parent / "guard-bin"
-            pnpm_bin = Path.home() / ".local" / "share" / "pnpm"
-            guarded_command = f'export PATH="{guard_bin}:{pnpm_bin}:$PATH"; {command}'
+            runtime_path = build_runtime_path(guard_bin)
+            guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
             inner = (
                 f"timeout --signal=TERM --kill-after=5s {shlex.quote(str(timeout))}s "
                 f"/bin/bash -lc {shlex.quote(guarded_command)}"
