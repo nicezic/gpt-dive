@@ -15,6 +15,7 @@ def test_build_runtime_path_adds_stable_user_bins_without_duplicates() -> None:
     ).split(":")
 
     assert entries[0] == guard_bin
+    assert str(Path.home() / ".local" / "share" / "pnpm" / "bin") in entries
     assert str(Path.home() / ".local" / "share" / "pnpm") in entries
     assert bun_bin in entries
     assert str(Path.home() / ".local" / "bin") in entries

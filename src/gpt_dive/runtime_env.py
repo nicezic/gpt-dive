@@ -9,6 +9,7 @@ def build_runtime_path(*prefixes: str | Path, inherited: str | None = None) -> s
     home = Path.home()
     ordered = [
         *[str(Path(prefix).expanduser()) for prefix in prefixes],
+        str(home / ".local" / "share" / "pnpm" / "bin"),
         str(home / ".local" / "share" / "pnpm"),
         str(home / ".bun" / "bin"),
         str(home / ".local" / "bin"),
