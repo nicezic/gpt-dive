@@ -572,11 +572,14 @@ async def code_mode(
         str | None,
         Field(
             description=(
-                "Monty Python code to execute. Process large intermediate results inside the "
-                "sandbox and make the final expression a compact result. CWD is a path value, not process "
-                "chdir; use Path(CWD) / ... for Monty file access. Capability results are dicts, "
-                "e.g. r['stdout']. Example with input: await local_exec(command='cat > file', "
-                "stdin=INPUT)."
+                "Monty Python executable logic. Keep code simple; do not embed complex payload "
+                "strings here. Use the input parameter and read it as INPUT for multiline text, code, shell "
+                "snippets, JSON, Markdown, or payloads containing quotes/backticks/$(). Process large "
+                "results inside the sandbox and make the final expression a compact result. CWD is a "
+                "path value, not process chdir; use Path(CWD) / ... for Monty file access. Capability "
+                "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set input to "
+                "a quoted/multiline payload, then code='r = await local_exec(command=\"cat\", "
+                "stdin=INPUT); r[\"stdout\"]'."
             )
         ),
     ] = None,
@@ -594,8 +597,10 @@ async def code_mode(
         str | None,
         Field(
             description=(
-                "Optional opaque string payload exposed to Monty code as INPUT. Separates "
-                "payload data from executable code."
+                "Optional opaque payload/data exposed to Monty code as INPUT. Prefer input for "
+                "multiline or quoted payloads, including code, shell snippets, JSON, Markdown, "
+                "quotes/backticks/$(), instead of embedding them in code. Keep code as executable "
+                "logic and INPUT as data to avoid parser/escaping failures."
             )
         ),
     ] = None,
