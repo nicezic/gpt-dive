@@ -36,23 +36,65 @@ def read_endpoint(path: Path) -> str:
     return f"ws://127.0.0.1:{lines[0].strip()}{lines[1].strip()}"
 
 
-def find_page(browser: Browser, url: str) -> Page:
-    matches = [
-        page
-        for context in browser.contexts
-        for page in context.pages
-        if page.url == url
-    ]
+def find_page(
+    browser: Browser,
+    *,
+    url: str | None = None,
+    url_contains: str | None = None,
+) -> Page:
+    if (url is None) == (url_contains is None):
+        raise ValueError("provide exactly one of url or url_contains")
+    pages = [page for context in browser.contexts for page in context.pages]
+    if url is not None:
+        matches = [page for page in pages if page.url == url]
+        target = url
+    else:
+        assert url_contains is not None
+        matches = [page for page in pages if url_contains in page.url]
+        target = f"*{url_contains}*"
     if len(matches) != 1:
-        urls = [page.url for context in browser.contexts for page in context.pages]
+        urls = [page.url for page in pages]
         raise RuntimeError(
-            f"expected exactly one target ChatGPT tab, found {len(matches)}; "
+            f"expected exactly one page matching {target!r}, found {len(matches)}; "
             f"open tabs: {urls}"
         )
     return matches[0]
 
 
-async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, browser: Browser) -> None:
+def page_from_request(browser: Browser, request: dict) -> Page:
+    if "url" in request:
+        return find_page(browser, url=str(request["url"]))
+    if "url_contains" in request:
+        return find_page(browser, url_contains=str(request["url_contains"]))
+    raise KeyError("url or url_contains")
+
+
+async def inspect_page(page: Page) -> dict:
+    body = await page.locator("body").inner_text(timeout=5_000)
+    links = await page.locator("a").evaluate_all(
+        "els => els.map(e => ({text: (e.innerText || '').trim(), href: e.href})).filter(x => x.text || x.href)"
+    )
+    buttons = await page.locator("button").evaluate_all(
+        "els => els.map(e => ({text: (e.innerText || '').trim(), aria: e.getAttribute('aria-label'), disabled: e.disabled}))"
+    )
+    inputs = await page.locator("input, textarea, select").evaluate_all(
+        "els => els.map(e => ({tag: e.tagName.toLowerCase(), type: e.type || null, name: e.name || null, id: e.id || null, placeholder: e.placeholder || null, value: e.value ?? null, aria: e.getAttribute('aria-label')}))"
+    )
+    return {
+        "url": page.url,
+        "title": await page.title(),
+        "body": body[:30_000],
+        "links": links[:300],
+        "buttons": buttons[:300],
+        "inputs": inputs[:300],
+    }
+
+
+async def handle_client(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    browser: Browser,
+) -> None:
     try:
         raw = await reader.readline()
         request = json.loads(raw)
@@ -60,33 +102,71 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         if action == "ping":
             response = {"ok": True, "action": "pong"}
         elif action == "list_pages":
-            response = {"ok": True, "pages": [
-                {"url": page.url, "title": await page.title()}
-                for context in browser.contexts for page in context.pages
-            ]}
+            response = {
+                "ok": True,
+                "pages": [
+                    {"url": page.url, "title": await page.title()}
+                    for context in browser.contexts
+                    for page in context.pages
+                ],
+            }
+        elif action == "inspect":
+            page = page_from_request(browser, request)
+            response = {"ok": True, "action": "inspect", **(await inspect_page(page))}
+        elif action == "goto":
+            page = page_from_request(browser, request)
+            destination = str(request["destination"])
+            await page.goto(destination, wait_until="domcontentloaded", timeout=20_000)
+            response = {
+                "ok": True,
+                "action": "goto",
+                "url": page.url,
+                "title": await page.title(),
+            }
+        elif action == "click":
+            page = page_from_request(browser, request)
+            selector = str(request["selector"])
+            await page.locator(selector).click(timeout=10_000)
+            response = {"ok": True, "action": "click", "url": page.url}
+        elif action == "fill":
+            page = page_from_request(browser, request)
+            selector = str(request["selector"])
+            value = str(request["value"])
+            await page.locator(selector).fill(value, timeout=10_000)
+            response = {"ok": True, "action": "fill", "url": page.url}
+        elif action == "eval":
+            page = page_from_request(browser, request)
+            expression = str(request["expression"])
+            result = await page.evaluate(expression)
+            response = {"ok": True, "action": "eval", "url": page.url, "result": result}
         elif action == "capture":
-            url = str(request["url"])
-            page = find_page(browser, url)
+            page = page_from_request(browser, request)
             captured = []
+
             async def on_response(resp):
                 if resp.request.resource_type in {"xhr", "fetch"}:
                     item = {"url": resp.url, "status": resp.status}
                     try:
                         ct = (await resp.all_headers()).get("content-type", "")
                         if "json" in ct:
-                            item["body"] = (await resp.text())[:12000]
-                    except Exception:
-                        pass
+                            item["body"] = (await resp.text())[:12_000]
+                    except PlaywrightError as exc:
+                        item["body_error"] = f"{type(exc).__name__}: {exc}"
                     captured.append(item)
+
             page.on("response", on_response)
-            await page.reload(wait_until="domcontentloaded", timeout=15000)
+            await page.reload(wait_until="domcontentloaded", timeout=15_000)
             await asyncio.sleep(2)
             page.remove_listener("response", on_response)
-            response = {"ok": True, "action": "capture", "url": page.url, "responses": captured}
+            response = {
+                "ok": True,
+                "action": "capture",
+                "url": page.url,
+                "responses": captured,
+            }
         elif action == "send":
-            url = str(request["url"])
+            page = page_from_request(browser, request)
             message = str(request["message"])
-            page = find_page(browser, url)
             composer = page.locator("#prompt-textarea")
             await composer.wait_for(state="visible", timeout=5_000)
             await composer.fill(message)
@@ -103,7 +183,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Persistent Edge CDP bridge for Council input.")
+    parser = argparse.ArgumentParser(
+        description="Persistent Edge CDP bridge for browser automation."
+    )
     parser.add_argument(
         "--socket",
         type=Path,
