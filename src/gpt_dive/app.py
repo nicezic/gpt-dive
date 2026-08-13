@@ -144,40 +144,37 @@ def _wiki_path() -> Path:
     return _expand_env_path(configured or "$HOME/wiki").resolve()
 
 
-def _parse_required_manifest(manifest_text: str) -> list[str]:
-    """Extract numbered Markdown paths from the manifest's Required section."""
+def _parse_preload_files(preload_text: str) -> list[str]:
+    """Extract numbered Markdown paths from the preload map's Preload files section."""
     match = re.search(
-        r"^## Required\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
-        manifest_text,
+        r"^## Preload files\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
+        preload_text,
         flags=re.MULTILINE | re.DOTALL,
     )
     if not match:
-        raise ValueError("bootstrap manifest has no '## Required' section")
+        raise ValueError("bootstrap preload map has no '## Preload files' section")
 
     paths = re.findall(r"^\s*\d+\.\s+`([^`]+)`\s*$", match.group("body"), re.MULTILINE)
     if not paths:
         raise ValueError(
-            "bootstrap manifest Required section contains no document paths"
+            "bootstrap preload map Preload files section contains no document paths"
         )
     return paths
 
 
-def _read_bootstrap_packet(log_tail_lines: int = 30) -> dict[str, Any]:
-    """Assemble fresh-session context from the trusted wiki bootstrap manifest."""
-    if log_tail_lines < 0 or log_tail_lines > 200:
-        raise ValueError("log_tail_lines must be between 0 and 200")
-
+def _read_bootstrap_packet() -> dict[str, Any]:
+    """Assemble compact fresh-session orientation from the trusted Wiki preload map."""
     wiki = _wiki_path()
-    manifest = wiki / "bootstrap" / "manifest.md"
-    if not manifest.is_file():
-        raise FileNotFoundError(f"bootstrap manifest not found: {manifest}")
+    preload = wiki / "bootstrap" / "preload.md"
+    if not preload.is_file():
+        raise FileNotFoundError(f"bootstrap preload map not found: {preload}")
 
-    manifest_text = manifest.read_text(errors="replace")
-    required = _parse_required_manifest(manifest_text)
+    preload_text = preload.read_text(errors="replace")
+    preload_files = _parse_preload_files(preload_text)
     documents: list[dict[str, str]] = []
     warnings: list[str] = []
 
-    for relative in required:
+    for relative in preload_files:
         candidate = (wiki / relative).resolve()
         try:
             candidate.relative_to(wiki)
@@ -187,7 +184,7 @@ def _read_bootstrap_packet(log_tail_lines: int = 30) -> dict[str, Any]:
             ) from exc
 
         if not candidate.is_file():
-            warnings.append(f"missing required document: {relative}")
+            warnings.append(f"missing preload document: {relative}")
             continue
         documents.append(
             {
@@ -197,16 +194,17 @@ def _read_bootstrap_packet(log_tail_lines: int = 30) -> dict[str, Any]:
         )
 
     if not documents:
-        raise RuntimeError("bootstrap manifest resolved no readable required documents")
-
-    log_tail = ""
-    log_path = wiki / "log.md"
-    if log_tail_lines and log_path.is_file():
-        lines = log_path.read_text(errors="replace").splitlines()
-        log_tail = "\n".join(lines[-log_tail_lines:])
+        raise RuntimeError(
+            "bootstrap preload map resolved no readable preload documents"
+        )
 
     chunks = [
-        f"# BOOTSTRAP PACKET\nWiki: {wiki}\nManifest: {manifest}\n",
+        f"# BOOTSTRAP PACKET\nWiki: {wiki}\nPreload: {preload}\n",
+        (
+            "\n\n===== BEGIN bootstrap/preload.md =====\n"
+            f"{preload_text.rstrip()}\n"
+            "===== END bootstrap/preload.md ====="
+        ),
     ]
     for doc in documents:
         chunks.append(
@@ -214,17 +212,11 @@ def _read_bootstrap_packet(log_tail_lines: int = 30) -> dict[str, Any]:
             f"{doc['content'].rstrip()}\n"
             f"===== END {doc['path']} ====="
         )
-    if log_tail:
-        chunks.append(
-            "\n\n===== BEGIN log.md (recent tail) =====\n"
-            f"{log_tail}\n"
-            "===== END log.md (recent tail) ====="
-        )
 
     return {
         "wiki_path": str(wiki),
-        "manifest_path": str(manifest),
-        "required_files": [doc["path"] for doc in documents],
+        "preload_path": str(preload),
+        "preloaded_files": [doc["path"] for doc in documents],
         "warnings": warnings,
         "stdout": "".join(chunks) + "\n",
     }
@@ -590,7 +582,7 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
         "CAPABILITIES, plus INPUT when the optional input payload is provided. CAPABILITIES is "
         "discovery metadata only (signature + description), not a "
         "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
-        "by async name, e.g. await local_exec(...) or await subagent_call(...). local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
+        "by async name, e.g. await local_exec(...) or await subagent_call(...). The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; prefer those for ordinary workspace file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
         "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
         "Pydantic Harness FileSystem + Shell coding toolkit, RepoContext, and bounded tool outputs. The local WSL2 filesystem is mounted read-write."
     ),
@@ -604,10 +596,10 @@ async def code_mode(
                 "strings here. Use the input parameter and read it as INPUT for multiline text, code, shell "
                 "snippets, JSON, Markdown, or payloads containing quotes/backticks/$(). Process large "
                 "results inside the sandbox and make the final expression a compact result. CWD is a "
-                "path value, not process chdir; use Path(CWD) / ... for Monty file access. Capability "
+                "path string, not process chdir; prefer registered FileSystem capabilities for workspace file access instead of assuming CPython path helpers exist inside Monty. Capability "
                 "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set input to "
-                "a quoted/multiline payload, then code='r = await local_exec(command=\"cat\", "
-                "stdin=INPUT); r[\"stdout\"]'."
+                'a quoted/multiline payload, then code=\'r = await local_exec(command="cat", '
+                'stdin=INPUT); r["stdout"]\'.'
             )
         ),
     ] = None,
@@ -617,7 +609,8 @@ async def code_mode(
             description=(
                 "Optional default WSL2 working directory exposed to code as CWD and inherited "
                 "by registered capabilities when they accept cwd. Does not chdir Monty itself; "
-                "use Path(CWD) for filesystem paths and pass cwd=CWD to local_exec when needed."
+                "prefer registered FileSystem/Shell capabilities for workspace operations and pass "
+                "cwd=CWD to capabilities such as local_exec when needed."
             )
         ),
     ] = None,
@@ -766,25 +759,13 @@ def wsl2_async(
     title="Bootstrap from Local WSL2 Wiki",
     description=(
         "Always call `bootstrap` first in a fresh ChatGPT Web session, before using any other "
-        "`@dive` tool. It loads fresh-session context from the trusted wiki stored in the "
-        "user's local WSL2 environment."
+        "`@dive` tool. It loads the compact, model-visible preload map plus foundational "
+        "orientation from the trusted Wiki in the user's local WSL2 environment."
     ),
 )
-def bootstrap(
-    log_tail_lines: Annotated[
-        int,
-        Field(
-            ge=0,
-            le=200,
-            description=(
-                "Number of recent lines to include from the trusted local "
-                "WSL2 wiki log.md. Defaults to 30."
-            ),
-        ),
-    ] = 30,
-) -> dict[str, Any]:
-    """Load fresh-session context from the trusted wiki on the user's local WSL2."""
-    return _read_bootstrap_packet(log_tail_lines=log_tail_lines)
+def bootstrap() -> dict[str, Any]:
+    """Load compact fresh-session orientation from the trusted local Wiki preload map."""
+    return _read_bootstrap_packet()
 
 
 if __name__ == "__main__":
