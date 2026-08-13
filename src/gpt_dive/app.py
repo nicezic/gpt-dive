@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import gzip
 import json
 import os
@@ -15,6 +16,9 @@ from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from pydantic import Field
+from pydantic_ai_harness import FileSystem, Shell
+from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
 from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
@@ -270,6 +274,29 @@ def wsl2_sync(
 
 def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry = CallableRegistry()
+    workspace = (
+        Path(default_cwd).expanduser().resolve()
+        if default_cwd is not None
+        else Path.home().resolve()
+    )
+
+    filesystem_toolset = FileSystem(root_dir=workspace).get_toolset()
+
+    guard_bin = Path(__file__).resolve().parent / "guard-bin"
+    shell_env = os.environ.copy()
+    shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
+    shell_max_output_chars = 50_000
+    shell_toolset = Shell(
+        cwd=workspace,
+        env=shell_env,
+        denied_env_patterns=[
+            *LLM_API_KEY_ENV_PATTERNS,
+            "MINIMAX_*",
+            "AIAPIFLOW_*",
+        ],
+        default_timeout=60.0,
+        max_output_chars=shell_max_output_chars,
+    ).get_toolset()
 
     async def local_exec(
         *,
@@ -365,6 +392,31 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         command = gzip.decompress(compressed).decode("utf-8")
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
+    for name in (
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "search_files",
+        "find_files",
+        "create_directory",
+        "file_info",
+    ):
+        registry.register(name, getattr(filesystem_toolset, name))
+
+    def bounded_shell_method(name: str):
+        method = getattr(shell_toolset, name)
+
+        @functools.wraps(method)
+        async def invoke(*args: Any, **kwargs: Any) -> str:
+            return truncate_tail(await method(*args, **kwargs), shell_max_output_chars)
+
+        return invoke
+
+    for name in ("run_command", "start_command", "check_command", "stop_command"):
+        registry.register(name, bounded_shell_method(name))
+
+    registry.add_async_cleanup(shell_toolset.__aexit__)
     registry.register("local_exec", local_exec)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)

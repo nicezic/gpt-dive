@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 from pathlib import Path
+
+import pytest
 
 from gpt_dive import code_mode
 
@@ -67,6 +71,18 @@ def test_large_local_exec_output_can_be_aggregated_before_return(
 def test_capabilities_are_runtime_discoverable() -> None:
     result = asyncio.run(code_mode("CAPABILITIES"))["result"]
     assert set(result) == {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "search_files",
+        "find_files",
+        "create_directory",
+        "file_info",
+        "run_command",
+        "start_command",
+        "check_command",
+        "stop_command",
         "local_exec",
         "subagent_call",
         "bare",
@@ -76,6 +92,14 @@ def test_capabilities_are_runtime_discoverable() -> None:
     }
     assert "signature" in result["local_exec"]
     assert "stdin" in result["local_exec"]["signature"]
+    assert "offset" in result["read_file"]["signature"]
+    assert "expected_hash" in result["write_file"]["signature"]
+    assert "expected_hash" in result["edit_file"]["signature"]
+    assert "timeout_seconds" in result["run_command"]["signature"]
+    assert result["read_file"]["description"].startswith(
+        "Read a text file with line numbers."
+    )
+    assert result["run_command"]["description"].startswith("Execute a shell command")
 
 
 def test_gz64_capability_round_trip() -> None:
@@ -459,3 +483,121 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
         asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))
     with pytest.raises(ValueError, match="input is only valid"):
         asyncio.run(gpt_dive.code_mode(action="status", job_id="x", input="payload"))
+
+
+def test_harness_filesystem_capabilities_work_at_code_mode_seam(tmp_path: Path) -> None:
+    (tmp_path / "input.txt").write_text("alpha\nbeta\n")
+    code = r"""
+read = await read_file("input.txt", limit=1)
+listing = await list_directory(".")
+search = await search_files("beta")
+found = await find_files("*.txt")
+info = await file_info("input.txt")
+created = await create_directory("nested")
+written = await write_file("nested/out.txt", "one\n")
+edited = await edit_file("nested/out.txt", "one", "two")
+{
+    "read": read,
+    "listing": listing,
+    "search": search,
+    "found": found,
+    "info": info,
+    "created": created,
+    "written": written,
+    "edited": edited,
+}
+"""
+    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
+    assert "1\talpha" in result["read"]
+    assert "input.txt" in result["listing"]
+    assert "input.txt:2:beta" in result["search"]
+    assert "input.txt" in result["found"]
+    assert "type: file" in result["info"]
+    assert result["created"] == "Created directory: nested"
+    assert "Wrote" in result["written"]
+    assert "Edited nested/out.txt" in result["edited"]
+    assert (tmp_path / "nested" / "out.txt").read_text() == "two\n"
+
+
+def test_harness_filesystem_rejects_traversal(tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="resolves outside the root directory"):
+        asyncio.run(code_mode('await read_file("../outside.txt")', cwd=str(tmp_path)))
+
+
+def test_harness_filesystem_write_rejects_stale_expected_hash(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
+    target.write_text("external")
+    code = f'await write_file("target.txt", "changed", expected_hash={stale_hash!r})'
+    with pytest.raises(Exception, match="Conflict: file 'target.txt' has changed"):
+        asyncio.run(code_mode(code, cwd=str(tmp_path)))
+    assert target.read_text() == "external"
+
+
+def test_harness_filesystem_edit_rejects_stale_expected_hash(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
+    target.write_text("external")
+    code = f'await edit_file("target.txt", "external", "changed", expected_hash={stale_hash!r})'
+    with pytest.raises(Exception, match="Conflict: file 'target.txt' has changed"):
+        asyncio.run(code_mode(code, cwd=str(tmp_path)))
+    assert target.read_text() == "external"
+
+
+def test_harness_shell_run_command_uses_workspace_guard_and_strips_provider_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-shell")
+    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-shell")
+    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-shell")
+    code = r"""
+pwd = await run_command("pwd")
+secret = await run_command("printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\"")
+python = await run_command("python --version")
+{"pwd": pwd, "secret": secret, "python": python}
+"""
+    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
+    assert str(tmp_path) in result["pwd"]
+    assert "must-not-reach-shell" not in result["secret"]
+    assert "[stdout]\n||" in result["secret"]
+    assert "Python 3.14" in result["python"]
+    assert "auto-reroute" in result["python"]
+
+
+def test_harness_shell_background_start_check_stop(tmp_path: Path) -> None:
+    code = r"""
+started = await start_command("bash -c 'echo READY; sleep 30'")
+command_id = started.split("ID: ", 1)[1]
+await run_command("sleep 0.1")
+checked = await check_command(command_id)
+stopped = await stop_command(command_id)
+{"started": started, "checked": checked, "stopped": stopped}
+"""
+    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
+    assert "ID: " in result["started"]
+    assert "READY" in result["checked"]
+    assert "[status: running]" in result["checked"]
+    assert "[stopped]" in result["stopped"]
+
+
+def test_harness_shell_background_is_cleaned_at_code_mode_end(tmp_path: Path) -> None:
+    code = r"""
+started = await start_command("bash -c 'echo $$ > shell.pid; exec sleep 30'")
+await run_command("sleep 0.1")
+started
+"""
+    asyncio.run(code_mode(code, cwd=str(tmp_path)))
+    pid = int((tmp_path / "shell.pid").read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_harness_shell_direct_registry_preserves_output_cap() -> None:
+    result = asyncio.run(
+        code_mode(
+            'r = await run_command(INPUT)\n{"length": len(r), "prefix": r[:80]}',
+            input="python -c \"print('x'*60000)\"",
+        )
+    )["result"]
+    assert result["length"] == 50_000
+    assert result["prefix"].startswith("[... output truncated, showing last ")

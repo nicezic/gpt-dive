@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ class CallableRegistry:
 
     def __init__(self) -> None:
         self._callables: dict[str, Callable[..., Any]] = {}
+        self._async_cleanups: list[Callable[[], Awaitable[None]]] = []
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         if not name.isidentifier():
@@ -20,6 +21,14 @@ class CallableRegistry:
         if name in self._callables:
             raise ValueError(f"callable already registered: {name}")
         self._callables[name] = fn
+
+    def add_async_cleanup(self, cleanup: Callable[[], Awaitable[None]]) -> None:
+        self._async_cleanups.append(cleanup)
+
+    async def aclose(self) -> None:
+        for cleanup in reversed(self._async_cleanups):
+            await cleanup()
+        self._async_cleanups.clear()
 
     def as_external_lookup(self) -> dict[str, Callable[..., Any]]:
         return dict(self._callables)
@@ -58,19 +67,25 @@ class MontyCodeRuntime:
         if input is not None:
             inputs["INPUT"] = input
 
-        async with AsyncMonty() as monty, monty.checkout(type_check=False) as session:
-            state = await session.feed_start(
-                code,
-                inputs=inputs,
-                external_lookup=registry.as_external_lookup(),
-                print_callback=capture,
-                mount=mount,
-                skip_type_check=True,
-            )
-            while not isinstance(state, MontyComplete):
-                state = await state.resume_auto()
+        try:
+            async with (
+                AsyncMonty() as monty,
+                monty.checkout(type_check=False) as session,
+            ):
+                state = await session.feed_start(
+                    code,
+                    inputs=inputs,
+                    external_lookup=registry.as_external_lookup(),
+                    print_callback=capture,
+                    mount=mount,
+                    skip_type_check=True,
+                )
+                while not isinstance(state, MontyComplete):
+                    state = await state.resume_auto()
 
-        result: dict[str, Any] = {"result": state.output}
-        if capture.output:
-            result["stdout"] = capture.output
-        return result
+            result: dict[str, Any] = {"result": state.output}
+            if capture.output:
+                result["stdout"] = capture.output
+            return result
+        finally:
+            await registry.aclose()
