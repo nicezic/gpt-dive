@@ -17,13 +17,25 @@ def test_mcp_surface_v1_is_exactly_four_tools() -> None:
     }
 
 
-def test_server_description_appends_bootstrap_hint() -> None:
-    assert gpt_dive.mcp.description.endswith("pls,`bootstrap`, first")
+def test_server_description_requires_bootstrap_first() -> None:
+    description = gpt_dive.mcp.description
+    assert description is not None
+    assert "Call bootstrap first." in description
+
+
+def test_server_instructions_define_compact_progress_format() -> None:
+    instructions = gpt_dive.mcp.instructions
+    assert instructions is not None
+    assert "show exactly two concise user-visible lines" in instructions
+    assert "show python rather than uv run --python 3.14 python" in instructions
+    assert "keep code_mode as the top-level label" in instructions
 
 
 def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    assert tools["bootstrap"].description.startswith(
+    description = tools["bootstrap"].description
+    assert description is not None
+    assert description.startswith(
         "Always call `bootstrap` first in a fresh ChatGPT Web session"
     )
 
