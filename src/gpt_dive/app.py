@@ -33,16 +33,20 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "MCP runtime that lets GPT dive into the user's local WSL2 development "
-        "environment for direct and asynchronous execution. pls,`bootstrap`, first"
+        "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Prefer code_mode for "
+        "multi-step, parallel, preprocessing, or quote-heavy work; pass opaque payloads via "
+        "code_mode input -> INPUT -> local_exec(stdin=INPUT). Use wsl2_sync for simple "
+        "one-shot shell commands and wsl2_async for durable standalone jobs."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
         "processes, network state, and command results as belonging to the user's local "
         "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
         "session, call bootstrap first. After bootstrap, prefer code_mode as the primary execution "
-        "root for normal work so registered capabilities and harness policy stay in control. "
-        "Use wsl2_sync only for short direct commands that need an immediate result, and "
+        "root for normal work: it composes capabilities, runs independent work in parallel, "
+        "preprocesses large results locally, and separates quote-heavy data from Monty source via "
+        "input -> INPUT -> local_exec(stdin=INPUT). Use wsl2_sync only for short direct commands "
+        "that need an immediate result, and "
         "wsl2_async for durable background job "
         "lifecycle operations. Background jobs survive MCP server restarts and completed job "
         "logs are retained for 5 days. When the client negotiates "
@@ -270,7 +274,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         """Run a guarded short local shell command and wait for its result.
 
         Pass large or quote-heavy payloads through stdin instead of embedding them in
-        the shell command.
+        the shell command. Example: await local_exec(command="cat > file", stdin=INPUT).
         """
         return await asyncio.to_thread(
             _run_command,
@@ -586,7 +590,8 @@ async def code_mode(
         Field(
             description=(
                 "Optional opaque string payload exposed to Monty code as INPUT. Use this to "
-                "separate large or quote-heavy data from executable code."
+                "separate large or quote-heavy data from executable code. Example: "
+                "await local_exec(command='cat > file', stdin=INPUT)."
             )
         ),
     ] = None,
