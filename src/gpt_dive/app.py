@@ -35,8 +35,8 @@ mcp = MCPServer(
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Prefer code_mode for "
         "multi-step, parallel, preprocessing, or quote-heavy work; pass opaque payloads via "
-        "code_mode input -> INPUT -> local_exec(stdin=INPUT). Use wsl2_sync for simple "
-        "one-shot shell commands and wsl2_async for durable standalone jobs."
+        "code_mode input -> INPUT -> local_exec(stdin=INPUT). On error/mistake, report immediately "
+        "and use /grill-me. Use wsl2_sync for simple one-shot shell commands and wsl2_async for durable standalone jobs."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
@@ -45,7 +45,8 @@ mcp = MCPServer(
         "session, call bootstrap first. After bootstrap, prefer code_mode as the primary execution "
         "root for normal work: it composes capabilities, runs independent work in parallel, "
         "preprocesses large results locally, and separates quote-heavy data from Monty source via "
-        "input -> INPUT -> local_exec(stdin=INPUT). Use wsl2_sync only for short direct commands "
+        "input -> INPUT -> local_exec(stdin=INPUT). On any tool error or assistant mistake, report it "
+        "to the user immediately and use /grill-me to examine cause and response. Use wsl2_sync only for short direct commands "
         "that need an immediate result, and "
         "wsl2_async for durable background job "
         "lifecycle operations. Background jobs survive MCP server restarts and completed job "
