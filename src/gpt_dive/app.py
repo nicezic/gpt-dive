@@ -34,9 +34,9 @@ mcp = MCPServer(
     title="GPT Dive",
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Prefer code_mode for "
-        "multi-step, parallel, preprocessing, or quote-heavy work; pass opaque payloads via "
-        "code_mode input -> INPUT -> local_exec(stdin=INPUT). On error/mistake, report immediately "
-        "and use /grill-me. Use wsl2_sync for simple one-shot shell commands and wsl2_async for durable standalone jobs."
+        "multi-step, parallel, preprocessing, or quote-heavy work; wsl2_sync for simple "
+        "one-shot shell; wsl2_async for durable jobs. On error/mistake, report immediately "
+        "and use /grill-me."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
@@ -44,9 +44,9 @@ mcp = MCPServer(
         "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
         "session, call bootstrap first. After bootstrap, prefer code_mode as the primary execution "
         "root for normal work: it composes capabilities, runs independent work in parallel, "
-        "preprocesses large results locally, and separates quote-heavy data from Monty source via "
-        "input -> INPUT -> local_exec(stdin=INPUT). On any tool error or assistant mistake, report it "
-        "to the user immediately and use /grill-me to examine cause and response. Use wsl2_sync only for short direct commands "
+        "preprocesses large results locally, and accepts opaque input separately from Monty source. "
+        "On any tool error or assistant mistake, report it to the user immediately and use /grill-me "
+        "to examine cause and response. Use wsl2_sync only for short direct commands "
         "that need an immediate result, and "
         "wsl2_async for durable background job "
         "lifecycle operations. Background jobs survive MCP server restarts and completed job "
@@ -274,8 +274,8 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     ) -> dict[str, Any]:
         """Run a guarded short local shell command and wait for its result.
 
-        Pass large or quote-heavy payloads through stdin instead of embedding them in
-        the shell command. Example: await local_exec(command="cat > file", stdin=INPUT).
+        Returns a dict; read r["stdout"], r["stderr"], and r["exit_code"].
+        Pass payload data through stdin instead of embedding it in the shell command.
         """
         return await asyncio.to_thread(
             _run_command,
@@ -380,7 +380,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         )
 
     async def gz64(payload: str) -> dict[str, Any]:
-        """Decode Base64+gzip UTF-8 command text and execute it locally."""
+        """Decode Base64+gzip UTF-8 command text and execute it locally. Slow path: do not use for normal commands; use only when quote/payload transport or filtering issues make plain local_exec unsuitable."""
         compressed = base64.b64decode(payload, validate=True)
         command = gzip.decompress(compressed).decode("utf-8")
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
@@ -573,7 +573,10 @@ async def code_mode(
         Field(
             description=(
                 "Monty Python code to execute. Process large intermediate results inside the "
-                "sandbox and make the final expression a compact result."
+                "sandbox and make the final expression a compact result. CWD is a path value, not process "
+                "chdir; use Path(CWD) / ... for Monty file access. Capability results are dicts, "
+                "e.g. r['stdout']. Example with input: await local_exec(command='cat > file', "
+                "stdin=INPUT)."
             )
         ),
     ] = None,
@@ -582,7 +585,8 @@ async def code_mode(
         Field(
             description=(
                 "Optional default WSL2 working directory exposed to code as CWD and inherited "
-                "by registered capabilities when they accept cwd."
+                "by registered capabilities when they accept cwd. Does not chdir Monty itself; "
+                "use Path(CWD) for filesystem paths and pass cwd=CWD to local_exec when needed."
             )
         ),
     ] = None,
@@ -590,9 +594,8 @@ async def code_mode(
         str | None,
         Field(
             description=(
-                "Optional opaque string payload exposed to Monty code as INPUT. Use this to "
-                "separate large or quote-heavy data from executable code. Example: "
-                "await local_exec(command='cat > file', stdin=INPUT)."
+                "Optional opaque string payload exposed to Monty code as INPUT. Separates "
+                "payload data from executable code."
             )
         ),
     ] = None,
