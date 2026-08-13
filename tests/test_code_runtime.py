@@ -18,12 +18,17 @@ def test_code_mode_can_read_and_write_local_filesystem(tmp_path: Path) -> None:
 
 
 def test_local_exec_works_and_preserves_guard_bin() -> None:
-    code = """\nok = await local_exec(command="printf 'LOCAL_EXEC_OK\\n'")\nblocked = await local_exec(command="python --version")\n{"ok": ok, "blocked": blocked}\n"""
+    code = """\
+ok = await local_exec(command="printf 'LOCAL_EXEC_OK\\n'")
+rerouted = await local_exec(command="python --version")
+{"ok": ok, "rerouted": rerouted}
+"""
     result = asyncio.run(code_mode(code))["result"]
-    assert result["ok"]["exit_code"] == 0
+    assert result["ok"]["returncode"] == 0
     assert result["ok"]["stdout"] == "LOCAL_EXEC_OK\n"
-    assert result["blocked"]["exit_code"] != 0
-    assert "prohibited" in result["blocked"]["stderr"]
+    assert result["rerouted"]["returncode"] == 0
+    assert "Python 3.14" in result["rerouted"]["stdout"]
+    assert "auto-reroute" in result["rerouted"]["stderr"]
 
 
 def test_code_mode_input_can_feed_local_exec_stdin() -> None:
@@ -114,7 +119,7 @@ def test_gz64_capability_round_trip() -> None:
     ).decode("ascii")
     code = f"await gz64({payload!r})"
     result = asyncio.run(code_mode(code))["result"]
-    assert result["exit_code"] == 0
+    assert result["returncode"] == 0
     assert result["stdout"] == "GZ64_EXEC_OK\n"
 
 

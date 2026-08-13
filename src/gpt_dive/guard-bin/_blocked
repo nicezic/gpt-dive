@@ -2,7 +2,12 @@
 cmd="$(basename "$0")"
 case "$cmd" in
   python|python3|python3.14)
-    echo '⚠️ USER INSTRUCTION: Direct Python execution is prohibited in @wsl2. Use uv with Python 3.14: uv run --python 3.14 python ...' >&2
+    if [[ "${1-}" == "-m" && "${2-}" == "pip" ]]; then
+      echo '⚠️ USER INSTRUCTION: Direct pip execution is prohibited in @wsl2. Use uv: prefer uv add <package>, or uv pip ... when pip-compatible behavior is required.' >&2
+      exit 2
+    fi
+    echo '⚠️ Direct Python detected → auto-reroute: uv run --python 3.14 python' >&2
+    exec uv run --python 3.14 python "$@"
     ;;
   pip|pip3|pip3.14)
     echo '⚠️ USER INSTRUCTION: Direct pip execution is prohibited in @wsl2. Use uv: prefer uv add <package>, or uv pip ... when pip-compatible behavior is required.' >&2

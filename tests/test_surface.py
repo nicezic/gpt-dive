@@ -31,6 +31,13 @@ def test_server_instructions_define_compact_progress_format() -> None:
     assert "keep code_mode as the top-level label" in instructions
 
 
+def test_code_mode_description_names_local_exec_result_keys() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    description = tools["code_mode"].description
+    assert description is not None
+    assert "local_exec returns a dict with stdout, stderr, and returncode" in description
+
+
 def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     description = tools["bootstrap"].description
@@ -102,13 +109,14 @@ def test_wsl2_async_validates_action_specific_fields() -> None:
         gpt_dive.wsl2_async("future-action")
 
 
-def test_core_guard_policy_blocks_native_python_on_sync_path() -> None:
+def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
     result = gpt_dive.wsl2_sync("python --version", timeout=5)
-    assert result["exit_code"] != 0
-    assert "prohibited" in result["stderr"]
+    assert result["returncode"] == 0
+    assert "Python 3.14" in result["stdout"]
+    assert "auto-reroute" in result["stderr"]
 
 
-def test_core_guard_policy_blocks_native_python_on_async_path(tmp_path) -> None:
+def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> None:
     import time
 
     original_root = gpt_dive.jobs.root
@@ -126,8 +134,9 @@ def test_core_guard_policy_blocks_native_python_on_async_path(tmp_path) -> None:
             time.sleep(0.03)
         result = gpt_dive.wsl2_async("result", job_id=started["job_id"])
         assert result["ready"] is True
-        assert result["exit_code"] != 0
-        assert "prohibited" in result["stderr"]
+        assert result["exit_code"] == 0
+        assert "Python 3.14" in result["stdout"]
+        assert "auto-reroute" in result["stderr"]
     finally:
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd

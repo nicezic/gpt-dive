@@ -20,14 +20,16 @@ Validate source changes locally first. Use a fresh ChatGPT Web session for live 
 
 Do not restart the active GPT Dive MCP/tunnel service inline while the current MCP call is still returning. Doing so can cut the transport underneath the response and leave the Web call pending.
 
-When a live reload must be initiated from the active ChatGPT session, schedule it out-of-band with a buffer:
+When a live reload is initiated from the active ChatGPT session, dispatch it through `wsl2_async(start)` and let a detached `nohup` command perform the actual restart after a short delay:
 
-```bash
-nohup sh -c 'sleep 5; systemctl --user restart chatgpt-wsl2-mcp.service' \
-  >/tmp/gpt-dive-restart.log 2>&1 &
+```text
+wsl2_async(
+  action="start",
+  command="nohup sh -c 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tmp/gpt-dive-restart.log 2>&1 &",
+)
 ```
 
-The five-second delay is intentionally conservative. Live acceptance showed that a shorter three-second boundary could coincide with reconnect timing.
+Treat a successful `wsl2_async(start)` dispatch as the handoff boundary. Do not perform an in-session confirmation round-trip before or after the restart; the three-second delay exists only to let the initiating MCP response clear the transport before the service is replaced.
 
 ## Durable Jobs
 
@@ -39,8 +41,10 @@ Durable job state and logs live under:
 
 Completed job logs are retained for 5 days. The normal backend is `systemd --user`; a detached-process fallback exists for environments where user systemd is unavailable.
 
-## Council Transport Experiment Note
+## Council Browser Bridge
 
-The current Council Web SOL probe uses a persistent Edge CDP connection because reconnecting Playwright for every message triggers repeated browser approval friction.
+Council v1 owns a persistent Edge CDP connection through `gpt_dive.council.SolBridge` because reconnecting Playwright for every message triggers repeated browser approval friction. Playwright is input-only; SOL output returns explicitly through `code_mode -> council_emit`.
 
-A bridge launched through the generic async-job path inherits that job's timeout. The first experiment used the default 600 seconds and therefore exited after ten minutes, leaving a stale Unix socket path. The final Council lifecycle has not yet been specified; do not treat the experimental bridge command as production operations guidance.
+The historical feasibility experiment exposed a 600-second generic async-job timeout and stale-socket failure. The integrated Council runtime no longer uses that generic job lifetime as its effective session lifetime; the room owns bridge start/close. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
+
+Current manual Council startup remains `gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>` until the post-v1 start/reopen capability is implemented. See `docs/council/startup.md`.
