@@ -43,6 +43,7 @@ class MontyCodeRuntime:
         code: str,
         registry: CallableRegistry,
         cwd: str | None = None,
+        input: str | None = None,
     ) -> dict[str, Any]:
         if not code.strip():
             raise ValueError("code must not be empty")
@@ -50,11 +51,17 @@ class MontyCodeRuntime:
         run_cwd = str(Path(cwd).expanduser().resolve()) if cwd else str(Path.home())
         capture = CollectString()
         mount = MountDir(host_path="/", virtual_path="/", mode="read-write")
+        inputs: dict[str, Any] = {
+            "CWD": run_cwd,
+            "CAPABILITIES": registry.describe(),
+        }
+        if input is not None:
+            inputs["INPUT"] = input
 
         async with AsyncMonty() as monty, monty.checkout(type_check=False) as session:
             state = await session.feed_start(
                 code,
-                inputs={"CWD": run_cwd, "CAPABILITIES": registry.describe()},
+                inputs=inputs,
                 external_lookup=registry.as_external_lookup(),
                 print_callback=capture,
                 mount=mount,

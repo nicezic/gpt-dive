@@ -26,6 +26,19 @@ def test_local_exec_works_and_preserves_guard_bin() -> None:
     assert "prohibited" in result["blocked"]["stderr"]
 
 
+def test_code_mode_input_can_feed_local_exec_stdin() -> None:
+    payload = """# Markdown
+
+quotes: 'single' "double" `backticks`
+shell-ish: $HOME $(printf nope) <<'EOF'
+"""
+    code = """\
+r = await local_exec(command="cat", stdin=INPUT)
+r["stdout"]
+"""
+    assert asyncio.run(code_mode(code, input=payload)) == {"result": payload}
+
+
 def test_local_exec_calls_can_overlap() -> None:
     code = """\nimport asyncio\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(local_exec(command=cmd), local_exec(command=cmd))\n[a["stdout"], b["stdout"]]\n"""
     outputs = asyncio.run(code_mode(code))["result"]
@@ -327,6 +340,34 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
         gpt_dive.jobs._systemd_available = original_systemd
 
 
+def test_code_mode_background_preserves_input(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        payload = "BG_INPUT ' \" ` $() <<EOF\n"
+        started = asyncio.run(
+            gpt_dive.code_mode(
+                'r = await local_exec(command="cat", stdin=INPUT)\nr["stdout"]',
+                input=payload,
+                background=True,
+            )
+        )
+        _wait_code_mode_job(str(started["job_id"]))
+        result = asyncio.run(
+            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+        )
+        assert result["result"] == payload
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
 def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> None:
     import json
 
@@ -472,3 +513,5 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
         asyncio.run(gpt_dive.code_mode(action="status"))
     with pytest.raises(ValueError, match="unsupported code_mode action"):
         asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))
+    with pytest.raises(ValueError, match="input is only valid"):
+        asyncio.run(gpt_dive.code_mode(action="status", job_id="x", input="payload"))

@@ -26,11 +26,19 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported Code Mode worker input version")
     code = payload.get("code")
     cwd = payload.get("cwd")
+    input_payload = payload.get("input")
     if not isinstance(code, str) or not code.strip():
         raise ValueError("worker input requires non-empty code")
     if cwd is not None and not isinstance(cwd, str):
         raise ValueError("worker cwd must be a string or null")
-    return await code_runtime.run(code, _build_code_registry(cwd), cwd=cwd)
+    if input_payload is not None and not isinstance(input_payload, str):
+        raise ValueError("worker input payload must be a string or null")
+    return await code_runtime.run(
+        code,
+        _build_code_registry(cwd),
+        cwd=cwd,
+        input=input_payload,
+    )
 
 
 def main() -> None:

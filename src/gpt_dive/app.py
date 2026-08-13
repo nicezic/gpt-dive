@@ -57,6 +57,7 @@ def _run_command(
     command: str,
     cwd: str | None = None,
     timeout: float = 600.0,
+    stdin: str | None = None,
 ) -> dict[str, Any]:
     if not command.strip():
         raise ValueError("command must not be empty")
@@ -75,6 +76,7 @@ def _run_command(
             cwd=run_cwd,
             capture_output=True,
             text=True,
+            input=stdin,
             timeout=timeout,
             check=False,
         )
@@ -263,13 +265,19 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         command: str,
         cwd: str | None = None,
         timeout: float = 600.0,
+        stdin: str | None = None,
     ) -> dict[str, Any]:
-        """Run a guarded short local shell command and wait for its result."""
+        """Run a guarded short local shell command and wait for its result.
+
+        Pass large or quote-heavy payloads through stdin instead of embedding them in
+        the shell command.
+        """
         return await asyncio.to_thread(
             _run_command,
             command,
             cwd if cwd is not None else default_cwd,
             timeout,
+            stdin,
         )
 
     async def local_start(
@@ -413,8 +421,17 @@ def _cleanup_code_mode_payload(job_id: str) -> None:
         ref.unlink(missing_ok=True)
 
 
-def _start_background_code_mode(code: str, cwd: str | None) -> dict[str, Any]:
-    payload = {"v": CODE_MODE_WORKER_PROTOCOL, "code": code, "cwd": cwd}
+def _start_background_code_mode(
+    code: str,
+    cwd: str | None,
+    input: str | None,
+) -> dict[str, Any]:
+    payload = {
+        "v": CODE_MODE_WORKER_PROTOCOL,
+        "code": code,
+        "cwd": cwd,
+        "input": input,
+    }
     payload_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -537,7 +554,8 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
         "to detach long-running Monty programs, then action='status', 'result', or 'cancel' with the "
         "returned job_id. Combine independent operations and filter/transform/aggregate large "
         "intermediate data before returning only a compact result. The sandbox receives CWD and "
-        "CAPABILITIES; CAPABILITIES is discovery metadata only (signature + description), not a "
+        "CAPABILITIES, plus INPUT when the optional input payload is provided. CAPABILITIES is "
+        "discovery metadata only (signature + description), not a "
         "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
         "by async name, e.g. await local_exec(...) or await subagent_call(...). A subagent_call "
         "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
@@ -560,6 +578,15 @@ async def code_mode(
             description=(
                 "Optional default WSL2 working directory exposed to code as CWD and inherited "
                 "by registered capabilities when they accept cwd."
+            )
+        ),
+    ] = None,
+    input: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional opaque string payload exposed to Monty code as INPUT. Use this to "
+                "separate large or quote-heavy data from executable code."
             )
         ),
     ] = None,
@@ -590,8 +617,12 @@ async def code_mode(
         if job_id is not None:
             raise ValueError("job_id is only valid with a lifecycle action")
         if background:
-            return await asyncio.to_thread(_start_background_code_mode, str(code), cwd)
-        return await code_runtime.run(str(code), _build_code_registry(cwd), cwd=cwd)
+            return await asyncio.to_thread(
+                _start_background_code_mode, str(code), cwd, input
+            )
+        return await code_runtime.run(
+            str(code), _build_code_registry(cwd), cwd=cwd, input=input
+        )
 
     if has_code:
         raise ValueError("code and lifecycle action are mutually exclusive")
@@ -599,6 +630,8 @@ async def code_mode(
         raise ValueError("background is only valid when launching code")
     if cwd is not None:
         raise ValueError("cwd is only valid when launching code")
+    if input is not None:
+        raise ValueError("input is only valid when launching code")
     if job_id is None or not job_id.strip():
         raise ValueError(f"code_mode action={normalized_action!r} requires job_id")
     if normalized_action == "status":
