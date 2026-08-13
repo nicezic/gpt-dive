@@ -64,49 +64,18 @@ def test_large_local_exec_output_can_be_aggregated_before_return(
     assert "alpha" not in str(result)
 
 
-def test_local_start_reuses_job_manager_and_default_cwd(
-    monkeypatch, tmp_path: Path
-) -> None:
-    import gpt_dive
-
-    calls: list[tuple[str, str | None, float]] = []
-
-    def fake_start(
-        command: str, cwd: str | None = None, timeout: float = 600.0
-    ) -> dict[str, object]:
-        calls.append((command, cwd, timeout))
-        return {"job_id": f"job-{command}", "status": "running"}
-
-    monkeypatch.setattr(gpt_dive.jobs, "start", fake_start)
-    code = """\nimport asyncio\na, b = await asyncio.gather(\n    local_start(command="first", timeout=11),\n    local_start(command="second"),\n)\n[a["job_id"], b["job_id"]]\n"""
-
-    assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
-        "result": ["job-first", "job-second"]
-    }
-    assert sorted(calls) == sorted(
-        [
-            ("first", str(tmp_path), 11),
-            ("second", str(tmp_path), 600.0),
-        ]
-    )
-
-
 def test_capabilities_are_runtime_discoverable() -> None:
     result = asyncio.run(code_mode("CAPABILITIES"))["result"]
     assert set(result) == {
         "local_exec",
-        "local_start",
-        "local_status",
-        "local_result",
-        "local_cancel",
         "subagent_call",
         "bare",
         "repo_search",
         "council_emit",
         "gz64",
     }
-    assert "signature" in result["local_start"]
-    assert "durable" in result["local_start"]["description"].lower()
+    assert "signature" in result["local_exec"]
+    assert "stdin" in result["local_exec"]["signature"]
 
 
 def test_gz64_capability_round_trip() -> None:
@@ -121,36 +90,6 @@ def test_gz64_capability_round_trip() -> None:
     result = asyncio.run(code_mode(code))["result"]
     assert result["returncode"] == 0
     assert result["stdout"] == "GZ64_EXEC_OK\n"
-
-
-def test_local_job_lifecycle_can_aggregate_without_raw_output(monkeypatch) -> None:
-    import gpt_dive
-
-    monkeypatch.setattr(
-        gpt_dive.jobs,
-        "status",
-        lambda job_id: {"job_id": job_id, "status": "completed"},
-    )
-    monkeypatch.setattr(
-        gpt_dive.jobs,
-        "result",
-        lambda job_id: {
-            "job_id": job_id,
-            "status": "completed",
-            "exit_code": 0 if job_id == "ok" else 2,
-            "stdout": "RAW_OUTPUT\n" * 10_000,
-            "stderr": "",
-        },
-    )
-    code = """\nimport asyncio\nids = ["ok", "bad"]\nstatuses = await asyncio.gather(*[local_status(job_id=x) for x in ids])\nresults = await asyncio.gather(*[local_result(job_id=x) for x in ids])\n{\n    "statuses": {x["job_id"]: x["status"] for x in statuses},\n    "failed": [x["job_id"] for x in results if x["exit_code"] != 0],\n}\n"""
-    result = asyncio.run(gpt_dive.code_mode(code))
-    assert result == {
-        "result": {
-            "statuses": {"ok": "completed", "bad": "completed"},
-            "failed": ["bad"],
-        }
-    }
-    assert "RAW_OUTPUT" not in str(result)
 
 
 def test_subagent_call_is_registry_capability(monkeypatch) -> None:

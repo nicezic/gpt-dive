@@ -291,32 +291,6 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             stdin,
         )
 
-    async def local_start(
-        *,
-        command: str,
-        cwd: str | None = None,
-        timeout: float = 600.0,
-    ) -> dict[str, Any]:
-        """Start a durable local background job and return its compact status."""
-        return await asyncio.to_thread(
-            jobs.start,
-            command,
-            cwd if cwd is not None else default_cwd,
-            timeout,
-        )
-
-    async def local_status(*, job_id: str) -> dict[str, Any]:
-        """Return compact status for a durable local background job."""
-        return await asyncio.to_thread(jobs.status, job_id)
-
-    async def local_result(*, job_id: str) -> dict[str, Any]:
-        """Return a durable local job result, including stdout/stderr when ready."""
-        return await asyncio.to_thread(jobs.result, job_id)
-
-    async def local_cancel(*, job_id: str) -> dict[str, Any]:
-        """Request cancellation of a durable local background job."""
-        return await asyncio.to_thread(jobs.cancel, job_id)
-
     async def subagent_call(
         *,
         model: str,
@@ -392,10 +366,6 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
     registry.register("local_exec", local_exec)
-    registry.register("local_start", local_start)
-    registry.register("local_status", local_status)
-    registry.register("local_result", local_result)
-    registry.register("local_cancel", local_cancel)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)
     registry.register("repo_search", repo_search)

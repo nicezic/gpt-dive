@@ -38,11 +38,10 @@ Current registered capabilities:
 
 ```text
 local_exec
-local_start
-local_status
-local_result
-local_cancel
 subagent_call
+bare
+repo_search
+council_emit
 gz64
 ```
 
