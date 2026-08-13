@@ -59,6 +59,30 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         action = request.get("action")
         if action == "ping":
             response = {"ok": True, "action": "pong"}
+        elif action == "list_pages":
+            response = {"ok": True, "pages": [
+                {"url": page.url, "title": await page.title()}
+                for context in browser.contexts for page in context.pages
+            ]}
+        elif action == "capture":
+            url = str(request["url"])
+            page = find_page(browser, url)
+            captured = []
+            async def on_response(resp):
+                if resp.request.resource_type in {"xhr", "fetch"}:
+                    item = {"url": resp.url, "status": resp.status}
+                    try:
+                        ct = (await resp.all_headers()).get("content-type", "")
+                        if "json" in ct:
+                            item["body"] = (await resp.text())[:12000]
+                    except Exception:
+                        pass
+                    captured.append(item)
+            page.on("response", on_response)
+            await page.reload(wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(2)
+            page.remove_listener("response", on_response)
+            response = {"ok": True, "action": "capture", "url": page.url, "responses": captured}
         elif action == "send":
             url = str(request["url"])
             message = str(request["message"])

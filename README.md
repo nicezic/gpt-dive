@@ -24,7 +24,7 @@ Exactly four top-level tools:
 - `wsl2_sync`
 - `wsl2_async`
 
-See [`docs/runtime/architecture.md`](docs/runtime/architecture.md) for the current runtime SSOT.
+See `docs/runtime/architecture.md` for the stable runtime SSOT.
 
 ## Evolution
 
@@ -35,15 +35,26 @@ v1  Local MCP Runtime
 v2  Pydantic AI Harness
      -> code_mode / background execution / subagents
 
-v3  Council              <- current design work
-     -> human-steered shared USER / SOL / OPUS discussion
+v3  Council
+     -> human-steered shared USER / SOL / OPUS room
 ```
 
-These labels describe architecture generations, not the package semantic version.
+These labels describe architecture generations, not package semantic versions.
 
-Council grew from the manual SOL + User + Opus review workflow. Its goal is to automate transport while preserving human steering, shared reasoning context, independent judgment, and the Why behind decisions. The current v3 implementation/decision SSOT is [`specs/council.md`](specs/council.md).
+Council grew from the user's successful manual SOL + User + Opus review workflow. Its purpose is to automate transport while preserving human steering, shared reasoning context, independent judgment, and the Why behind decisions.
 
-See [`docs/council/history.md`](docs/council/history.md) for the reasoning lineage.
+Council v1 is implemented / FULL PASS. The current next product area is start/reopen ergonomics.
+
+## Council
+
+Start here:
+
+- `docs/council/README.md` — compact current architecture and documentation map.
+- `docs/council/history.md` — reasoning lineage: manual Council → Web SOL bridge → Shared Room → v1 → startup friction.
+- `docs/council/startup.md` — approved post-v1 start/reopen direction and `init.md` context shape.
+- `specs/council.md` — Council v1 implementation/decision SSOT and acceptance evidence.
+- `plans/council/` — historical experiments and completed implementation plans.
+- `CONTINUATION.md` — fresh-session live handoff.
 
 ## Development
 
@@ -53,23 +64,28 @@ uv run --python 3.14 python -m pytest -q
 uv run --python 3.14 python -m gpt_dive
 ```
 
-Operational notes, including safe MCP reload and Web schema-cache behavior, live in [`docs/runtime/operations.md`](docs/runtime/operations.md).
+Operational notes, including safe MCP reload and Web schema-cache behavior, live in `docs/runtime/operations.md`.
 
 ## Documentation
 
-- [`docs/runtime/architecture.md`](docs/runtime/architecture.md) — current v1-v2 runtime architecture
-- [`docs/runtime/history.md`](docs/runtime/history.md) — v1 -> v2 evolution and Why
-- [`docs/runtime/operations.md`](docs/runtime/operations.md) — development and runtime operations
-- [`docs/council/history.md`](docs/council/history.md) — Council evolution and current pre-spec direction
-- [`plans/runtime/`](plans/runtime/) — completed/runtime implementation plans
-- [`plans/council/`](plans/council/) — Council experiments and implementation plans
-- [`specs/council.md`](specs/council.md) — Council v3 implementation/decision SSOT
+### Runtime
+
+- `docs/runtime/architecture.md` — current v1-v2 runtime architecture.
+- `docs/runtime/history.md` — v1 → v2 evolution and Why.
+- `docs/runtime/operations.md` — development/runtime operations.
+- `plans/runtime/` — completed runtime plans.
+
+### Council
+
+- `docs/council/README.md`
+- `docs/council/history.md`
+- `docs/council/startup.md`
+- `specs/council.md`
+- `plans/council/`
 
 ## Source Layout
 
 ```text
-src/gpt_dive/   # Python MCP runtime + harness
-web/            # reserved for Council UI: Svelte 5 + Vite + TypeScript
+src/gpt_dive/   # Python MCP runtime + harness + Council backend
+web/            # Council UI: Svelte 5 + Vite + TypeScript
 ```
-
-The Council Python package split and Web app scaffold belong to v3 implementation and are intentionally not part of this documentation-only cleanup.

@@ -1,5 +1,7 @@
 # Council Web SOL E2E Experiment
 
+> Historical feasibility experiment. Council v1 later promoted the proven input-only CDP + MCP/Git output pattern into `src/gpt_dive/council/`; current architecture lives in `docs/council/README.md`.
+
 This experiment proves the input/output transport boundary for the real ChatGPT Web SOL session.
 
 ## Proven path

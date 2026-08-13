@@ -64,6 +64,7 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     # Intentionally bare: no tools, capabilities, filesystem, shell, workspace,
     # repo context, system prompt, or additional instructions.
     agent = Agent(build_model(alias))
+    # output_tokens_limit is a Pydantic usage budget, NOT the provider max_tokens cap.
     result = await agent.run(
         prompt,
         usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),

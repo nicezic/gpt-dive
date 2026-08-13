@@ -82,4 +82,4 @@ Generation 1 made local execution reachable. Generation 2 made it programmable a
 
 Generation 3 introduces a different concern: a human-steered multi-model **Council** where USER, SOL, and OPUS share an evolving conversation and the transport between participants is automated without automating judgment.
 
-Council architecture is documented separately under `docs/council/` and will receive its own spec after the pre-v3 cleanup is complete.
+Council architecture is documented under `docs/council/`; Council v1 was subsequently formalized in `specs/council.md`, implemented, and accepted end to end.

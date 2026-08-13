@@ -46,7 +46,7 @@ subagent_call
 gz64
 ```
 
-The Council transport experiment also registers `council_emit`; it is a v3-facing capability probe, not a fifth Web MCP tool and not yet the full Council runtime.
+Council registers `council_emit` behind Code Mode as the explicit Web SOL output path; it remains a capability, not a fifth Web-facing MCP tool. The implemented Council runtime lives under `gpt_dive.council`.
 
 ## Durable Execution
 
@@ -92,7 +92,7 @@ src/gpt_dive/
 ├── subagent_runtime.py
 ├── subagent_worker.py
 ├── tasks_extension.py
-├── council.py          # v3 transport probe; not yet final Council package
+├── council/            # implemented v3 Council backend + protocol + participant adapters
 └── guard-bin/
 ```
 

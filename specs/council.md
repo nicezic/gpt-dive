@@ -587,3 +587,22 @@ Acceptance evidence from the throwaway Council repo showed the USER turn at `fad
 7. **Git CLI is intentionally retained.** Council uses a narrow subprocess adapter around official Git plumbing rather than adding GitPython, pygit2/libgit2, or Dulwich.
 
 The deferred list above remains deferred; v1 success does not implicitly approve multi-room management, automatic summarization, autonomous debate, or richer history/navigation.
+
+
+## Post-v1 Direction — Start / Reopen Ergonomics
+
+> This section is **not part of the Council v1 acceptance contract** above. It records approved direction discovered after v1 was completed. Current implementation remains the CLI/manual startup documented in `docs/council/startup.md`.
+
+The next product problem is startup/reopen friction, not a redesign of the delivered Shared Room protocol.
+
+Approved direction:
+
+- the current ChatGPT Web conversation remains SOL;
+- new Council rooms use `~/council/<YYMMDD-title>/`;
+- SOL authors the initial `init.md` from the current session plus relevant source/runtime evidence;
+- `init.md` should preserve causal context, including `Why`, compact `Background Knowledge`, current reality, constraints, prior decisions/rejected alternatives when material, `Original References`, and the Council goal;
+- a peer may surface missing/ambiguous context because incomplete causal context previously caused a strong review to attack the wrong problem; this is a reason, not a mandatory “ask questions first” behavior rule;
+- reusable start/reopen mechanics belong behind a registered `code_mode` capability, not a fifth top-level MCP tool;
+- room-state recovery and fresh Web SOL native-context rehydration are distinct problems.
+
+See `docs/council/startup.md` for the current design contract. Exact lifecycle capability schema and reopen/rehydration behavior remain to be decided before implementation.
