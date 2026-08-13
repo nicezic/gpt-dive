@@ -1,7 +1,36 @@
 # GPT Dive — Current Continuation
 
-> Updated: 2026-08-13
+> Updated: 2026-08-14
 > Purpose: compact fresh-session handoff. Durable Why/history belongs in `docs/`; implementation decisions/evidence belong in `specs/` and `plans/`.
+
+## Immediate Handoff — Code Mode Files + Shell
+
+- Implementation commit: `e0f6f1f` (`feat: expose harness files and shell in code mode`).
+- Plan / decision / validation record: `plans/code_mode/plan-20260814-files-and-shell.md`.
+- Added Harness FileSystem 8 tools + Shell 4 tools to the per-run Code Mode registry; `local_exec` remains. Shell keeps guard-bin/provider-secret stripping, run-owned background cleanup, and the 50k Harness output cap.
+- Validation before commit: targeted Code Mode tests **30 passed**; full suite **78 passed**; touched-file Ruff PASS; `git diff --check` PASS.
+
+### Verified live acceptance state
+
+The implementation tests pass, but the active MCP process has **not loaded the new registry yet**.
+
+- Live probe: `await read_file(...)` -> `NameError: name 'read_file' is not defined`.
+- `systemctl --user status chatgpt-wsl2-mcp.service` showed the service still active since **2026-08-14 05:28:58 KST**.
+- Therefore the earlier documented `wsl2_async -> nohup -> sleep 3 -> systemctl --user restart ...` handoff did not actually replace the running service. Do not misclassify this as an implementation failure or as mere ChatGPT schema caching.
+
+### Next fresh-session task
+
+1. `@dive bootstrap` first.
+2. Read this section + `plans/code_mode/plan-20260814-files-and-shell.md`.
+3. Verify the actual MCP/tunnel process start time and reload path. Treat `docs/runtime/operations.md` restart recipe as suspect until re-proven.
+4. Perform a reliable reload without killing the initiating MCP response.
+5. In the fresh session, inspect live `CAPABILITIES` and require all 12 new names.
+6. Smoke-test at least: `read_file`, stale-hash write/edit rejection, `run_command`, and `start_command -> check_command -> stop_command`; also confirm no background process leak at Code Mode end.
+7. If live acceptance passes, update the plan Result from pending to PASS. If reload mechanics are fixed, correct the runtime operations doc as well.
+
+### Preserve unrelated worktree state
+
+Do not reset/clean unrelated work. At handoff time these pre-existing/unrelated paths remained dirty or untracked: `experiments/council_web_sol_e2e/edge_bridge.py`, bootstrap-related hunks in `src/gpt_dive/app.py`, `docs/probe/`, `plans/code_mode/plan-260814-files-and-shell.md`, and `tests/test_bootstrap.py`.
 
 ## Current Position
 
