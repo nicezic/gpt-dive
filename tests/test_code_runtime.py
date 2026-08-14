@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic_monty import MontyTypingError
 
 import gpt_dive.app as app_module
 from gpt_dive import code_mode
@@ -101,6 +102,17 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "Read a text file with line numbers."
     )
     assert result["run_command"]["description"].startswith("Execute a shell command")
+
+
+def test_code_mode_static_type_check_rejects_wrong_capability_argument() -> None:
+    with pytest.raises(MontyTypingError) as exc_info:
+        asyncio.run(code_mode("await search_files(query='M3', path='.')"))
+
+    message = str(exc_info.value)
+    assert "missing-argument" in message
+    assert "required parameter `pattern`" in message
+    assert "unknown-argument" in message
+    assert "Argument `query`" in message
 
 
 def test_gz64_capability_round_trip() -> None:

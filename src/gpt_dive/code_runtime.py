@@ -43,6 +43,22 @@ class CallableRegistry:
             for name, fn in self._callables.items()
         }
 
+    def type_check_stubs(self, *, include_input: bool = False) -> str:
+        """Render runtime globals and live callables as Monty type-check stubs."""
+        parts = [
+            "from typing import Any",
+            "CWD: str",
+            "CAPABILITIES: dict[str, dict[str, str]]",
+        ]
+        if include_input:
+            parts.append("INPUT: str")
+        for name, fn in self._callables.items():
+            prefix = "async def" if inspect.iscoroutinefunction(fn) else "def"
+            parts.append(
+                f"{prefix} {name}{inspect.signature(fn)}:\n    raise NotImplementedError()"
+            )
+        return "\n\n".join(parts)
+
 
 class MontyCodeRuntime:
     """Execute one stateless Monty program against a registry of host callables."""
@@ -70,7 +86,12 @@ class MontyCodeRuntime:
         try:
             async with (
                 AsyncMonty() as monty,
-                monty.checkout(type_check=False) as session,
+                monty.checkout(
+                    type_check=True,
+                    type_check_stubs=registry.type_check_stubs(
+                        include_input=input is not None
+                    ),
+                ) as session,
             ):
                 state = await session.feed_start(
                     code,
@@ -78,7 +99,7 @@ class MontyCodeRuntime:
                     external_lookup=registry.as_external_lookup(),
                     print_callback=capture,
                     mount=mount,
-                    skip_type_check=True,
+                    skip_type_check=False,
                 )
                 while not isinstance(state, MontyComplete):
                     state = await state.resume_auto()

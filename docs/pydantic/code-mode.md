@@ -103,6 +103,14 @@ status = await run_command("git status --short")
 
 This boundary matters because the outer MCP input schema cannot validate arbitrary inner Monty capability calls. Model-facing signatures/descriptions are part of the executable interface and require live acceptance when changed.
 
+### Static type-check boundary
+
+Direct Code Mode statically checks each generated Monty program before capability dispatch. `CallableRegistry` renders type-check stubs mechanically from the same live Python callables used to populate `CAPABILITIES`, so discovery and enforcement share one signature source rather than a second hand-maintained contract. Runtime globals (`CWD`, `CAPABILITIES`, and `INPUT` when present) are declared in the same checker environment.
+
+This layer exists because model-side contract adherence is probabilistic even when the correct signature is already visible. For example, if the live contract is `search_files(pattern=...)`, generated `search_files(query=...)` code is rejected by Monty with a typing error before the host capability executes. There is deliberately no argument aliasing, automatic repair, or unchecked fallback; runtime/Harness validation remains the backstop for errors that cannot be proven statically.
+
+Implementation history and acceptance: `plans/code_mode/plan-260814-static-type-check.md`.
+
 ## Payload boundary
 
 Outer `input=` is exposed to Monty as `INPUT`. It is the preferred transport for multiline/quoted payloads so `code=` stays small executable logic and does not accumulate shell/JSON/Markdown quoting hazards.
@@ -134,6 +142,7 @@ When changing the model-facing Code Mode capability surface, prove at minimum:
 4. managed background processes are cleaned up;
 5. provider credentials are not inherited by ordinary Harness Shell subprocesses;
 6. existing `local_exec`, `subagent_call`, background Code Mode, and public MCP surface remain regression-green;
-7. fresh-session live `CAPABILITIES` discovery passes after any required service/schema refresh.
+7. statically invalid inner capability calls are rejected before host dispatch while representative valid calls still execute;
+8. fresh-session live `CAPABILITIES` discovery passes after any required service/schema refresh.
 
 Completed Files + Shell acceptance: `plans/code_mode/plan-260814-files-and-shell.md`.
