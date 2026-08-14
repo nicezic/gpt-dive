@@ -127,12 +127,12 @@ Outer `input=` is exposed to Monty as `INPUT`. It is the preferred transport for
 
 ```text
 FileSystem(root_dir=workspace)
-Shell(cwd=workspace, ...)
+Shell(cwd=workspace, ..., max_output_chars=50_000)
 RepoContext(workspace_dir=workspace, nested_traversal=True)
-ToolOutputLimits()
+_build_tool_output_limits()  # Spill >= 8K, TTL 48h
 ```
 
-The direct Code Mode registry and child-agent capability bundle intentionally share the same lower execution-policy intent but are separate constructions and need separate tests.
+The direct Code Mode registry and child-agent capability bundle intentionally share the same lower execution-policy intent but are separate constructions and need separate tests. Detailed output-boundary design lives in `tool-output-limits.md`.
 
 ## Search integration
 
