@@ -23,12 +23,12 @@ def test_server_description_requires_bootstrap_first() -> None:
     assert "Call bootstrap first." in description
 
 
-def test_server_instructions_define_compact_progress_format() -> None:
+def test_server_instructions_do_not_own_progress_presentation() -> None:
     instructions = gpt_dive.mcp.instructions
     assert instructions is not None
-    assert "show exactly two concise user-visible lines" in instructions
-    assert "show python rather than uv run --python 3.14 python" in instructions
-    assert "keep code_mode as the top-level label" in instructions
+    assert "exactly two concise user-visible lines" not in instructions
+    assert "Line 1" not in instructions
+    assert "Line 2" not in instructions
 
 
 def test_code_mode_description_names_local_exec_result_keys() -> None:
