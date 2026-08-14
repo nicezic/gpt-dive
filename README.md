@@ -72,6 +72,15 @@ uv run --python 3.14 python -m pytest -q
 uv run --python 3.14 python -m gpt_dive
 ```
 
+For a live MCP restart initiated through the same MCP connection, hand off the restart and return immediately:
+
+```bash
+nohup bash -c 'sleep 2; systemctl --user restart chatgpt-wsl2-mcp.service' \
+  >/tmp/chatgpt-wsl2-mcp-restart.log 2>&1 &
+```
+
+The `sleep 2` gives the current tool response time to exit before the service is killed. Do not probe or verify the restarted MCP from that same handoff turn/session; verify only later from a fresh/reconnected session when needed.
+
 ## Source layout
 
 ```text
