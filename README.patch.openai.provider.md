@@ -166,7 +166,7 @@ A release/cut-over is accepted only when:
 
 ### 2026-08-14 — local compatibility introduced
 
-- Reference: PR #6433 `af055625bf67217a5839d6255900475d9576aa13`.
+- Reference: PR #6433 `af055625bf67217a5839d6255900475d9576aa13`; the local slim provenance artifact is `~/ref/pydantic-ai-pr-6433/codex-reference.patch.gz` (metadata in its `README.md`).
 - Removed GPT Dive's Git source pin to the PR fork.
 - Cut over to official `pydantic-ai-slim==2.30.0` / `pydantic-graph==2.30.0`.
 - Kept security-sensitive auth/OAuth/store behavior locally with Pydantic-private utility dependencies removed.

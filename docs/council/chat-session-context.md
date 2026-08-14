@@ -406,13 +406,13 @@ Keep this issue in this single document until that design stabilizes; do not spl
 
 ### Pydantic AI Core
 
-- `~/ref/pydantic-ai-pr-6433/docs/message-history.md`
+- `~/ref/pydantic-ai/docs/message-history.md`
   - messages, `message_history`, JSON serialization, `run_id`, `conversation_id`, history processing.
-- `~/ref/pydantic-ai-pr-6433/docs/capabilities/process-history.md`
+- `~/ref/pydantic-ai/docs/capabilities/process-history.md`
   - `ProcessHistory` capability.
-- `~/ref/pydantic-ai-pr-6433/docs/models/anthropic.md`
+- `~/ref/pydantic-ai/docs/models/anthropic.md`
   - Anthropic prompt caching, gateway-compatible per-message caching, cache usage.
-- `~/ref/pydantic-ai-pr-6433/docs/models/openai.md`
+- `~/ref/pydantic-ai/docs/models/openai.md`
   - provider-native continuation examples (`previous_response_id`, durable conversations) and server-side compaction; useful as a contrast, not as an OPUS assumption.
 
 ### Pydantic AI Harness
