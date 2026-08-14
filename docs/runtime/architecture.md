@@ -34,16 +34,25 @@ The surface stays intentionally small. New reusable behavior should normally bec
 
 `code_mode` executes a fresh Monty program per call and exposes `CWD` plus registered capabilities. It is designed for composition: independent work can run in parallel, large intermediate results can be filtered locally, and only compact evidence needs to return to the model context.
 
-Current registered capabilities:
+Current registered capability groups:
 
 ```text
-local_exec
-subagent_call
-bare
-repo_search
-council_emit
-gz64
+FileSystem
+  read_file / write_file / edit_file
+  list_directory / search_files / find_files
+  create_directory / file_info
+
+Shell
+  run_command / start_command / check_command / stop_command
+
+Model / orchestration
+  subagent_call / bare / council_emit
+
+Retrieval / compatibility
+  repo_search / local_exec / gz64
 ```
+
+The primary FileSystem write root is Code Mode `cwd`; selected trusted home-level reference trees can be addressed explicitly for read/list/search/find/info only. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
 
 Council registers `council_emit` behind Code Mode as the explicit Web SOL output path; it remains a capability, not a fifth Web-facing MCP tool. The implemented Council runtime lives under `gpt_dive.council`.
 

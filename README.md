@@ -81,6 +81,15 @@ Operational notes, including safe MCP reload and Web schema-cache behavior, live
 - `docs/runtime/operations.md` — development/runtime operations.
 - `plans/runtime/` — completed runtime plans.
 
+### Pydantic AI / Harness
+
+- `docs/pydantic/README.md` — GPT Dive Pydantic development-document map and ownership boundary.
+- `docs/pydantic/architecture.md` — Pydantic adoption → current integration/customization lineage.
+- `docs/pydantic/code-mode.md` — Code Mode registry, FileSystem/Shell, trusted read roots, and validation contract.
+- `docs/pydantic/providers.md` — provider/model integration roles.
+- `docs/pydantic/adr/` — durable GPT Dive-specific Pydantic architecture decisions; current implementation docs remain directly under `docs/pydantic/`.
+- `README.patch.openai.provider.md` — intentionally root-level Codex compatibility maintenance/retirement SSOT.
+
 ### Council
 
 - `docs/council/README.md`

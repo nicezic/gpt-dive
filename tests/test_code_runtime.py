@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import gpt_dive.app as app_module
 from gpt_dive import code_mode
 
 
@@ -522,6 +523,98 @@ edited = await edit_file("nested/out.txt", "one", "two")
 def test_harness_filesystem_rejects_traversal(tmp_path: Path) -> None:
     with pytest.raises(Exception, match="resolves outside the root directory"):
         asyncio.run(code_mode('await read_file("../outside.txt")', cwd=str(tmp_path)))
+
+
+def test_harness_filesystem_trusted_read_root_is_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    trusted = tmp_path / "trusted"
+    workspace.mkdir()
+    trusted.mkdir()
+    target = trusted / "reference.txt"
+    target.write_text("alpha\nbeta\n")
+    monkeypatch.setattr(
+        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
+    )
+
+    code = f"""\nread = await read_file({str(target)!r}, limit=1)\nlisting = await list_directory({str(trusted)!r})\nsearch = await search_files("beta", path={str(trusted)!r})\nfound = await find_files("*.txt", path={str(trusted)!r})\ninfo = await file_info({str(target)!r})\n{{"read": read, "listing": listing, "search": search, "found": found, "info": info}}\n"""
+    result = asyncio.run(code_mode(code, cwd=str(workspace)))["result"]
+    assert "1\talpha" in result["read"]
+    assert "reference.txt" in result["listing"]
+    assert "reference.txt:2:beta" in result["search"]
+    assert "reference.txt" in result["found"]
+    assert "type: file" in result["info"]
+
+    with pytest.raises(Exception, match="resolves outside the root directory"):
+        asyncio.run(
+            code_mode(
+                f'await write_file({str(target)!r}, "changed")',
+                cwd=str(workspace),
+            )
+        )
+    assert target.read_text() == "alpha\nbeta\n"
+
+
+def test_harness_filesystem_rejects_unlisted_absolute_read_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    trusted = tmp_path / "trusted"
+    forbidden = tmp_path / "forbidden"
+    workspace.mkdir()
+    trusted.mkdir()
+    forbidden.mkdir()
+    target = forbidden / "secret.txt"
+    target.write_text("secret")
+    monkeypatch.setattr(
+        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
+    )
+
+    with pytest.raises(
+        Exception, match="outside the Code Mode workspace and trusted read roots"
+    ):
+        asyncio.run(code_mode(f"await read_file({str(target)!r})", cwd=str(workspace)))
+
+
+def test_harness_filesystem_trusted_read_root_rejects_symlink_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    trusted = tmp_path / "trusted"
+    forbidden = tmp_path / "forbidden"
+    workspace.mkdir()
+    trusted.mkdir()
+    forbidden.mkdir()
+    secret = forbidden / "secret.txt"
+    secret.write_text("secret")
+    link = trusted / "escape.txt"
+    link.symlink_to(secret)
+    monkeypatch.setattr(
+        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
+    )
+
+    with pytest.raises(Exception, match="resolves outside the root directory"):
+        asyncio.run(code_mode(f"await read_file({str(link)!r})", cwd=str(workspace)))
+
+
+def test_repo_search_relative_path_inherits_code_mode_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    async def fake_search_repo(**kwargs):
+        return kwargs
+
+    monkeypatch.setattr(app_module, "search_repo", fake_search_repo)
+    result = asyncio.run(
+        code_mode(
+            "await repo_search(query='needle', path='src')",
+            cwd=str(workspace),
+        )
+    )["result"]
+    assert result["path"] == str((workspace / "src").resolve())
 
 
 def test_harness_filesystem_write_rejects_stale_expected_hash(tmp_path: Path) -> None:

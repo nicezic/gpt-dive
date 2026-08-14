@@ -258,6 +258,26 @@ def wsl2_sync(
     return _run_command(command, cwd, timeout)
 
 
+_CODE_MODE_TRUSTED_READ_DIRS = (
+    "ref",
+    "wiki",
+    "gpt-dive",
+    "gbrain",
+    "monsoon",
+    "labs",
+)
+
+
+def _code_mode_trusted_read_roots() -> tuple[Path, ...]:
+    """Return existing home-level trees that Code Mode may read outside its cwd."""
+    home = Path.home().resolve()
+    return tuple(
+        root.resolve()
+        for name in _CODE_MODE_TRUSTED_READ_DIRS
+        if (root := home / name).is_dir()
+    )
+
+
 def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry = CallableRegistry()
     workspace = (
@@ -267,6 +287,60 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     )
 
     filesystem_toolset = FileSystem(root_dir=workspace).get_toolset()
+    trusted_read_toolsets = [
+        (root, FileSystem(root_dir=root).get_toolset())
+        for root in _code_mode_trusted_read_roots()
+        if root != workspace
+    ]
+
+    def select_read_toolset(path: str) -> tuple[Any, str]:
+        expanded = Path(path).expanduser()
+        if not expanded.is_absolute():
+            return filesystem_toolset, path
+
+        lexical = Path(os.path.abspath(str(expanded)))
+        candidates = [(workspace, filesystem_toolset), *trusted_read_toolsets]
+        candidates.sort(key=lambda item: len(item[0].parts), reverse=True)
+        for root, toolset in candidates:
+            try:
+                relative = lexical.relative_to(root)
+            except ValueError:
+                continue
+            return toolset, str(relative)
+
+        allowed = ", ".join(str(root) for root, _ in candidates)
+        raise PermissionError(
+            f"Path {path!r} is outside the Code Mode workspace and trusted read roots: {allowed}"
+        )
+
+    async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
+        """Read a text file with line numbers. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        toolset, relative = select_read_toolset(path)
+        return await toolset.read_file(relative, offset=offset, limit=limit)
+
+    async def list_directory(path: str = ".") -> str:
+        """List the contents of a directory. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        toolset, relative = select_read_toolset(path)
+        return await toolset.list_directory(relative)
+
+    async def search_files(
+        pattern: str, *, path: str = ".", include_glob: str | None = None
+    ) -> str:
+        """Search file contents using the regular expression passed as `pattern`. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        toolset, relative = select_read_toolset(path)
+        return await toolset.search_files(
+            pattern, path=relative, include_glob=include_glob
+        )
+
+    async def find_files(pattern: str, *, path: str = ".") -> str:
+        """Find files by glob pattern (name matching, not content search). Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        toolset, relative = select_read_toolset(path)
+        return await toolset.find_files(pattern, path=relative)
+
+    async def file_info(path: str) -> str:
+        """Get metadata about a file or directory. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        toolset, relative = select_read_toolset(path)
+        return await toolset.file_info(relative)
 
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
     shell_env = os.environ.copy()
@@ -351,11 +425,15 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         """Search local code/docs with Probe using BM25 ranking and AST-aware blocks.
 
         Prefer this for exploring unfamiliar repositories and locating relevant code by concept.
+        Relative path values resolve from the Code Mode cwd; absolute/~/ paths remain explicit.
         Use precise technical keywords when possible.
         """
+        search_path = Path(path).expanduser() if path is not None else workspace
+        if not search_path.is_absolute():
+            search_path = workspace / search_path
         return await search_repo(
             query=query,
-            path=path if path is not None else (default_cwd or str(Path.home())),
+            path=str(search_path.resolve()),
             max_results=max_results,
             max_tokens=max_tokens,
             allow_tests=allow_tests,
@@ -378,17 +456,14 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         command = gzip.decompress(compressed).decode("utf-8")
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
-    for name in (
-        "read_file",
-        "write_file",
-        "edit_file",
-        "list_directory",
-        "search_files",
-        "find_files",
-        "create_directory",
-        "file_info",
-    ):
-        registry.register(name, getattr(filesystem_toolset, name))
+    registry.register("read_file", read_file)
+    registry.register("write_file", filesystem_toolset.write_file)
+    registry.register("edit_file", filesystem_toolset.edit_file)
+    registry.register("list_directory", list_directory)
+    registry.register("search_files", search_files)
+    registry.register("find_files", find_files)
+    registry.register("create_directory", filesystem_toolset.create_directory)
+    registry.register("file_info", file_info)
 
     def bounded_shell_method(name: str):
         method = getattr(shell_toolset, name)
@@ -576,7 +651,7 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
         "CAPABILITIES, plus INPUT when the optional input payload is provided. CAPABILITIES is "
         "discovery metadata only (signature + description), not a "
         "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
-        "by async name, e.g. await local_exec(...) or await subagent_call(...). The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; prefer those for ordinary workspace file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
+        "by async name, e.g. await local_exec(...) or await subagent_call(...). The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; FileSystem writes remain cwd-scoped, while read/list/search/find/info can use explicit absolute/~/ paths under configured trusted read roots. Prefer those capabilities for ordinary file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
         "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
         "Pydantic Harness FileSystem + Shell coding toolkit, RepoContext, and bounded tool outputs. The local WSL2 filesystem is mounted read-write."
     ),

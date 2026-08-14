@@ -1,7 +1,7 @@
 # Code Mode Files + Shell
 
 Date: 2026-08-14
-Status: Implemented — fresh-session live probe pending
+Status: Implemented — live acceptance PASS
 
 ## Goal / Why
 
@@ -131,7 +131,7 @@ Tests should use temporary workspaces/processes and avoid real credentials, netw
 
 ## Result
 
-Implementation complete in the worktree. Live capability acceptance is still pending because the attempted detached MCP restart did not actually replace the running service process.
+Implementation and fresh-session live capability acceptance are complete.
 
 - Registered all 8 Harness FileSystem methods directly in Code Mode with native signatures/docstrings and Code Mode `cwd` as the filesystem root.
 - Registered all 4 Harness Shell methods while retaining `local_exec`. Shell uses the same guard-bin PATH and provider-credential stripping intent as subagent workers.
@@ -148,8 +148,53 @@ Validation:
 - `git diff --check` -> PASS.
 - Repository-wide Ruff lint/format are not clean because of pre-existing unrelated dirty work (`experiments/council_web_sol_e2e/edge_bridge.py` lint; bootstrap/description and other unrelated formatting hunks). Those files/hunks were deliberately not modified for this change.
 
-Remaining acceptance / verified live state:
+Fresh-session live acceptance (2026-08-14):
 
-- A live `code_mode` probe after the attempted restart returned `NameError: name 'read_file' is not defined`, proving the active runtime had not loaded the new registry.
-- `systemctl --user status chatgpt-wsl2-mcp.service` showed the tunnel service still active since **2026-08-14 05:28:58 KST**, so the earlier `wsl2_async -> nohup -> sleep 3 -> systemctl restart` handoff did **not** restart it. This is an operational reload issue, not evidence that the implementation tests failed.
-- In the next fresh ChatGPT Web session: bootstrap first, verify/reload the actual service process, then confirm live `CAPABILITIES` exposes the 8 FileSystem and 4 Shell names and smoke-test representative file/shell calls.
+- The active MCP/tunnel service was confirmed restarted at **2026-08-14 06:36:42 KST** (`MainPID=1357599` at acceptance time). The earlier 05:28 process state was stale historical evidence, not the current runtime.
+- Live `CAPABILITIES` exposes all 12 new names: 8 FileSystem tools and 4 Shell tools, with native signatures/descriptions.
+- `read_file` returned bounded line-numbered content; `run_command` executed in the Code Mode workspace and demonstrated the 50k Shell output cap.
+- Stale `expected_hash` values were rejected by both `write_file` and `edit_file`, and the file remained unchanged.
+- `start_command -> check_command -> stop_command` completed successfully, and a separate run-owned background process was confirmed dead after its owning Code Mode call ended (`CLEAN:<pid>`).
+- Live acceptance is **PASS**. No additional MCP restart is required for this capability rollout.
+
+
+## Follow-up — trusted read roots + repo_search cwd (2026-08-14)
+
+A real cross-repository GBrain task exposed an ergonomics gap in Decision 2 above: `cwd=~/gbrain` correctly contained Harness FileSystem access, but normal reference work also needed `~/ref` without changing the primary workspace. A second live probe showed `repo_search(path="src")` resolved from the wrong base instead of Code Mode `cwd`.
+
+### Decision
+
+- Keep `cwd` as the only primary **read/write** workspace.
+- Do **not** widen the writable FileSystem root to `~/`.
+- Add explicit read-side dispatch for existing trusted home-level roots: `~/ref`, `~/wiki`, `~/gpt-dive`, `~/gbrain`, `~/monsoon`, `~/labs`.
+- Only `read_file`, `list_directory`, `search_files`, `find_files`, and `file_info` may use those external roots, and only through explicit absolute/`~/...` paths.
+- Keep `write_file`, `edit_file`, and `create_directory` bound directly to the primary workspace FileSystem.
+- Relative `../` traversal never switches roots.
+- Make relative `repo_search(path=...)` resolve from the Code Mode workspace; absolute/`~/` paths stay explicit.
+
+This supersedes only the earlier consequence that outside-workspace reads always require a different Code Mode `cwd`. It preserves the earlier reason for a meaningful writable repository boundary.
+
+### Why
+
+Harness FileSystem is intentionally single-root and already implements canonical/symlink containment. GPT Dive can preserve that behavior by constructing separate upstream FileSystem toolsets per trusted root and dispatching only read methods, rather than creating a broad `FileSystem(root_dir=~)` or duplicating filesystem authorization semantics.
+
+### Additional test contract
+
+- explicit trusted absolute read/list/search/find/info: PASS
+- trusted external write: rejected and target unchanged
+- unlisted absolute root read: rejected
+- symlink inside trusted root escaping outside it: rejected by Harness containment
+- relative `repo_search(path="src")`: resolves to `<cwd>/src`
+- existing FileSystem/Shell capability tests remain green
+
+Local acceptance:
+
+- `uv run ruff format --check src/gpt_dive/app.py tests/test_code_runtime.py` -> PASS
+- `uv run ruff check src/gpt_dive/app.py tests/test_code_runtime.py` -> PASS
+- `uv run pytest -q tests/test_code_runtime.py` -> **34 passed**
+- `uv run pytest -q` -> **87 passed**
+- `uv run ruff check src/gpt_dive/app.py tests/test_code_runtime.py tests/test_surface.py` -> PASS
+- `uv run pyright src/gpt_dive/app.py` -> **0 errors**
+- direct source-runtime probe: `cwd=~/gbrain -> read_file(~/ref/pydantic-ai/pyproject.toml)` PASS; `repo_search(path="src")` resolved to `/home/nicezic/gpt-dive/src`.
+
+A service reload is required before the active MCP process exposes this follow-up behavior; fresh-session live acceptance should re-check the model-facing capability descriptions and one real `cwd=~/gbrain -> ~/ref` read after reload.
