@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +12,32 @@ from pydantic_ai import Agent, UsageLimits
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import (
+    Band,
+    LocalFileStore,
+    Spill,
+    ToolOutputLimits,
+    Truncate,
+)
 
 from .model_registry import build_model, resolve_model
 from .runtime_env import build_runtime_path
+
+_TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 8_000
+_TOOL_OUTPUT_SPILL_TTL = timedelta(hours=48)
+
+
+def _build_tool_output_limits() -> ToolOutputLimits:
+    """Bound large worker tool returns while keeping lossless read-back available."""
+    return ToolOutputLimits(
+        bands=[
+            Band(
+                over=_TOOL_OUTPUT_SPILL_THRESHOLD_CHARS,
+                action=Spill(then=Truncate()),
+            )
+        ],
+        store=LocalFileStore(cleanup_after=_TOOL_OUTPUT_SPILL_TTL),
+    )
 
 
 def _build_worker_capabilities(workspace_dir: str):
@@ -45,7 +68,7 @@ def _build_worker_capabilities(workspace_dir: str):
             workspace_dir=workspace,
             nested_traversal=True,
         ),
-        ToolOutputLimits(),
+        _build_tool_output_limits(),
     ]
 
 

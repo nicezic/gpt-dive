@@ -4,7 +4,12 @@ from pathlib import Path
 
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import (
+    LocalFileStore,
+    Spill,
+    ToolOutputLimits,
+    Truncate,
+)
 
 from gpt_dive.subagent_worker import _build_worker_capabilities
 
@@ -49,6 +54,16 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     path_entries = shell.env["PATH"].split(":")
     assert path_entries[0].endswith("gpt_dive/guard-bin")
     assert str(Path.home() / ".bun" / "bin") in path_entries
+
+    output_limits = capabilities[3]
+    assert len(output_limits.bands) == 1
+    band = output_limits.bands[0]
+    assert band.over == 8_000
+    assert isinstance(band.action, Spill)
+    assert isinstance(band.action.then, Truncate)
+    assert isinstance(output_limits.store, LocalFileStore)
+    assert output_limits.store.cleanup_after is not None
+    assert output_limits.store.cleanup_after.total_seconds() == 48 * 60 * 60
 
 
 def test_worker_filesystem_keeps_sensitive_defaults_protected(tmp_path: Path) -> None:
