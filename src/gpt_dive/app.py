@@ -651,7 +651,8 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
         "CAPABILITIES, plus INPUT when the optional input payload is provided. CAPABILITIES is "
         "discovery metadata only (signature + description), not a "
         "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
-        "by async name, e.g. await local_exec(...) or await subagent_call(...). The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; FileSystem writes remain cwd-scoped, while read/list/search/find/info can use explicit absolute/~/ paths under configured trusted read roots. Prefer those capabilities for ordinary file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
+        "by async name, e.g. await local_exec(...) or await subagent_call(...). asyncio is "
+        "pre-imported; use await asyncio.gather(...) for independent awaitable work. The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; FileSystem writes remain cwd-scoped, while read/list/search/find/info can use explicit absolute/~/ paths under configured trusted read roots. Prefer those capabilities for ordinary file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
         "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
         "Pydantic Harness FileSystem + Shell coding toolkit, RepoContext, and bounded tool outputs. The local WSL2 filesystem is mounted read-write."
     ),

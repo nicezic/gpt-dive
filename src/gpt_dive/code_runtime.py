@@ -73,6 +73,7 @@ class MontyCodeRuntime:
         if not code.strip():
             raise ValueError("code must not be empty")
 
+        runtime_code = f"import asyncio\n{code}"
         run_cwd = str(Path(cwd).expanduser().resolve()) if cwd else str(Path.home())
         capture = CollectString()
         mount = MountDir(host_path="/", virtual_path="/", mode="read-write")
@@ -94,7 +95,7 @@ class MontyCodeRuntime:
                 ) as session,
             ):
                 state = await session.feed_start(
-                    code,
+                    runtime_code,
                     inputs=inputs,
                     external_lookup=registry.as_external_lookup(),
                     print_callback=capture,

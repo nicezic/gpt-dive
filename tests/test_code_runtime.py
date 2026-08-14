@@ -51,7 +51,7 @@ r["stdout"]
 
 
 def test_local_exec_calls_can_overlap() -> None:
-    code = """\nimport asyncio\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(local_exec(command=cmd), local_exec(command=cmd))\n[a["stdout"], b["stdout"]]\n"""
+    code = """\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(local_exec(command=cmd), local_exec(command=cmd))\n[a["stdout"], b["stdout"]]\n"""
     outputs = asyncio.run(code_mode(code))["result"]
     intervals = [tuple(map(int, output.split())) for output in outputs]
     starts = [start for start, _ in intervals]

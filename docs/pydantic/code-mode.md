@@ -111,6 +111,12 @@ This layer exists because model-side contract adherence is probabilistic even wh
 
 Implementation history and acceptance: `plans/code_mode/plan-260814-static-type-check.md`.
 
+### Async concurrency
+
+Code Mode pre-imports `asyncio` into each Monty program, so generated code can use `await asyncio.gather(...)` without spending a line on a repeated import. Use this for independent awaitable capability calls; dependent work should remain sequential `await` calls.
+
+The concurrency prelude is part of the model-facing Code Mode contract and is also stated in the MCP `code_mode` tool description. Regression coverage proves concurrent calls still overlap when the generated Monty code contains no explicit `import asyncio`.
+
 ## Payload boundary
 
 Outer `input=` is exposed to Monty as `INPUT`. It is the preferred transport for multiline/quoted payloads so `code=` stays small executable logic and does not accumulate shell/JSON/Markdown quoting hazards.
