@@ -1,0 +1,139 @@
+# Pydantic Integration Architecture
+
+> Development lineage and current ownership boundaries for GPT Dive's Pydantic AI / Harness integration. Exact current behavior is owned by source, tests, dependency locks, and live capability discovery.
+
+## Why Pydantic entered GPT Dive
+
+GPT Dive began as a small MCP bridge for direct WSL2 control. As local work grew beyond single shell commands, the repository needed a programmable execution layer that could compose tools, filter large intermediate results, call local models selectively, and keep the Web-facing MCP surface small.
+
+Pydantic AI and `pydantic-ai-harness` supplied reusable model/tool/capability primitives without requiring GPT Dive to become a monolithic autonomous-agent runtime.
+
+## Evolution
+
+```text
+Local MCP bridge
+  -> sync / async WSL2 execution
+  -> Pydantic-backed Code Mode
+  -> registry-owned local capabilities
+  -> explicit subagent model calls
+  -> Harness coding-worker bundle
+  -> direct Harness FileSystem + Shell in Code Mode
+  -> local Codex subscription compatibility layer
+  -> Probe-backed repository retrieval
+  -> current extensible runtime
+```
+
+### 1. Pydantic as the local harness substrate
+
+**Change**
+- Adopted Pydantic AI Core plus Pydantic AI Harness as the primary local model/capability substrate behind GPT Dive.
+
+**Why**
+- Reuse provider/model/tool/capability semantics instead of inventing an agent framework inside GPT Dive.
+- Keep Web SOL as the primary engineer/conductor while allowing local model calls and deterministic capability composition when useful.
+
+### 2. Code Mode as the programmable root
+
+**Change**
+- Added `code_mode` as the primary programmable MCP execution root, backed by a fresh Monty runtime and a per-run `CallableRegistry`.
+- Preserved the four-tool Web MCP surface instead of adding one top-level tool per local capability.
+
+**Why**
+- Multiple operations can be composed or run concurrently inside one model-visible call.
+- Large intermediate data can be reduced locally before returning to Web SOL.
+- Reusable behavior can grow behind one stable top-level contract.
+
+Primary implementation: `src/gpt_dive/app.py`, `src/gpt_dive/code_runtime.py`.
+
+### 3. Explicit local model primitive
+
+**Change**
+- Added `subagent_call(model, task, ...)` behind Code Mode rather than exposing each model/provider as a top-level MCP tool.
+- Added `bare(...)` for deliberately tool-less model calls.
+
+**Why**
+- Web SOL often already knows which model to consult and does not need an extra local parent-agent turn.
+- Provider details stay behind the central model registry.
+
+Primary implementation: `src/gpt_dive/subagent_runtime.py`, `src/gpt_dive/subagent_worker.py`, `src/gpt_dive/model_registry.py`.
+
+### 4. Harness coding-worker bundle
+
+**Change**
+- Workspace-enabled subagents receive official Harness `FileSystem + Shell + RepoContext + ToolOutputLimits` capabilities.
+
+**Why**
+- Reuse upstream filesystem containment, repo instruction discovery, command execution, and output bounding.
+- Avoid a growing set of hand-written agent tools.
+
+GPT Dive still owns lower local execution policy such as `guard-bin` PATH precedence and provider-credential stripping. Harness Shell is not treated as an OS sandbox.
+
+### 5. Direct FileSystem + Shell capabilities in Code Mode
+
+**Change**
+- Registered the Harness FileSystem toolset directly in the Code Mode registry: read/write/edit/list/search/find/create/info.
+- Registered Harness Shell run/start/check/stop capabilities directly while retaining `local_exec` for compatibility.
+- Added registry-owned async cleanup for managed Harness background processes.
+- Added a thin output-limit adapter for direct Shell method calls because bypassing Harness `call_tool()` also bypasses its normal output limiting.
+
+**Why**
+- Ordinary file work no longer needs shell quoting or custom wrappers.
+- GPT Dive inherits upstream containment and optimistic-concurrency behavior instead of duplicating it.
+- Managed Shell lifecycle is available without expanding the MCP surface.
+
+Implementation/acceptance history: `plans/code_mode/plan-260814-files-and-shell.md`.
+
+### 6. Workspace + trusted read boundary
+
+The primary Code Mode `FileSystem(root_dir=workspace)` remains the only read/write FileSystem. To let one task inspect trusted references without changing `cwd`, GPT Dive also builds read-side Harness toolsets for the existing home-level trees `~/ref`, `~/wiki`, `~/gpt-dive`, `~/gbrain`, `~/monsoon`, and `~/labs`.
+
+Relative paths always mean the primary workspace. Explicit absolute/`~/` paths may be dispatched to a matching trusted root for read/list/search/find/info only. Writes remain primary-workspace scoped, unlisted roots are rejected, and the selected Harness FileSystem still performs canonical/symlink containment. This preserves the upstream single-root security model instead of replacing it with `FileSystem(root_dir=~)`.
+
+This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface.
+
+### 7. Local ChatGPT Codex subscription compatibility
+
+**Change**
+- GPT Dive consumes official stable `pydantic-ai-slim` rather than carrying a downstream Pydantic fork.
+- Subscription-backed Codex aliases route through the local `gpt_dive.openai_codex` compatibility package.
+
+**Why**
+- Keep upstream Pydantic upgradeable while isolating only the OAuth/provider/Responses behavior that is not yet available in the required released upstream form.
+- Make the compatibility layer explicitly retireable.
+
+Maintenance SSOT: root-level `README.patch.openai.provider.md`. It intentionally stays prominent at repository root so Pydantic upgrades do not miss the compatibility/retirement check.
+
+### 8. Repository retrieval behind Code Mode
+
+**Change**
+- Added `repo_search`, backed by Probe BM25 ranking plus AST-aware blocks, as a bounded repository exploration capability.
+
+**Why**
+- Locate a small relevant evidence set before opening files, reducing blind recursive reads and model-context growth.
+- Keep search-engine implementation replaceable behind an engine-neutral capability name.
+
+Implementation: `src/gpt_dive/repo_search.py`.
+
+## Current ownership boundaries
+
+```text
+Web MCP surface
+  bootstrap / code_mode / wsl2_sync / wsl2_async
+
+GPT Dive runtime
+  lifecycle + registry + local execution policy + provider routing
+
+Pydantic AI Core
+  Agent / model / provider / message / tool semantics
+
+Pydantic AI Harness
+  reusable capabilities such as FileSystem / Shell / RepoContext / output controls
+```
+
+GPT Dive should prefer upstream public seams and thin adapters. New local behavior is justified when it solves a GPT Dive-specific transport, lifecycle, security, provider, or integration problem that upstream does not already solve cleanly.
+
+## Where decisions live
+
+- Cross-Orchestra operating decisions live in `~/wiki/workflow/orchestra/`.
+- GPT Dive-specific Pydantic implementation ADRs live in `docs/pydantic/adr/`.
+- One-change specs and acceptance evidence remain in `plans/`.
