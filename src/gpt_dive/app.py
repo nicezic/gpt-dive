@@ -241,29 +241,20 @@ def wsl2_sync(
     command: Annotated[
         str,
         Field(
-            description=(
-                "Shell command to execute on the user's local machine inside their WSL2 "
-                "environment. Runs via /bin/bash -lc."
-            )
+            description="Shell command to run via /bin/bash -lc."
         ),
     ],
     cwd: Annotated[
         str | None,
         Field(
-            description=(
-                "Optional working directory in the user's local WSL2 filesystem. "
-                "Use Linux/WSL paths such as /home/user/project or ~/project."
-            )
+            description="Optional WSL2 working directory."
         ),
     ] = None,
     timeout: Annotated[
         float,
         Field(
             gt=0,
-            description=(
-                "Maximum command runtime in seconds before the MCP call times out. "
-                "Defaults to 600 seconds."
-            ),
+            description="Maximum runtime in seconds (default: 600).",
         ),
     ] = 600.0,
 ) -> dict[str, Any]:
@@ -655,19 +646,13 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
 @mcp.tool(
     title="Pydantic Monty Code Mode",
     description=(
-        "Primary harnessable execution root for GPT Dive, backed by Pydantic Monty and registered "
-        "local WSL2 capabilities. Prefer this for normal work so capability policy, composition, "
-        "parallel execution, and local preprocessing remain inside the harness. Use background=True "
-        "to detach long-running Monty programs, then action='status', 'result', or 'cancel' with the "
-        "returned job_id. Combine independent operations and filter/transform/aggregate large "
-        "intermediate data before returning only a compact result. The sandbox receives CWD and "
-        "CAPABILITIES, plus INPUT when the optional input payload is provided. CAPABILITIES is "
-        "discovery metadata only (signature + description), not a "
-        "callable mapping. Inspect it for discovery, then invoke registered capabilities directly "
-        "by async name, e.g. await local_exec(...) or await subagent_call(...). asyncio is "
-        "pre-imported; use await asyncio.gather(...) for independent awaitable work. The Code Mode registry also exposes workspace-scoped Harness FileSystem and Shell capabilities when they are present in live CAPABILITIES; FileSystem writes remain cwd-scoped, while read/list/search/find/info can use explicit absolute/~/ paths under configured trusted read roots. Prefer those capabilities for ordinary file and command operations. local_exec returns a dict with stdout, stderr, and returncode; inspect those exact keys rather than assuming subprocess object attributes. A subagent_call "
-        "inherits the Code Mode cwd by default and gives the child agent a workspace-scoped "
-        "Pydantic Harness FileSystem + Shell coding toolkit, RepoContext, and bounded tool outputs. The local WSL2 filesystem is mounted read-write."
+        "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
+        "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
+        "- Call registered capabilities directly with await name(...).\n"
+        "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
+        "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
+        "- Use INPUT for complex payloads and CWD as the capability workspace.\n"
+        "- Use background=True only for detached Code Mode jobs."
     ),
 )
 async def code_mode(
@@ -784,31 +769,28 @@ def wsl2_async(
     action: Annotated[
         str,
         Field(
-            description=(
-                "Backend-defined async-job action. Use 'capabilities' to discover supported "
-                "actions without requiring MCP schema changes."
-            )
+            description="Async-job action; use 'capabilities' to list supported actions."
         ),
     ],
     command: Annotated[
         str | None,
-        Field(description="Shell command for actions that launch a job."),
+        Field(description="Shell command for start."),
     ] = None,
     job_id: Annotated[
         str | None,
         Field(
-            description="Durable job ID for actions that operate on an existing job."
+            description="Job ID for status/result/cancel."
         ),
     ] = None,
     cwd: Annotated[
         str | None,
-        Field(description="Optional WSL2 working directory for job-launch actions."),
+        Field(description="Optional WSL2 working directory for start."),
     ] = None,
     timeout: Annotated[
         float,
         Field(
             gt=0,
-            description="Maximum runtime in seconds for job-launch actions. Defaults to 600.",
+            description="Maximum runtime in seconds for start (default: 600).",
         ),
     ] = 600.0,
 ) -> dict[str, Any]:
