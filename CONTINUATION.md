@@ -3,34 +3,32 @@
 > Updated: 2026-08-14
 > Purpose: compact fresh-session handoff. Durable Why/history belongs in `docs/`; implementation decisions/evidence belong in `specs/` and `plans/`.
 
+## Completed External Work — GBrain Voyage Guard + Stable Index
+
+The GBrain-side work that motivated the browser investigation is complete. Do not carry its old implementation TODOs into a fresh GPT Dive session.
+
+- Voyage free-quota runtime is browserless: managed `voyage.dashboard-session` -> direct backend HTTPS quota lookup -> strict `voyage-code-3` PASS/BLOCK. Edge/Playwright/CDP/dashboard tabs/socket are not runtime dependencies.
+- Enrollment/recovery may use the generic Edge Playwright Extension, but normal quota lookup does not.
+- Stable Index Filter v1 is now production: `1204 pages / 21368 chunks / 21368 embedded`, stale `0`, source FAILS/QUEUE `0`.
+- Production `~/.gbrain` is a symlink to `~/.cache/gbrain-stable-index-v1/.gbrain`; previous production is preserved at `~/.gbrain.rollback-pre-stable-index-20260814`.
+- GBrain authorities: `~/gbrain/CONTINUATION.md`, `~/gbrain/plans/plan-260814-stable-index-upgrade.md`, and `~/ref/gbrain.md`.
+- Generic Edge automation remains a separate completed browser capability. Do not route Voyage quota runtime back through it.
+
 ## Immediate Handoff — Code Mode Files + Shell
 
 - Implementation commit: `e0f6f1f` (`feat: expose harness files and shell in code mode`).
-- Plan / decision / validation record: `plans/code_mode/plan-20260814-files-and-shell.md`.
+- Plan / decision / validation record: `plans/code_mode/plan-260814-files-and-shell.md`.
 - Added Harness FileSystem 8 tools + Shell 4 tools to the per-run Code Mode registry; `local_exec` remains. Shell keeps guard-bin/provider-secret stripping, run-owned background cleanup, and the 50k Harness output cap.
 - Validation before commit: targeted Code Mode tests **30 passed**; full suite **78 passed**; touched-file Ruff PASS; `git diff --check` PASS.
 
-### Verified live acceptance state
+### Verified live acceptance state — PASS
 
-The implementation tests pass, but the active MCP process has **not loaded the new registry yet**.
+Fresh-session acceptance completed on **2026-08-14**.
 
-- Live probe: `await read_file(...)` -> `NameError: name 'read_file' is not defined`.
-- `systemctl --user status chatgpt-wsl2-mcp.service` showed the service still active since **2026-08-14 05:28:58 KST**.
-- Therefore the earlier documented `wsl2_async -> nohup -> sleep 3 -> systemctl --user restart ...` handoff did not actually replace the running service. Do not misclassify this as an implementation failure or as mere ChatGPT schema caching.
-
-### Next fresh-session task
-
-1. `@dive bootstrap` first.
-2. Read this section + `plans/code_mode/plan-20260814-files-and-shell.md`.
-3. Verify the actual MCP/tunnel process start time and reload path. Treat `docs/runtime/operations.md` restart recipe as suspect until re-proven.
-4. Perform a reliable reload without killing the initiating MCP response.
-5. In the fresh session, inspect live `CAPABILITIES` and require all 12 new names.
-6. Smoke-test at least: `read_file`, stale-hash write/edit rejection, `run_command`, and `start_command -> check_command -> stop_command`; also confirm no background process leak at Code Mode end.
-7. If live acceptance passes, update the plan Result from pending to PASS. If reload mechanics are fixed, correct the runtime operations doc as well.
-
-### Preserve unrelated worktree state
-
-Do not reset/clean unrelated work. At handoff time these pre-existing/unrelated paths remained dirty or untracked: `experiments/council_web_sol_e2e/edge_bridge.py`, bootstrap-related hunks in `src/gpt_dive/app.py`, `docs/probe/`, `plans/code_mode/plan-260814-files-and-shell.md`, and `tests/test_bootstrap.py`.
+- The active MCP/tunnel service had already restarted at **06:36:42 KST** (`MainPID=1357599` at acceptance time). The prior 05:28 process state in this handoff was stale historical state, not a reason to restart again.
+- Live `CAPABILITIES` exposes all 12 new FileSystem + Shell names with native signatures/descriptions.
+- Live smoke PASS: `read_file`, stale-hash `write_file`/`edit_file` rejection with unchanged content, `run_command`, `start_command -> check_command -> stop_command`, and run-end background cleanup.
+- No additional MCP restart is pending for this rollout. Re-check live state before proposing any future restart rather than carrying forward this completed reload task.
 
 ## Current Position
 

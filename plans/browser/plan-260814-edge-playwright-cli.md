@@ -12,15 +12,15 @@ The immediate use case is reliable automation against the user's already logged-
 
 ## Current State
 
-- Microsoft Edge remote debugging is already enabled on the user's existing Edge Stable instance.
+- The official Microsoft Playwright Extension is installed in the user's normal Microsoft Edge profile and is the **primary attach transport**.
+- Extension authentication is stored in `creds` as `playwright.extension` -> `ai:PLAYWRIGHT_MCP_EXTENSION_TOKEN`; only the token value is stored.
 - The former Wiki route `~/wiki/skills/web/edge-cdp.md` documented a custom long-lived Playwright `connect_over_cdp()` attachment behind `/tmp/gpt-dive-council-edge.sock`; it was explicitly removed before CLI implementation so it cannot remain an active competing route.
 - Generic bridge implementation currently lives in `~/gpt-dive/experiments/council_web_sol_e2e/edge_bridge.py`.
 - `~/gpt-dive/src/gpt_dive/council/bridge.py` is also used by Council/Web-SOL transport and must not be removed as part of this change without separate acceptance.
-- The official Playwright CLI now supports attaching to a running Edge by channel with `playwright-cli attach --cdp=msedge`, automatically using an `msedge` session when no explicit session is supplied, and detaching without closing the external Edge instance.
 - `@playwright/cli` is installed globally through `pnpm` (local WSL policy blocks direct `npm`). Live acceptance observed version `0.1.18`, but that version is evidence only, not a pin; normal operation follows rolling latest because Edge itself auto-updates.
-- Runtime drift matters: installed 0.1.18 `list --all` lists CLI-managed sessions but did not discover the Windows Edge before attachment, while current upstream `main` documents broader system-browser discovery.
-- `playwright-cli attach --cdp=msedge` from WSL resolves Linux `~/.config/microsoft-edge/DevToolsActivePort` and therefore cannot directly discover the user's Windows Edge. The local route must read the Windows `DevToolsActivePort` under `/mnt/c/Users/...` and pass its explicit WebSocket endpoint with `--session=msedge`.
-- Live acceptance is complete. A fresh Edge launch produced a new `DevToolsActivePort` WebSocket endpoint; explicit attach succeeded, and persistent session reuse was validated across separate `wsl2_sync` calls.
+- From WSL2, Extension attach uses the Windows Edge executable explicitly through `PLAYWRIGHT_MCP_EXECUTABLE_PATH=/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe` and `playwright-cli attach --extension=chrome --session=msedge`.
+- Live acceptance is complete: the profile token skipped the browser approval dialog, Extension attach succeeded, the named session persisted across separate `wsl2_sync` calls, a public tab could be created/inspected, and detach -> reattach succeeded without another user approval.
+- Direct CDP via Windows `DevToolsActivePort` remains a tested fallback/recovery path only. It can require Edge's manual **Allow remote debugging** approval and is not the normal route.
 
 ## Scope
 
@@ -138,16 +138,15 @@ The browser transport should remain generic. Provider DOM/API shapes are volatil
 
 ### 1. Smoke-test official CLI across the WSL2 -> Windows Edge boundary
 
-Use the installed runtime contract, not only upstream `main` docs:
+Use the installed runtime contract, not only upstream `main` docs. Primary attach is the official Extension with a profile token from `creds`:
 
 ```bash
+pnpm add -g @playwright/cli@latest || true
 playwright-cli --version
 playwright-cli list --all
 
-DAP=$(find /mnt/c/Users -path '*/AppData/Local/Microsoft/Edge/User Data/DevToolsActivePort' -print)
-PORT=$(sed -n '1p' "$DAP")
-WS_PATH=$(sed -n '2p' "$DAP")
-playwright-cli attach --cdp="ws://127.0.0.1:${PORT}${WS_PATH}" --session=msedge
+PLAYWRIGHT_MCP_EXECUTABLE_PATH='/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' \
+  creds run ai -- playwright-cli attach --extension=chrome --session=msedge
 
 playwright-cli -s=msedge snapshot --depth=8
 playwright-cli -s=msedge --raw eval '() => document.title'
@@ -155,9 +154,9 @@ playwright-cli -s=msedge requests --filter='/api/.*usage|quota|billing/'
 playwright-cli -s=msedge detach
 ```
 
-The generic `playwright-cli attach --cdp=msedge` example is not sufficient from this WSL environment because it searches Linux Edge state. Runtime `--help`/behavior is authoritative when upstream docs and the installed package differ.
+The Extension token removes the repeated browser approval step. The browser's Playwright/automation indicator should be left open during active automation rather than dismissed by habit.
 
-A fresh Edge CDP attachment may require user approval. Keep exactly one attach attempt alive while approval is pending; do not start a competing direct Playwright bridge or repeated CLI attaches.
+Direct CDP is fallback only. Plain `playwright-cli attach --cdp=msedge` searches Linux Edge state from WSL; the tested recovery path reads Windows `DevToolsActivePort` and attaches the explicit WebSocket endpoint. A fresh CDP attach may still require manual Edge approval.
 
 ### 2. Create the trusted Web Skill
 
@@ -169,7 +168,8 @@ The skill should be concise and cover:
 
 - Trigger/use cases.
 - `playwright-cli list --all` / attach discovery.
-- WSL2-local attach via the Windows `DevToolsActivePort` explicit WebSocket endpoint with `--session=msedge`; also document why plain `--cdp=msedge` is not the local route.
+- Primary WSL2 attach via the official Playwright Extension + `PLAYWRIGHT_MCP_EXTENSION_TOKEN` + explicit Windows Edge executable path, bound to `--session=msedge`.
+- CDP/Windows `DevToolsActivePort` only as fallback/recovery, including why plain WSL `--cdp=msedge` is not the local route.
 - Reuse of the `msedge` session.
 - Core page inspection / interaction commands validated on the installed CLI.
 - `--raw` or equivalent compact-output guidance when available.
@@ -207,19 +207,19 @@ Authenticated usage/quota workflows may use the logged-in browser, but the final
 
 ### A. Discovery
 
-**Given** Edge is already running with remote debugging enabled.
+**Given** the user's normal Edge profile has the Playwright Extension installed and `playwright.extension` exists in `creds`.
 
-**When** Web SOL runs CLI browser discovery.
+**When** Web SOL checks CLI session state and performs Extension attach only if needed.
 
-**Then** the existing Edge instance is visible without launching a second browser.
+**Then** the existing Edge profile is reused without requiring CDP remote-debugging approval.
 
 ### B. Attach + reuse
 
-**Given** the running Edge is attachable.
+**Given** the running Edge has the official Extension and valid profile token.
 
-**When** the CLI attaches to the explicit Windows Edge WebSocket endpoint with `--session=msedge`.
+**When** the CLI attaches with `--extension=chrome --session=msedge` using the explicit Windows Edge executable path.
 
-**Then** subsequent `wsl2_sync` calls from the same `~/gpt-dive` cwd can target the same `msedge` session without another attach.
+**Then** no browser approval click is required, and subsequent `wsl2_sync` calls from the same `~/gpt-dive` cwd can target the same `msedge` session without another attach.
 
 ### C. Logged-in session access
 
@@ -260,14 +260,17 @@ PASS requires all of the following:
 
 - [x] Official Playwright CLI installed globally through the local approved package manager (`pnpm`).
 - [x] Live-accepted CLI version (`0.1.18`) and command contract recorded as historical evidence; runtime policy is rolling latest, not pinned.
-- [x] Existing Windows Edge discovered from its live `DevToolsActivePort`.
-- [x] Explicit Windows Edge WebSocket attach with `--session=msedge` PASS; plain WSL `--cdp=msedge` was correctly rejected as the wrong local discovery route.
+- [x] Official Playwright Extension installed in the user's normal Edge profile.
+- [x] `playwright.extension` credential registered as `ai:PLAYWRIGHT_MCP_EXTENSION_TOKEN`, with token-only storage verified.
+- [x] Extension attach through the explicit Windows Edge executable path with `--extension=chrome --session=msedge` PASS.
+- [x] Approval-dialog bypass PASS: detach -> reattach succeeded with zero user approval clicks.
+- [x] Direct Windows `DevToolsActivePort` CDP attach retained only as tested fallback; plain WSL `--cdp=msedge` remains the wrong local discovery route.
 - [x] Same `msedge` session reused across multiple `wsl2_sync` calls from `~/gpt-dive`.
 - [x] Snapshot/read-only browser inspection PASS.
 - [x] Minimal read-only eval PASS (`Example Domain` / `example.com`).
 - [x] Network/request contract checked and validated on public `example.com`: filtered request list -> GET 200 -> bounded `response-body` read.
-- [x] `detach` leaves the external Windows Edge running; its `DevToolsActivePort` remained live after detach.
-- [x] Coexistence PASS: with the current GBrain legacy bridge active, CLI attach -> tab-list -> detach succeeded and the bridge still answered `ping -> pong` afterward.
+- [x] `detach` leaves the external Windows Edge running; zero-click Extension reattach also PASS.
+- [x] Coexistence PASS: with the then-current GBrain legacy bridge active, CLI attach -> tab-list -> detach succeeded and the bridge still answered `ping -> pong` afterward.
 - [x] No cookies/auth tokens/session secrets returned to SOL during acceptance.
 - [x] `~/wiki/skills/web/edge-playwright.md` created and marked trusted.
 - [x] `~/wiki/skills/INDEX.md` updated.
@@ -279,8 +282,8 @@ PASS requires all of the following:
 ## Follow-up / Explicitly Separate Work
 
 - [ ] Evaluate whether Council's `SolBridge` can later move from direct Playwright CDP ownership to the same CLI/session model.
-- [ ] Migrate GBrain's current Voyage free-quota guard away from `/tmp/gpt-dive-council-edge.sock`; until then the existing guard fails closed when that legacy bridge is unavailable.
-- [ ] Consider provider-specific deterministic usage adapters only after generic browser CLI acceptance.
+- [x] GBrain Voyage free-quota guard replaced by a **browser-independent direct backend runtime**. Normal quota lookup no longer depends on Edge, Playwright, Extension, CDP, a dashboard tab, or `/tmp/gpt-dive-council-edge.sock`; enrollment/recovery is separate and the guard remains fail-closed.
+- [x] Provider-specific Voyage quota logic remains separate from the generic browser skill.
 - [ ] Consider Chrome DevTools MCP only if a future task requires deeper DevTools capabilities that Playwright CLI cannot provide economically/cleanly.
 
 ## References
@@ -297,15 +300,15 @@ Delivered and validated:
 
 - Installed `@playwright/cli` globally with `pnpm`; live acceptance used `0.1.18`, while the operating policy is update-on-use `@latest` so the CLI naturally tracks an auto-updating Edge.
 - Verified runtime commands for sessions, attach/detach, snapshot/find/eval, `--raw`, filtered request listing, response-body extraction, and `run-code`.
-- Identified and documented the WSL2/Windows boundary: plain `playwright-cli attach --cdp=msedge` searches Linux Edge state and is not the local route. Web SOL reads the Windows Edge `DevToolsActivePort`, attaches its explicit WebSocket endpoint, and names the CLI session `msedge`.
+- Finalized the WSL2/Windows boundary around the official Extension: Web SOL sets `PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the Windows Edge executable, injects `PLAYWRIGHT_MCP_EXTENSION_TOKEN` through `creds`, and attaches with `--extension=chrome --session=msedge`. Direct `DevToolsActivePort` CDP remains fallback only.
 - Found an execution-boundary constraint during acceptance: a Playwright CLI daemon spawned inside Harness `code_mode -> run_command()` is cleaned up with that systemd/cgroup boundary, so the session does not survive into the next call. Direct Dive `wsl2_sync` preserves the CLI daemon and successfully reused `msedge` across separate calls. The trusted Web Skill now makes `wsl2_sync` + consistent `cwd=~/gpt-dive` the browser-session rule.
-- Live attached to the user's existing Windows Edge and observed the existing logged-in tabs without re-login or credential extraction.
+- Live attached through the official Playwright Extension with the user's existing Edge profile and no re-login or credential extraction. The token bypassed the repeated browser approval dialog.
 - Reused the same session across calls; validated tab listing, bounded snapshot, read-only eval, filtered network listing, GET 200 observation, and bounded response-body read using a temporary public `example.com` tab.
-- Closed only the temporary test tab and detached. The external Edge browser and its original tabs remained running, with the same live `DevToolsActivePort` afterward.
+- Closed only the temporary test tab and detached. The external Edge browser remained running, and a fresh Extension reattach succeeded without another approval click.
 - Added trusted `~/wiki/skills/web/edge-playwright.md`, registered it in `skills/INDEX.md`, and routed bootstrap browser help to it.
 - Removed the obsolete `edge-cdp.md` Web Skill outright.
 - No Council browser transport source was modified.
 
 Temporary compatibility dependency discovered during migration:
 
-- GBrain's current Voyage free-quota guard still directly depends on `/tmp/gpt-dive-council-edge.sock`. That provider-specific transport migration remains separate work. To avoid regressing the existing fail-closed guard, the managed legacy bridge service was restored after CLI acceptance and verified READY. Coexistence was then live-validated: Playwright CLI attached/listed tabs/detached while that bridge stayed active, and the bridge still returned `{"ok": true, "action": "pong"}` afterward. Generic Web SOL browser automation uses the new Playwright CLI Web Skill and does not stop the current GBrain guard bridge merely to attach.
+- Historical compatibility checkpoint: during the original browser migration, GBrain still depended on `/tmp/gpt-dive-council-edge.sock`, so coexistence with that bridge was live-validated. Later on 2026-08-14, GBrain's Voyage guard was replaced by a browserless direct-backend runtime; the old bridge is no longer a quota-guard dependency.
