@@ -14,6 +14,37 @@ The GBrain-side work that motivated the browser investigation is complete. Do no
 - GBrain authorities: `~/gbrain/CONTINUATION.md`, `~/gbrain/plans/plan-260814-stable-index-upgrade.md`, and `~/ref/gbrain.md`.
 - Generic Edge automation remains a separate completed browser capability. Do not route Voyage quota runtime back through it.
 
+## Immediate Handoff — ToolOutputLimits Study / Live Validation
+
+Purpose: verify and understand the **already-integrated** Pydantic Harness `ToolOutputLimits` before designing any GPT Dive-specific output-limiting code.
+
+### Verified state
+
+- Study authority: `~/wiki/pydantic/study/patterns/tool-output-failure-policy.md`.
+- Upstream authority: `~/ref/pydantic-ai-harness/docs/tool-output-limits.md`, `docs/guardrails.md`, implementation under `pydantic_ai_harness/tool_output_limits/`, and its tests.
+- `src/gpt_dive/subagent_worker.py::_build_worker_capabilities()` already includes `ToolOutputLimits()` after `FileSystem`, `Shell`, and `RepoContext`.
+- `tests/test_subagent_worker_capabilities.py` verifies that `ToolOutputLimits` is present in the default coding-worker capability bundle, but no GPT Dive test found yet proves real spill/read-back behavior.
+- Current study evidence says the Harness default reduces oversized successful tool returns at production time using `Spill(then=Truncate())` at 10,000 characters; failure/retry signals are intentionally treated differently. Re-verify exact current behavior from the installed/upstream source before relying on this remembered threshold.
+
+### Exact remaining task
+
+1. Read the current Harness `ToolOutputLimits` public API, source, and tests to establish exact defaults, spill storage/lifecycle, `read_tool_result`, structured/binary behavior, and interaction/order with `ToolGuardrail`.
+2. Trace how the existing default `ToolOutputLimits()` behaves inside GPT Dive's real `subagent_worker` capability bundle. Distinguish the Harness Shell `max_output_chars=50_000` boundary from `ToolOutputLimits`; they operate at different layers.
+3. Run the smallest controlled local acceptance that produces a successful tool result above the ToolOutputLimits threshold and verify what the subagent/model actually sees, whether a spill handle is exposed, whether `read_tool_result` is usable, and whether persistent model-visible context stays bounded.
+4. Separately verify an error/retry path so output limiting does not hide recovery diagnostics.
+5. Report whether GPT Dive should use the Harness behavior **as-is**, configure it differently, compose it with another existing Harness capability, or only then consider a thin local adaptation.
+
+### Constraints / non-goals
+
+- Start read-only and evidence-first. Do **not** add a new custom output-limiter merely because the feature is unfamiliar.
+- Do not modify GPT Dive code/config until the existing behavior and any actual gap are demonstrated; use `/grill-me` before a consequential design change.
+- Do not conflate `ToolOutputLimits` with compaction: output limiting shapes a tool result when produced; compaction rewrites already accumulated history.
+- Preserve full failure diagnostics needed for recovery; bounded-context policy must not create convincing but unrecoverable failures.
+- Do not touch the unrelated current untracked `docs/pydantic/` tree unless its contents are explicitly needed and verified.
+
+Suggested next skill: `/grill-me` only if live acceptance exposes a real configuration/design choice; otherwise this is primarily a study + acceptance task.
+
+
 ## Immediate Handoff — Code Mode Files + Shell
 
 - Implementation commit: `e0f6f1f` (`feat: expose harness files and shell in code mode`).
