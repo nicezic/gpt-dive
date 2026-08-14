@@ -1,13 +1,12 @@
 # GPT Dive
 
-GPT Dive connects ChatGPT Web to the user's local WSL2 environment through a small MCP surface and an extensible Pydantic-based execution harness.
-
-## Architecture at a Glance
+GPT Dive connects ChatGPT Web to the user's local WSL2 environment through a small MCP surface and a Pydantic-based execution harness.
 
 ```text
 ChatGPT Web
   -> Secure MCP Tunnel
   -> GPT Dive
+       -> bootstrap
        -> code_mode      # primary programmable harness
        -> wsl2_sync      # short direct shell
        -> wsl2_async     # durable job lifecycle
@@ -15,22 +14,25 @@ ChatGPT Web
 
 Fresh sessions begin with `bootstrap`. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
 
-### OpenAI Codex subscription compatibility
+## OpenAI Codex subscription compatibility
 
 GPT Dive consumes official Pydantic AI. Subscription-backed `sol` / `terra` / `luna` models route through the optional local `gpt_dive.openai_codex` compatibility layer rather than a downstream Pydantic AI fork. The local layer owns only Codex-specific OAuth, credential rotation, provider transport, and the narrow Responses adaptation needed to preserve ordinary `Agent.run()`. Non-Codex providers remain ordinary Pydantic AI paths.
 
+**Update Policy**
 Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `README.patch.openai.provider.md`.
 
-## Stable MCP Surface
+## Documentation ownership
 
-Exactly four top-level tools:
+- **AI-facing usage / capability lifecycle:** `~/wiki/workflow/pydantic-ai/README.md`
+- **Runtime architecture / operations:** `docs/runtime/architecture.md`, `docs/runtime/operations.md`
+- **GPT Dive Pydantic implementation:** `docs/pydantic/README.md`
+- **Code Mode implementation contract:** `docs/pydantic/code-mode.md`
+- **Provider integration:** `docs/pydantic/providers.md`
+- **Council:** `docs/council/README.md`
+- **Codex compatibility maintenance:** `README.patch.openai.provider.md`
+- **Current handoff:** `CONTINUATION.md`
 
-- `bootstrap`
-- `code_mode`
-- `wsl2_sync`
-- `wsl2_async`
-
-See `docs/runtime/architecture.md` for the stable runtime SSOT.
+Registered Code Mode capability signatures and callable docstrings are model-visible live contracts: `bootstrap` injects them into every fresh session. When capability behavior changes, keep its signature and docstring concise and accurate; detailed AI usage/routing policy belongs in the Wiki rather than being duplicated here.
 
 ## Evolution
 
@@ -70,35 +72,7 @@ uv run --python 3.14 python -m pytest -q
 uv run --python 3.14 python -m gpt_dive
 ```
 
-Operational notes, including safe MCP reload and Web schema-cache behavior, live in `docs/runtime/operations.md`.
-
-## Documentation
-
-### Runtime
-
-- `docs/runtime/architecture.md` — current v1-v2 runtime architecture.
-- `docs/runtime/history.md` — v1 → v2 evolution and Why.
-- `docs/runtime/operations.md` — development/runtime operations.
-- `plans/runtime/` — completed runtime plans.
-
-### Pydantic AI / Harness
-
-- `docs/pydantic/README.md` — GPT Dive Pydantic development-document map and ownership boundary.
-- `docs/pydantic/architecture.md` — Pydantic adoption → current integration/customization lineage.
-- `docs/pydantic/code-mode.md` — Code Mode registry, FileSystem/Shell, trusted read roots, and validation contract.
-- `docs/pydantic/providers.md` — provider/model integration roles.
-- `docs/pydantic/adr/` — durable GPT Dive-specific Pydantic architecture decisions; current implementation docs remain directly under `docs/pydantic/`.
-- `README.patch.openai.provider.md` — intentionally root-level Codex compatibility maintenance/retirement SSOT.
-
-### Council
-
-- `docs/council/README.md`
-- `docs/council/history.md`
-- `docs/council/startup.md`
-- `specs/council.md`
-- `plans/council/`
-
-## Source Layout
+## Source layout
 
 ```text
 src/gpt_dive/   # Python MCP runtime + harness + Council backend

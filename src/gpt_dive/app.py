@@ -207,6 +207,19 @@ def _read_bootstrap_packet() -> dict[str, Any]:
             f"===== END {doc['path']} ====="
         )
 
+    live_capabilities = _build_code_registry(None).describe()
+    capability_sections = []
+    for name, metadata in live_capabilities.items():
+        description = metadata["description"].strip() or "(no description)"
+        capability_sections.append(f"{name}{metadata['signature']}\n{description}")
+    chunks.append(
+        "\n\n===== BEGIN LIVE CODE MODE CAPABILITIES =====\n"
+        "Fresh-session live inner `--help`: use these signatures and descriptions as the "
+        "current Code Mode call contract.\n\n"
+        + "\n\n".join(capability_sections)
+        + "\n===== END LIVE CODE MODE CAPABILITIES ====="
+    )
+
     return {
         "wiki_path": str(wiki),
         "preload_path": str(preload),
