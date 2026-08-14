@@ -7,8 +7,9 @@ dependencies = [
     "mcp>=2.0.0",
     "pydantic>=2.13.4",
     "pydantic-monty>=0.0.19",
-    "pydantic-ai-slim[anthropic,openai-codex]",
+    "pydantic-ai-slim[anthropic,openai]",
     "pydantic-ai-harness==0.18.1",
+    "filelock>=3.20.3",
     "playwright>=1.62.0",
     "starlette>=1.6.0",
     "uvicorn>=0.52.1",
@@ -19,15 +20,6 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=8.0",
     "ruff>=0.16.2",
-]
-
-[tool.uv.sources]
-pydantic-ai-slim = { git = "https://github.com/Wh1isper/pydantic-ai.git", rev = "af055625bf67", subdirectory = "pydantic_ai_slim" }
-
-[tool.uv]
-# Harness targets upstream Pydantic AI version metadata; keep Dive's Codex-enabled fork.
-exclude-dependencies = [
-    { package = { name = "pydantic-ai-harness" }, dependencies = ["pydantic-ai-slim"] },
 ]
 
 [project.scripts]

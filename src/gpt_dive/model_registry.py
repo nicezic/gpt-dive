@@ -5,13 +5,19 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 
 class ModelAlias(StrEnum):
     """Single source of truth for model aliases and provider/model routing."""
+
+    provider: str
+    model_name: str
+    transport: str
+    credential_env: str | None
+    base_url: str | None
+    bare: bool
+    subagent: bool
 
     def __new__(
         cls,
@@ -99,6 +105,8 @@ def build_model(value: str | ModelAlias) -> Any:
         return AnthropicModel(alias.model_name, provider=provider)
 
     if alias.transport == "codex-subscription":
-        return OpenAIResponsesModel(alias.model_name, provider=OpenAICodexProvider())
+        from .openai_codex import OpenAICodexProvider, OpenAICodexResponsesModel
+
+        return OpenAICodexResponsesModel(alias.model_name, provider=OpenAICodexProvider())
 
     raise RuntimeError(f"unsupported transport {alias.transport!r} for {alias.value!r}")

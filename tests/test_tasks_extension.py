@@ -31,14 +31,18 @@ def test_task_shape_maps_running_job(tmp_path):
 def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
     import asyncio
     from types import SimpleNamespace
+    from typing import Any, cast
 
     from mcp_types import CallToolRequestParams, ClientCapabilities
 
     extension = TasksExtension(JobManager(tmp_path))
-    ctx = SimpleNamespace(
-        protocol_version="2026-07-28",
-        session=SimpleNamespace(
-            client_capabilities=ClientCapabilities(extensions={EXTENSION_ID: {}})
+    ctx = cast(
+        Any,
+        SimpleNamespace(
+            protocol_version="2026-07-28",
+            session=SimpleNamespace(
+                client_capabilities=ClientCapabilities(extensions={EXTENSION_ID: {}})
+            ),
         ),
     )
     fallback_calls = []
@@ -51,7 +55,7 @@ def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
         name="wsl2_async",
         arguments={"action": "start", "command": "printf TASK_OK", "timeout": 3},
     )
-    task = asyncio.run(extension.intercept_tool_call(start, ctx, call_next))
+    task = cast(dict[str, Any], asyncio.run(extension.intercept_tool_call(start, ctx, call_next)))
     assert task["resultType"] == "task"
     extension.jobs.cancel(task["taskId"])
 

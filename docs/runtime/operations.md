@@ -8,7 +8,7 @@ uv run --python 3.14 python -m pytest -q
 uv run --python 3.14 python -m gpt_dive
 ```
 
-`pydantic-ai-slim` is currently pinned to a Git commit that provides the Codex subscription provider required by GPT Dive. The pin can be removed when the needed support is available in an upstream release.
+`pydantic-ai-slim` resolves from official stable releases. Subscription-backed Codex behavior is isolated in GPT Dive's local compatibility layer; see `README.patch.openai.provider.md` before changing provider wiring or upgrading Pydantic AI.
 
 ## ChatGPT Web Schema Cache
 
