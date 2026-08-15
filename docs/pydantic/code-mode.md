@@ -43,7 +43,7 @@ Important inherited behavior includes canonical root/symlink containment, protec
 
 ### Trusted read roots
 
-One Harness `FileSystem` remains single-root by design, so GPT Dive keeps the primary `FileSystem(root_dir=workspace)` for read/write semantics and creates separate Harness FileSystem toolsets for trusted reference roots that exist under the user's home:
+One Harness `FileSystem` remains single-root by design, so GPT Dive keeps the primary `FileSystem(root_dir=workspace)` for read/write semantics and creates separate Harness FileSystem toolsets for curated trusted read roots:
 
 ```text
 ~/ref
@@ -52,13 +52,16 @@ One Harness `FileSystem` remains single-root by design, so GPT Dive keeps the pr
 ~/gbrain
 ~/monsoon
 ~/labs
+/tmp
 ```
+
+`/tmp` is included for temporary artifacts produced by local tools and subprocesses. Unlike the home-level reference roots, `/tmp` is also a trusted external write root for `write_file`, `edit_file`, and `create_directory`.
 
 Read-side wrappers (`read_file`, `list_directory`, `search_files`, `find_files`, `file_info`) keep relative paths anchored to the primary workspace. When the caller explicitly supplies an absolute or `~/...` path, GPT Dive dispatches only to the matching primary/trusted root and converts it back to a root-relative path before invoking the upstream Harness method.
 
-Write-side methods (`write_file`, `edit_file`, `create_directory`) are still the primary workspace toolset methods directly, so trusted external roots gain no write authority. Relative `../` traversal does not trigger cross-root dispatch. Each selected upstream FileSystem still resolves canonical/symlink paths before authorization, preserving escape rejection.
+Write-side wrappers keep relative paths anchored to the primary workspace. Explicit absolute writes may also dispatch to the configured trusted write roots; currently only `/tmp` has that authority. The home-level reference roots remain read-only outside `cwd`. Relative `../` traversal does not trigger cross-root dispatch. Each selected upstream FileSystem still resolves canonical/symlink paths before authorization, preserving escape rejection.
 
-Architecture decision and rejected alternatives: `adr/0004-code-mode-trusted-read-roots.md`.
+Architecture decision and rejected alternatives: `adr/0004-code-mode-trusted-filesystem-roots.md`.
 
 ## Direct Harness Shell
 

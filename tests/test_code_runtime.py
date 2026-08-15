@@ -537,6 +537,40 @@ def test_harness_filesystem_rejects_traversal(tmp_path: Path) -> None:
         asyncio.run(code_mode('await read_file("../outside.txt")', cwd=str(tmp_path)))
 
 
+def test_harness_filesystem_tmp_is_a_trusted_read_write_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tmp_root = Path("/tmp") / f"gpt-dive-code-mode-{os.getpid()}-{tmp_path.name}"
+    target = tmp_root / "artifact.txt"
+    try:
+        assert Path("/tmp").resolve() in app_module._code_mode_trusted_read_roots()
+        assert Path("/tmp").resolve() in app_module._code_mode_trusted_write_roots()
+
+        asyncio.run(code_mode(f"await create_directory({str(tmp_root)!r})", cwd=str(workspace)))
+        asyncio.run(
+            code_mode(
+                f'await write_file({str(target)!r}, "tmp-read\\n")',
+                cwd=str(workspace),
+            )
+        )
+        result = asyncio.run(
+            code_mode(f"await read_file({str(target)!r}, limit=1)", cwd=str(workspace))
+        )["result"]
+        assert "1\ttmp-read" in result
+
+        asyncio.run(
+            code_mode(
+                f'await edit_file({str(target)!r}, "tmp-read", "tmp-write")',
+                cwd=str(workspace),
+            )
+        )
+        assert target.read_text() == "tmp-write\n"
+    finally:
+        target.unlink(missing_ok=True)
+        if tmp_root.exists():
+            tmp_root.rmdir()
+
+
 def test_harness_filesystem_trusted_read_root_is_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -549,6 +583,7 @@ def test_harness_filesystem_trusted_read_root_is_read_only(
     monkeypatch.setattr(
         app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
     )
+    monkeypatch.setattr(app_module, "_code_mode_trusted_write_roots", lambda: ())
 
     code = f"""\nread = await read_file({str(target)!r}, limit=1)\nlisting = await list_directory({str(trusted)!r})\nsearch = await search_files("beta", path={str(trusted)!r})\nfound = await find_files("*.txt", path={str(trusted)!r})\ninfo = await file_info({str(target)!r})\n{{"read": read, "listing": listing, "search": search, "found": found, "info": info}}\n"""
     result = asyncio.run(code_mode(code, cwd=str(workspace)))["result"]
@@ -558,7 +593,9 @@ def test_harness_filesystem_trusted_read_root_is_read_only(
     assert "reference.txt" in result["found"]
     assert "type: file" in result["info"]
 
-    with pytest.raises(Exception, match="resolves outside the root directory"):
+    with pytest.raises(
+        Exception, match="outside the Code Mode workspace and trusted write roots"
+    ):
         asyncio.run(
             code_mode(
                 f'await write_file({str(target)!r}, "changed")',

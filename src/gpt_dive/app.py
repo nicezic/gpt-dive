@@ -262,7 +262,7 @@ def wsl2_sync(
     return _run_command(command, cwd, timeout)
 
 
-_CODE_MODE_TRUSTED_READ_DIRS = (
+_CODE_MODE_TRUSTED_HOME_READ_DIRS = (
     "ref",
     "wiki",
     "gpt-dive",
@@ -270,15 +270,26 @@ _CODE_MODE_TRUSTED_READ_DIRS = (
     "monsoon",
     "labs",
 )
+_CODE_MODE_TRUSTED_SYSTEM_READ_ROOTS = (Path("/tmp"),)
+_CODE_MODE_TRUSTED_SYSTEM_WRITE_ROOTS = (Path("/tmp"),)
 
 
 def _code_mode_trusted_read_roots() -> tuple[Path, ...]:
-    """Return existing home-level trees that Code Mode may read outside its cwd."""
+    """Return existing trusted trees that Code Mode may read outside its cwd."""
     home = Path.home().resolve()
+    candidates = (
+        *(home / name for name in _CODE_MODE_TRUSTED_HOME_READ_DIRS),
+        *_CODE_MODE_TRUSTED_SYSTEM_READ_ROOTS,
+    )
+    return tuple(root.resolve() for root in candidates if root.is_dir())
+
+
+def _code_mode_trusted_write_roots() -> tuple[Path, ...]:
+    """Return existing trusted trees that Code Mode may write outside its cwd."""
     return tuple(
         root.resolve()
-        for name in _CODE_MODE_TRUSTED_READ_DIRS
-        if (root := home / name).is_dir()
+        for root in _CODE_MODE_TRUSTED_SYSTEM_WRITE_ROOTS
+        if root.is_dir()
     )
 
 
@@ -294,6 +305,11 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     trusted_read_toolsets = [
         (root, FileSystem(root_dir=root).get_toolset())
         for root in _code_mode_trusted_read_roots()
+        if root != workspace
+    ]
+    trusted_write_toolsets = [
+        (root, FileSystem(root_dir=root).get_toolset())
+        for root in _code_mode_trusted_write_roots()
         if root != workspace
     ]
 
@@ -315,6 +331,26 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         allowed = ", ".join(str(root) for root, _ in candidates)
         raise PermissionError(
             f"Path {path!r} is outside the Code Mode workspace and trusted read roots: {allowed}"
+        )
+
+    def select_write_toolset(path: str) -> tuple[Any, str]:
+        expanded = Path(path).expanduser()
+        if not expanded.is_absolute():
+            return filesystem_toolset, path
+
+        lexical = Path(os.path.abspath(str(expanded)))
+        candidates = [(workspace, filesystem_toolset), *trusted_write_toolsets]
+        candidates.sort(key=lambda item: len(item[0].parts), reverse=True)
+        for root, toolset in candidates:
+            try:
+                relative = lexical.relative_to(root)
+            except ValueError:
+                continue
+            return toolset, str(relative)
+
+        allowed = ", ".join(str(root) for root, _ in candidates)
+        raise PermissionError(
+            f"Path {path!r} is outside the Code Mode workspace and trusted write roots: {allowed}"
         )
 
     async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
@@ -345,6 +381,31 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         """Get metadata about a file or directory. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
         toolset, relative = select_read_toolset(path)
         return await toolset.file_info(relative)
+
+    async def write_file(
+        path: str, content: str, *, expected_hash: str | None = None
+    ) -> str:
+        """Create or overwrite a file with conflict detection. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        toolset, relative = select_write_toolset(path)
+        return await toolset.write_file(relative, content, expected_hash=expected_hash)
+
+    async def edit_file(
+        path: str,
+        old_text: str,
+        new_text: str,
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
+        """Edit a file by exact string replacement with conflict detection. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        toolset, relative = select_write_toolset(path)
+        return await toolset.edit_file(
+            relative, old_text, new_text, expected_hash=expected_hash
+        )
+
+    async def create_directory(path: str) -> str:
+        """Create a directory and any missing parents. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        toolset, relative = select_write_toolset(path)
+        return await toolset.create_directory(relative)
 
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
     shell_env = os.environ.copy()
@@ -461,12 +522,12 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
     registry.register("read_file", read_file)
-    registry.register("write_file", filesystem_toolset.write_file)
-    registry.register("edit_file", filesystem_toolset.edit_file)
+    registry.register("write_file", write_file)
+    registry.register("edit_file", edit_file)
     registry.register("list_directory", list_directory)
     registry.register("search_files", search_files)
     registry.register("find_files", find_files)
-    registry.register("create_directory", filesystem_toolset.create_directory)
+    registry.register("create_directory", create_directory)
     registry.register("file_info", file_info)
 
     def bounded_shell_method(name: str):

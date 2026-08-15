@@ -85,9 +85,9 @@ Implementation/acceptance history: `plans/code_mode/plan-260814-files-and-shell.
 
 ### 6. Workspace + trusted read boundary
 
-The primary Code Mode `FileSystem(root_dir=workspace)` remains the only read/write FileSystem. To let one task inspect trusted references without changing `cwd`, GPT Dive also builds read-side Harness toolsets for the existing home-level trees `~/ref`, `~/wiki`, `~/gpt-dive`, `~/gbrain`, `~/monsoon`, and `~/labs`.
+The primary Code Mode `FileSystem(root_dir=workspace)` remains the default read/write FileSystem. To let one task inspect trusted references or temporary local artifacts without changing `cwd`, GPT Dive also builds routed Harness toolsets for the existing home-level trees `~/ref`, `~/wiki`, `~/gpt-dive`, `~/gbrain`, `~/monsoon`, `~/labs`, plus the system temporary root `/tmp`.
 
-Relative paths always mean the primary workspace. Explicit absolute/`~/` paths may be dispatched to a matching trusted root for read/list/search/find/info only. Writes remain primary-workspace scoped, unlisted roots are rejected, and the selected Harness FileSystem still performs canonical/symlink containment. This preserves the upstream single-root security model instead of replacing it with `FileSystem(root_dir=~)`.
+Relative paths always mean the primary workspace. Explicit absolute/`~/` reads may be dispatched to a matching trusted read root; explicit writes may dispatch only to trusted write roots, currently `/tmp`. The home-level reference roots remain read-only outside `cwd`, unlisted roots are rejected, and each selected Harness FileSystem still performs canonical/symlink containment. This preserves the upstream single-root security model instead of replacing it with `FileSystem(root_dir=~)`.
 
 This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface.
 
