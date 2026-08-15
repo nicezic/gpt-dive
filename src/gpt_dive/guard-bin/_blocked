@@ -9,8 +9,14 @@ case "$cmd" in
     echo '⚠️ Direct Python detected → auto-reroute: uv run --python 3.14 python' >&2
     exec uv run --python 3.14 python "$@"
     ;;
+  python3.10|python3.11|python3.12|python3.13)
+    echo "⚠️ USER INSTRUCTION: Old Python '$cmd' is prohibited in @wsl2. Use Python 3.14 via uv." >&2
+    ;;
   pip|pip3|pip3.14)
     echo '⚠️ USER INSTRUCTION: Direct pip execution is prohibited in @wsl2. Use uv: prefer uv add <package>, or uv pip ... when pip-compatible behavior is required.' >&2
+    ;;
+  pip3.10|pip3.11|pip3.12|pip3.13)
+    echo "⚠️ USER INSTRUCTION: Old pip '$cmd' is prohibited in @wsl2. Use uv instead." >&2
     ;;
   npm)
     echo '⚠️ USER INSTRUCTION: npm is prohibited in @wsl2. Use pnpm instead.' >&2

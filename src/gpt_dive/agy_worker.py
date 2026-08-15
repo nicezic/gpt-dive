@@ -13,7 +13,9 @@ DEFAULT_MODEL = "gemini-3.7-flash-high"
 _PROVIDER = "antigravity"
 
 
-def _build_command(*, task: str, model: str, timeout: float) -> list[str]:
+def _build_command(
+    *, task: str, model: str, timeout: float, workspace_dir: str | None = None
+) -> list[str]:
     if not task.strip():
         raise ValueError("task must not be empty")
     if not model.strip():
@@ -22,7 +24,7 @@ def _build_command(*, task: str, model: str, timeout: float) -> list[str]:
         raise ValueError("timeout must be greater than 0")
 
     print_timeout = f"{max(1, math.ceil(timeout))}s"
-    return [
+    command = [
         str(AGY),
         "-p",
         task,
@@ -32,9 +34,13 @@ def _build_command(*, task: str, model: str, timeout: float) -> list[str]:
         "stream-json",
         "--mode",
         "plan",
+        "--dangerously-skip-permissions",
         "--print-timeout",
         print_timeout,
     ]
+    if workspace_dir is not None:
+        command.extend(["--add-dir", workspace_dir])
+    return command
 
 
 def _parse_stream_json(stdout_text: str) -> dict[str, Any]:
@@ -68,7 +74,6 @@ async def invoke_agy_worker(
     workspace_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run one read-only Antigravity worker through the official agy CLI."""
-    command = _build_command(task=task, model=model, timeout=timeout)
     if not AGY.is_file():
         return {
             "ok": False,
@@ -83,6 +88,10 @@ async def invoke_agy_worker(
         if not workspace.is_dir():
             raise ValueError(f"workspace_dir is not a directory: {workspace}")
         run_cwd = str(workspace)
+
+    command = _build_command(
+        task=task, model=model, timeout=timeout, workspace_dir=run_cwd
+    )
 
     try:
         proc = await asyncio.create_subprocess_exec(

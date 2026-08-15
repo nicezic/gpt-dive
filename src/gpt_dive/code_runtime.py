@@ -5,7 +5,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic_monty import AsyncMonty, CollectString, MontyComplete, MountDir
+from pydantic_monty import AsyncMonty, CollectString, MontyComplete
+
+from .filesystem_policy import HostFileSystemOS
 
 
 class CallableRegistry:
@@ -76,7 +78,7 @@ class MontyCodeRuntime:
         runtime_code = f"import asyncio\n{code}"
         run_cwd = str(Path(cwd).expanduser().resolve()) if cwd else str(Path.home())
         capture = CollectString()
-        mount = MountDir(host_path="/", virtual_path="/", mode="read-write")
+        host_os = HostFileSystemOS(cwd=run_cwd, home=Path.home())
         inputs: dict[str, Any] = {
             "CWD": run_cwd,
             "CAPABILITIES": registry.describe(),
@@ -99,7 +101,7 @@ class MontyCodeRuntime:
                     inputs=inputs,
                     external_lookup=registry.as_external_lookup(),
                     print_callback=capture,
-                    mount=mount,
+                    os=host_os,
                     skip_type_check=False,
                 )
                 while not isinstance(state, MontyComplete):

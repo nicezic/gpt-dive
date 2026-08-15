@@ -25,6 +25,7 @@ from .agy_worker import invoke_agy_worker
 from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
+from .filesystem_policy import harness_denied_patterns
 from .job_manager import JobManager
 from .repo_search import search_repo
 from .runtime_env import build_runtime_path
@@ -264,35 +265,10 @@ def wsl2_sync(
     return _run_command(command, cwd, timeout)
 
 
-_CODE_MODE_TRUSTED_HOME_READ_DIRS = (
-    "ref",
-    "wiki",
-    "gpt-dive",
-    "gbrain",
-    "monsoon",
-    "labs",
-)
-_CODE_MODE_TRUSTED_SYSTEM_READ_ROOTS = (Path("/tmp"),)
-_CODE_MODE_TRUSTED_SYSTEM_WRITE_ROOTS = (Path("/tmp"),)
+def _code_mode_home_root() -> Path:
+    """Return the only filesystem tree Code Mode may mutate."""
+    return Path.home().resolve()
 
-
-def _code_mode_trusted_read_roots() -> tuple[Path, ...]:
-    """Return existing trusted trees that Code Mode may read outside its cwd."""
-    home = Path.home().resolve()
-    candidates = (
-        *(home / name for name in _CODE_MODE_TRUSTED_HOME_READ_DIRS),
-        *_CODE_MODE_TRUSTED_SYSTEM_READ_ROOTS,
-    )
-    return tuple(root.resolve() for root in candidates if root.is_dir())
-
-
-def _code_mode_trusted_write_roots() -> tuple[Path, ...]:
-    """Return existing trusted trees that Code Mode may write outside its cwd."""
-    return tuple(
-        root.resolve()
-        for root in _CODE_MODE_TRUSTED_SYSTEM_WRITE_ROOTS
-        if root.is_dir()
-    )
 
 
 def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
@@ -303,91 +279,74 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         else Path.home().resolve()
     )
 
-    filesystem_toolset = FileSystem(root_dir=workspace).get_toolset()
-    trusted_read_toolsets = [
-        (root, FileSystem(root_dir=root).get_toolset())
-        for root in _code_mode_trusted_read_roots()
-        if root != workspace
-    ]
-    trusted_write_toolsets = [
-        (root, FileSystem(root_dir=root).get_toolset())
-        for root in _code_mode_trusted_write_roots()
-        if root != workspace
-    ]
+    home = _code_mode_home_root()
+    read_denied_patterns = harness_denied_patterns(root=Path("/"), home=home)
+    write_denied_patterns = harness_denied_patterns(root=home, home=home)
+    read_toolset = FileSystem(
+        root_dir="/",
+        denied_patterns=read_denied_patterns,
+        protected_patterns=[],
+    ).get_toolset()
+    write_toolset = FileSystem(
+        root_dir=home,
+        denied_patterns=write_denied_patterns,
+        protected_patterns=[],
+    ).get_toolset()
+
+    def resolve_path(path: str) -> Path:
+        expanded = Path(path).expanduser()
+        if expanded.is_absolute():
+            return expanded.resolve()
+        return (workspace / expanded).resolve()
 
     def select_read_toolset(path: str) -> tuple[Any, str]:
-        expanded = Path(path).expanduser()
-        if not expanded.is_absolute():
-            return filesystem_toolset, path
-
-        lexical = Path(os.path.abspath(str(expanded)))
-        candidates = [(workspace, filesystem_toolset), *trusted_read_toolsets]
-        candidates.sort(key=lambda item: len(item[0].parts), reverse=True)
-        for root, toolset in candidates:
-            try:
-                relative = lexical.relative_to(root)
-            except ValueError:
-                continue
-            return toolset, str(relative)
-
-        allowed = ", ".join(str(root) for root, _ in candidates)
-        raise PermissionError(
-            f"Path {path!r} is outside the Code Mode workspace and trusted read roots: {allowed}"
-        )
+        absolute = resolve_path(path)
+        return read_toolset, str(absolute.relative_to(Path("/")))
 
     def select_write_toolset(path: str) -> tuple[Any, str]:
-        expanded = Path(path).expanduser()
-        if not expanded.is_absolute():
-            return filesystem_toolset, path
+        absolute = resolve_path(path)
+        try:
+            relative = absolute.relative_to(home)
+        except ValueError as exc:
+            raise PermissionError(
+                f"Path {path!r} is outside the Code Mode write root: {home}"
+            ) from exc
+        return write_toolset, str(relative)
 
-        lexical = Path(os.path.abspath(str(expanded)))
-        candidates = [(workspace, filesystem_toolset), *trusted_write_toolsets]
-        candidates.sort(key=lambda item: len(item[0].parts), reverse=True)
-        for root, toolset in candidates:
-            try:
-                relative = lexical.relative_to(root)
-            except ValueError:
-                continue
-            return toolset, str(relative)
-
-        allowed = ", ".join(str(root) for root, _ in candidates)
-        raise PermissionError(
-            f"Path {path!r} is outside the Code Mode workspace and trusted write roots: {allowed}"
-        )
 
     async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
-        """Read a text file with line numbers. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        """Read a text file with line numbers. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         toolset, relative = select_read_toolset(path)
         return await toolset.read_file(relative, offset=offset, limit=limit)
 
     async def list_directory(path: str = ".") -> str:
-        """List the contents of a directory. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        """List a directory. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         toolset, relative = select_read_toolset(path)
         return await toolset.list_directory(relative)
 
     async def search_files(
         pattern: str, *, path: str = ".", include_glob: str | None = None
     ) -> str:
-        """Search file contents using the regular expression passed as `pattern`. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        """Search file contents by regex. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         toolset, relative = select_read_toolset(path)
         return await toolset.search_files(
             pattern, path=relative, include_glob=include_glob
         )
 
     async def find_files(pattern: str, *, path: str = ".") -> str:
-        """Find files by glob pattern (name matching, not content search). Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        """Find files by glob. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         toolset, relative = select_read_toolset(path)
         return await toolset.find_files(pattern, path=relative)
 
     async def file_info(path: str) -> str:
-        """Get metadata about a file or directory. Relative paths use cwd; explicit absolute/~/ paths are allowed only under trusted read roots."""
+        """Get file or directory metadata. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         toolset, relative = select_read_toolset(path)
         return await toolset.file_info(relative)
 
     async def write_file(
         path: str, content: str, *, expected_hash: str | None = None
     ) -> str:
-        """Create or overwrite a file with conflict detection. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        """Create or overwrite a file with conflict detection. Writes are allowed only under the user home directory, excluding credential/secret paths."""
         toolset, relative = select_write_toolset(path)
         return await toolset.write_file(relative, content, expected_hash=expected_hash)
 
@@ -398,14 +357,14 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         *,
         expected_hash: str | None = None,
     ) -> str:
-        """Edit a file by exact string replacement with conflict detection. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        """Edit a file by exact replacement with conflict detection. Writes are allowed only under the user home directory, excluding credential/secret paths."""
         toolset, relative = select_write_toolset(path)
         return await toolset.edit_file(
             relative, old_text, new_text, expected_hash=expected_hash
         )
 
     async def create_directory(path: str) -> str:
-        """Create a directory and any missing parents. Relative paths use cwd; explicit absolute paths are allowed only under trusted write roots."""
+        """Create a directory and parents. Writes are allowed only under the user home directory, excluding credential/secret paths."""
         toolset, relative = select_write_toolset(path)
         return await toolset.create_directory(relative)
 
@@ -455,7 +414,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         """Run a read-only Antigravity worker through the official agy CLI.
 
         Defaults to Gemini 3.7 Flash High. Google authentication and entitlement stay
-        inside agy. The worker runs in plan mode and does not auto-approve permissions.
+        inside agy. The worker runs in read-only plan mode and auto-approves headless tool permission prompts.
         """
         return await invoke_agy_worker(
             task=task,

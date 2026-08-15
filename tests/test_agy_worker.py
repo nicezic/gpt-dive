@@ -8,7 +8,12 @@ from gpt_dive.agy_worker import DEFAULT_MODEL, _build_command, _parse_stream_jso
 
 
 def test_build_command_uses_safe_plan_mode() -> None:
-    command = _build_command(task="review this", model=DEFAULT_MODEL, timeout=12.2)
+    command = _build_command(
+        task="review this",
+        model=DEFAULT_MODEL,
+        timeout=12.2,
+        workspace_dir="/tmp/workspace",
+    )
 
     assert command[0].endswith("/.local/bin/agy")
     assert command[1:3] == ["-p", "review this"]
@@ -17,7 +22,8 @@ def test_build_command_uses_safe_plan_mode() -> None:
     assert command[command.index("--mode") + 1] == "plan"
     assert command[command.index("--print-timeout") + 1] == "13s"
     assert "--disable-slash-commands" not in command
-    assert "--dangerously-skip-permissions" not in command
+    assert "--dangerously-skip-permissions" in command
+    assert command[command.index("--add-dir") + 1] == "/tmp/workspace"
 
 
 def test_parse_stream_json_returns_terminal_result() -> None:

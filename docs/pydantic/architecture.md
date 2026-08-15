@@ -50,7 +50,7 @@ Primary implementation: `src/gpt_dive/app.py`, `src/gpt_dive/code_runtime.py`.
 **Change**
 - Added `subagent_call(model, task, ...)` behind Code Mode rather than exposing each model/provider as a top-level MCP tool.
 - Added `bare(...)` for deliberately tool-less model calls.
-- Added `agy_worker(task, model=...)` as a separate external-worker capability for Google Antigravity through the official `agy` CLI; it defaults to `gemini-3.7-flash-high`, uses `stream-json`, and launches in `plan` mode without auto-approving permissions.
+- Added `agy_worker(task, model=...)` as a separate external-worker capability for Google Antigravity through the official `agy` CLI; it defaults to `gemini-3.7-flash-high`, uses `stream-json`, and launches in read-only `plan` mode with headless tool approvals auto-approved so bounded investigation does not stall on permission prompts.
 
 **Why**
 - Web SOL often already knows which model or worker to consult and does not need an extra local parent-agent turn.
@@ -84,13 +84,11 @@ GPT Dive still owns lower local execution policy such as `guard-bin` PATH preced
 
 Implementation/acceptance history: `plans/code_mode/plan-260814-files-and-shell.md`.
 
-### 6. Workspace + trusted read boundary
+### 6. Host filesystem boundary
 
-The primary Code Mode `FileSystem(root_dir=workspace)` remains the default read/write FileSystem. To let one task inspect trusted references or temporary local artifacts without changing `cwd`, GPT Dive also builds routed Harness toolsets for the existing home-level trees `~/ref`, `~/wiki`, `~/gpt-dive`, `~/gbrain`, `~/monsoon`, `~/labs`, plus the system temporary root `/tmp`.
+Code Mode resolves relative filesystem paths from the effective `cwd`, allows host reads across `/` except explicitly blocked credential/secret paths, and allows writes only under the user's home directory with the same secret exclusions. Registered Harness FileSystem capabilities and Monty direct filesystem primitives share this policy so one path cannot bypass the other.
 
-Relative paths always mean the primary workspace. Explicit absolute/`~/` reads may be dispatched to a matching trusted read root; explicit writes may dispatch only to trusted write roots, currently `/tmp`. The home-level reference roots remain read-only outside `cwd`, unlisted roots are rejected, and each selected Harness FileSystem still performs canonical/symlink containment. This preserves the upstream single-root security model instead of replacing it with `FileSystem(root_dir=~)`.
-
-This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface.
+This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface. Shell has separate environment stripping and executable guards, including Python toolchain routing.
 
 ### 7. Local ChatGPT Codex subscription compatibility
 

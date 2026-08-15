@@ -39,27 +39,20 @@ and registers the bound async methods directly:
 
 This intentionally reuses upstream Harness semantics rather than wrapping or reimplementing them.
 
-Important inherited behavior includes canonical root/symlink containment, protected write patterns, bounded reads/searches, binary detection, and optimistic `expected_hash` checks for writes/edits.
+Important inherited behavior includes bounded reads/searches, binary detection, and optimistic `expected_hash` checks for writes/edits. GPT Dive supplies the host filesystem authorization policy around those Harness operations.
 
-### Trusted read roots
+### Host filesystem boundary
 
-One Harness `FileSystem` remains single-root by design, so GPT Dive keeps the primary `FileSystem(root_dir=workspace)` for read/write semantics and creates separate Harness FileSystem toolsets for curated trusted read roots:
+Code Mode uses one simple local policy:
 
 ```text
-~/ref
-~/wiki
-~/gpt-dive
-~/gbrain
-~/monsoon
-~/labs
-/tmp
+READ  -> host filesystem `/`, except credential/secret paths
+WRITE -> user home `~/`, except credential/secret paths
 ```
 
-`/tmp` is included for temporary artifacts produced by local tools and subprocesses. Unlike the home-level reference roots, `/tmp` is also a trusted external write root for `write_file`, `edit_file`, and `create_directory`.
+Relative paths resolve from the effective `cwd`. Absolute and `~/...` reads may target any host path allowed by the OS unless it matches the shared credential/secret deny policy. `write_file`, `edit_file`, and `create_directory` reject targets outside `~/` and reject credential/secret paths inside it.
 
-Read-side wrappers (`read_file`, `list_directory`, `search_files`, `find_files`, `file_info`) keep relative paths anchored to the primary workspace. When the caller explicitly supplies an absolute or `~/...` path, GPT Dive dispatches only to the matching primary/trusted root and converts it back to a root-relative path before invoking the upstream Harness method.
-
-Write-side wrappers keep relative paths anchored to the primary workspace. Explicit absolute writes may also dispatch to the configured trusted write roots; currently only `/tmp` has that authority. The home-level reference roots remain read-only outside `cwd`. Relative `../` traversal does not trigger cross-root dispatch. Each selected upstream FileSystem still resolves canonical/symlink paths before authorization, preserving escape rejection.
+The same policy also applies to direct Monty filesystem primitives such as `Path.read_text()` and `Path.write_text()` through GPT Dive's host-backed Monty OS adapter, so direct Python code cannot bypass the FileSystem capability boundary. Ordinary `.git` metadata under `~/` is writable; explicit secret paths remain denied.
 
 Architecture decision and rejected alternatives: `adr/0004-code-mode-trusted-filesystem-roots.md`.
 

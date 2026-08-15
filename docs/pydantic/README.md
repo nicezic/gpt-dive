@@ -30,7 +30,7 @@ Keep elsewhere:
 - `providers.md` — provider/model alias integration roles and repository ownership boundaries.
 - Root `README.patch.openai.provider.md` — intentionally prominent maintenance SSOT for the local ChatGPT Codex subscription compatibility layer; keep it at repository root so Pydantic upgrades encounter it early.
 - `adr/README.md` — ADR admission rule and scope boundary.
-- `adr/0004-code-mode-trusted-filesystem-roots.md` — why Code Mode uses curated external filesystem roots, keeping reference trees read-only while allowing `/tmp` read/write access.
+- `adr/0004-code-mode-trusted-filesystem-roots.md` — Code Mode host filesystem policy: broad non-secret reads, home-scoped writes, shared secret denial.
 
 ## Authority rule
 

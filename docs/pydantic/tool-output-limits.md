@@ -64,7 +64,7 @@ registered capabilities
               └─ Web gets path + size + small preview
 ```
 
-The planned Code Mode spill returns the **real local file path**, not an opaque handle. The dedicated spill directory will be exposed to Code Mode FileSystem as a read-only trusted root, so a later call can inspect the returned path directly with `read_file`, `search_files`, `file_info`, or Shell. This avoids a new `read_tool_result` API and handle resolver in a local-only WSL2 runtime without granting spill-root write authority.
+The planned Code Mode spill returns the **real local file path**, not an opaque handle. Spill files under `/tmp` are directly readable through the broad host-read policy, while FileSystem writes remain limited to `~/`. A later call can inspect the returned path with `read_file`, `search_files`, `file_info`, or Shell without a separate `read_tool_result` handle API.
 
 The final-output adapter applies only to successful foreground completion and successful background `action='result'` retrieval. Failure diagnostics remain unchanged.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,18 +17,20 @@ def test_code_mode_returns_expression_result() -> None:
     assert asyncio.run(code_mode("1 + 2")) == {"result": 3}
 
 
-def test_code_mode_can_read_and_write_local_filesystem(tmp_path: Path) -> None:
-    target = tmp_path / "monty-rw.txt"
-    code = f"""\nfrom pathlib import Path\np = Path({str(target)!r})\np.write_text("DIVE_RW_OK")\np.read_text()\n"""
-    assert asyncio.run(code_mode(code)) == {"result": "DIVE_RW_OK"}
-    assert target.read_text() == "DIVE_RW_OK"
+def test_code_mode_can_read_and_write_local_filesystem() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        target = Path(td) / "monty-rw.txt"
+        code = f"""\nfrom pathlib import Path\np = Path({str(target)!r})\np.write_text("DIVE_RW_OK")\np.read_text()\n"""
+        assert asyncio.run(code_mode(code)) == {"result": "DIVE_RW_OK"}
+        assert target.read_text() == "DIVE_RW_OK"
 
 
 def test_local_exec_works_and_preserves_guard_bin() -> None:
     code = """\
 ok = await local_exec(command="printf 'LOCAL_EXEC_OK\\n'")
 rerouted = await local_exec(command="python --version")
-{"ok": ok, "rerouted": rerouted}
+old_python = await local_exec(command="python3.10 --version")
+{"ok": ok, "rerouted": rerouted, "old_python": old_python}
 """
     result = asyncio.run(code_mode(code))["result"]
     assert result["ok"]["returncode"] == 0
@@ -35,6 +38,8 @@ rerouted = await local_exec(command="python --version")
     assert result["rerouted"]["returncode"] == 0
     assert "Python 3.14" in result["rerouted"]["stdout"]
     assert "auto-reroute" in result["rerouted"]["stderr"]
+    assert result["old_python"]["returncode"] == 2
+    assert "Old Python" in result["old_python"]["stderr"]
 
 
 def test_code_mode_input_can_feed_local_exec_stdin() -> None:
@@ -499,9 +504,11 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
         asyncio.run(gpt_dive.code_mode(action="status", job_id="x", input="payload"))
 
 
-def test_harness_filesystem_capabilities_work_at_code_mode_seam(tmp_path: Path) -> None:
-    (tmp_path / "input.txt").write_text("alpha\nbeta\n")
-    code = r"""
+def test_harness_filesystem_capabilities_work_at_code_mode_seam() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        workspace = Path(td)
+        (workspace / "input.txt").write_text("alpha\nbeta\n")
+        code = r"""
 read = await read_file("input.txt", limit=1)
 listing = await list_directory(".")
 search = await search_files("beta")
@@ -521,131 +528,77 @@ edited = await edit_file("nested/out.txt", "one", "two")
     "edited": edited,
 }
 """
-    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
-    assert "1\talpha" in result["read"]
-    assert "input.txt" in result["listing"]
-    assert "input.txt:2:beta" in result["search"]
-    assert "input.txt" in result["found"]
-    assert "type: file" in result["info"]
-    assert result["created"] == "Created directory: nested"
-    assert "Wrote" in result["written"]
-    assert "Edited nested/out.txt" in result["edited"]
-    assert (tmp_path / "nested" / "out.txt").read_text() == "two\n"
+        result = asyncio.run(code_mode(code, cwd=str(workspace)))["result"]
+        assert "1\talpha" in result["read"]
+        assert "input.txt" in result["listing"]
+        assert "input.txt:2:beta" in result["search"]
+        assert "input.txt" in result["found"]
+        assert "type: file" in result["info"]
+        assert result["created"].endswith("/nested")
+        assert "Wrote" in result["written"]
+        assert "/nested/out.txt" in result["edited"]
+        assert (workspace / "nested" / "out.txt").read_text() == "two\n"
 
 
-def test_harness_filesystem_rejects_traversal(tmp_path: Path) -> None:
-    with pytest.raises(Exception, match="resolves outside the root directory"):
-        asyncio.run(code_mode('await read_file("../outside.txt")', cwd=str(tmp_path)))
-
-
-def test_harness_filesystem_tmp_is_a_trusted_read_write_root(tmp_path: Path) -> None:
+def test_code_mode_reads_anywhere_outside_home(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    tmp_root = Path("/tmp") / f"gpt-dive-code-mode-{os.getpid()}-{tmp_path.name}"
-    target = tmp_root / "artifact.txt"
-    try:
-        assert Path("/tmp").resolve() in app_module._code_mode_trusted_read_roots()
-        assert Path("/tmp").resolve() in app_module._code_mode_trusted_write_roots()
+    target = tmp_path / "outside.txt"
+    target.write_text("visible\n")
 
-        asyncio.run(code_mode(f"await create_directory({str(tmp_root)!r})", cwd=str(workspace)))
+    result = asyncio.run(
+        code_mode('await read_file("../outside.txt", limit=1)', cwd=str(workspace))
+    )["result"]
+    assert "1\tvisible" in result
+
+    direct = asyncio.run(
+        code_mode(
+            f"from pathlib import Path\nPath({str(target)!r}).read_text()",
+            cwd=str(workspace),
+        )
+    )["result"]
+    assert direct == "visible\n"
+
+
+def test_code_mode_rejects_writes_outside_home(tmp_path: Path) -> None:
+    target = tmp_path / "outside-write.txt"
+
+    with pytest.raises(Exception, match="outside the Code Mode write root"):
+        asyncio.run(code_mode(f'await write_file({str(target)!r}, "blocked")'))
+
+    with pytest.raises(Exception, match="Write path is outside the Code Mode home root"):
         asyncio.run(
             code_mode(
-                f'await write_file({str(target)!r}, "tmp-read\\n")',
-                cwd=str(workspace),
+                f"from pathlib import Path\nPath({str(target)!r}).write_text('blocked')"
             )
         )
-        result = asyncio.run(
-            code_mode(f"await read_file({str(target)!r}, limit=1)", cwd=str(workspace))
-        )["result"]
-        assert "1\ttmp-read" in result
+    assert not target.exists()
 
+
+def test_code_mode_blocks_secret_reads_and_writes(tmp_path: Path) -> None:
+    secret = tmp_path / ".env"
+    secret.write_text("TOKEN=secret\n")
+
+    with pytest.raises(Exception, match="denied by pattern"):
+        asyncio.run(code_mode(f"await read_file({str(secret)!r})"))
+
+    with pytest.raises(Exception, match="Credential/secret path is blocked"):
         asyncio.run(
-            code_mode(
-                f'await edit_file({str(target)!r}, "tmp-read", "tmp-write")',
-                cwd=str(workspace),
-            )
+            code_mode(f"from pathlib import Path\nPath({str(secret)!r}).read_text()")
         )
-        assert target.read_text() == "tmp-write\n"
-    finally:
-        target.unlink(missing_ok=True)
-        if tmp_root.exists():
-            tmp_root.rmdir()
 
-
-def test_harness_filesystem_trusted_read_root_is_read_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    trusted = tmp_path / "trusted"
-    workspace.mkdir()
-    trusted.mkdir()
-    target = trusted / "reference.txt"
-    target.write_text("alpha\nbeta\n")
-    monkeypatch.setattr(
-        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
-    )
-    monkeypatch.setattr(app_module, "_code_mode_trusted_write_roots", lambda: ())
-
-    code = f"""\nread = await read_file({str(target)!r}, limit=1)\nlisting = await list_directory({str(trusted)!r})\nsearch = await search_files("beta", path={str(trusted)!r})\nfound = await find_files("*.txt", path={str(trusted)!r})\ninfo = await file_info({str(target)!r})\n{{"read": read, "listing": listing, "search": search, "found": found, "info": info}}\n"""
-    result = asyncio.run(code_mode(code, cwd=str(workspace)))["result"]
-    assert "1\talpha" in result["read"]
-    assert "reference.txt" in result["listing"]
-    assert "reference.txt:2:beta" in result["search"]
-    assert "reference.txt" in result["found"]
-    assert "type: file" in result["info"]
-
-    with pytest.raises(
-        Exception, match="outside the Code Mode workspace and trusted write roots"
-    ):
-        asyncio.run(
-            code_mode(
-                f'await write_file({str(target)!r}, "changed")',
-                cwd=str(workspace),
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        home_secret = Path(td) / ".env"
+        with pytest.raises(Exception, match="denied by pattern"):
+            asyncio.run(code_mode(f'await write_file({str(home_secret)!r}, "blocked")'))
+        with pytest.raises(Exception, match="Credential/secret path is blocked"):
+            asyncio.run(
+                code_mode(
+                    f"from pathlib import Path\nPath({str(home_secret)!r}).write_text('blocked')"
+                )
             )
-        )
-    assert target.read_text() == "alpha\nbeta\n"
+        assert not home_secret.exists()
 
-
-def test_harness_filesystem_rejects_unlisted_absolute_read_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    trusted = tmp_path / "trusted"
-    forbidden = tmp_path / "forbidden"
-    workspace.mkdir()
-    trusted.mkdir()
-    forbidden.mkdir()
-    target = forbidden / "secret.txt"
-    target.write_text("secret")
-    monkeypatch.setattr(
-        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
-    )
-
-    with pytest.raises(
-        Exception, match="outside the Code Mode workspace and trusted read roots"
-    ):
-        asyncio.run(code_mode(f"await read_file({str(target)!r})", cwd=str(workspace)))
-
-
-def test_harness_filesystem_trusted_read_root_rejects_symlink_escape(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    trusted = tmp_path / "trusted"
-    forbidden = tmp_path / "forbidden"
-    workspace.mkdir()
-    trusted.mkdir()
-    forbidden.mkdir()
-    secret = forbidden / "secret.txt"
-    secret.write_text("secret")
-    link = trusted / "escape.txt"
-    link.symlink_to(secret)
-    monkeypatch.setattr(
-        app_module, "_code_mode_trusted_read_roots", lambda: (trusted.resolve(),)
-    )
-
-    with pytest.raises(Exception, match="resolves outside the root directory"):
-        asyncio.run(code_mode(f"await read_file({str(link)!r})", cwd=str(workspace)))
 
 
 def test_repo_search_relative_path_inherits_code_mode_cwd(
@@ -667,24 +620,28 @@ def test_repo_search_relative_path_inherits_code_mode_cwd(
     assert result["path"] == str((workspace / "src").resolve())
 
 
-def test_harness_filesystem_write_rejects_stale_expected_hash(tmp_path: Path) -> None:
-    target = tmp_path / "target.txt"
-    stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
-    target.write_text("external")
-    code = f'await write_file("target.txt", "changed", expected_hash={stale_hash!r})'
-    with pytest.raises(Exception, match="Conflict: file 'target.txt' has changed"):
-        asyncio.run(code_mode(code, cwd=str(tmp_path)))
-    assert target.read_text() == "external"
+def test_harness_filesystem_write_rejects_stale_expected_hash() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        workspace = Path(td)
+        target = workspace / "target.txt"
+        stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
+        target.write_text("external")
+        code = f'await write_file("target.txt", "changed", expected_hash={stale_hash!r})'
+        with pytest.raises(Exception, match=r"Conflict: file .*target\.txt.* has changed"):
+            asyncio.run(code_mode(code, cwd=str(workspace)))
+        assert target.read_text() == "external"
 
 
-def test_harness_filesystem_edit_rejects_stale_expected_hash(tmp_path: Path) -> None:
-    target = tmp_path / "target.txt"
-    stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
-    target.write_text("external")
-    code = f'await edit_file("target.txt", "external", "changed", expected_hash={stale_hash!r})'
-    with pytest.raises(Exception, match="Conflict: file 'target.txt' has changed"):
-        asyncio.run(code_mode(code, cwd=str(tmp_path)))
-    assert target.read_text() == "external"
+def test_harness_filesystem_edit_rejects_stale_expected_hash() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        workspace = Path(td)
+        target = workspace / "target.txt"
+        stale_hash = hashlib.sha256(b"original").hexdigest()[:12]
+        target.write_text("external")
+        code = f'await edit_file("target.txt", "external", "changed", expected_hash={stale_hash!r})'
+        with pytest.raises(Exception, match=r"Conflict: file .*target\.txt.* has changed"):
+            asyncio.run(code_mode(code, cwd=str(workspace)))
+        assert target.read_text() == "external"
 
 
 def test_harness_shell_run_command_uses_workspace_guard_and_strips_provider_keys(
