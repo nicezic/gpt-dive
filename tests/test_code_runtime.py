@@ -86,6 +86,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "check_command",
         "stop_command",
         "local_exec",
+        "agy_worker",
         "subagent_call",
         "bare",
         "repo_search",

@@ -20,6 +20,8 @@ from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
+from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
+from .agy_worker import invoke_agy_worker
 from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
@@ -443,6 +445,25 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             stdin,
         )
 
+    async def agy_worker(
+        *,
+        task: str,
+        model: str = DEFAULT_AGY_MODEL,
+        timeout: float = 120.0,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Run a read-only Antigravity worker through the official agy CLI.
+
+        Defaults to Gemini 3.7 Flash High. Google authentication and entitlement stay
+        inside agy. The worker runs in plan mode and does not auto-approve permissions.
+        """
+        return await invoke_agy_worker(
+            task=task,
+            model=model,
+            timeout=timeout,
+            workspace_dir=cwd if cwd is not None else default_cwd,
+        )
+
     async def subagent_call(
         *,
         model: str,
@@ -544,6 +565,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
 
     registry.add_async_cleanup(shell_toolset.__aexit__)
     registry.register("local_exec", local_exec)
+    registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)
     registry.register("repo_search", repo_search)

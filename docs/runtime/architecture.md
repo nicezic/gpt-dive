@@ -46,7 +46,7 @@ Shell
   run_command / start_command / check_command / stop_command
 
 Model / orchestration
-  subagent_call / bare / council_emit
+  subagent_call / agy_worker / bare / council_emit
 
 Retrieval / compatibility
   repo_search / local_exec / gz64
