@@ -11,7 +11,7 @@ GPT Dive therefore consumes official Pydantic AI and owns only the Codex-specifi
 ```text
 GPT Dive
   |
-  +-- official pydantic-ai-slim 2.30.0
+  +-- official pydantic-ai-slim 2.31.0
   |     +-- Agent / Responses model / provider base APIs
   |
   +-- gpt_dive.openai_codex
@@ -31,10 +31,10 @@ Behavioral/reference source:
 
 Current official base at this compatibility revision:
 
-- `pydantic-ai-slim==2.30.0`
-- upstream reference commit observed for v2.30.0: `c24a9008a`
+- `pydantic-ai-slim==2.31.0`
+- upstream reference commit observed for v2.31.0: `25a70926cfafdfc63b3d32c1b5f2c7f139e2c58c`
 - Python 3.14
-- `pydantic-ai-harness==0.18.1`, which requires `pydantic-ai-slim>=2.23.0`
+- `pydantic-ai-harness==0.21.0`, which requires `pydantic-ai-slim>=2.28.0`
 
 ## Local modules and responsibility
 
@@ -172,6 +172,13 @@ A release/cut-over is accepted only when:
 - Kept security-sensitive auth/OAuth/store behavior locally with Pydantic-private utility dependencies removed.
 - Replaced PR modifications to official `models/openai.py` with a narrow local `OpenAIResponsesModel` subclass.
 - Live accepted ordinary `Agent.run()`, tool calling, `bare(sol)`, `subagent_call(sol)`, OAuth refresh, and a post-refresh request.
+
+### 2026-08-15 — official stable update to 2.31.0 / Harness 0.21.0
+
+- Updated official `pydantic-ai-slim` from 2.30.0 to 2.31.0 and `pydantic-ai-harness` from 0.18.1 to 0.21.0.
+- Re-checked PR #6433 immediately before mutation: still open and unmerged; the released v2.31.0 tree did not provide an equivalent official Codex subscription provider/auth surface, so the local compatibility layer remains required.
+- Focused Pydantic/Harness compatibility gate passed `44` tests; Ruff passed; Pyright reported `0 errors`.
+- A pre-existing stale MCP description assertion surfaced during the first run, was corrected to the already-adopted compact outer description contract, and was removed from the updater default gate because MCP presentation policy is not a Pydantic dependency seam.
 
 ## Retirement condition
 

@@ -31,22 +31,20 @@ def test_server_instructions_do_not_own_progress_presentation() -> None:
     assert "Line 2" not in instructions
 
 
-def test_code_mode_description_names_local_exec_result_keys() -> None:
+def test_code_mode_description_exposes_compact_execution_contract() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     description = tools["code_mode"].description
     assert description is not None
-    assert (
-        "local_exec returns a dict with stdout, stderr, and returncode" in description
-    )
+    assert "Primary programmable execution root for GPT Dive" in description
+    assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
+    assert "Prefer Harness FileSystem/Shell capabilities" in description
 
 
 def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     tool = tools["code_mode"]
     assert tool.description is not None
-    assert (
-        "workspace-scoped Harness FileSystem and Shell capabilities" in tool.description
-    )
+    assert "Prefer Harness FileSystem/Shell capabilities" in tool.description
     properties = tool.input_schema["properties"]
     assert "Path(CWD)" not in properties["code"]["description"]
     assert "Path(CWD)" not in properties["cwd"]["description"]

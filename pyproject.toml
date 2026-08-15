@@ -8,7 +8,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-monty>=0.0.19",
     "pydantic-ai-slim[anthropic,openai]",
-    "pydantic-ai-harness==0.18.1",
+    "pydantic-ai-harness==0.21.0",
     "filelock>=3.20.3",
     "playwright>=1.62.0",
     "starlette>=1.6.0",
