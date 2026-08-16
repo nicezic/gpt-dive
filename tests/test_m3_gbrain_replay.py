@@ -9,8 +9,8 @@ import gpt_dive.m3_gbrain_replay as replay_module
 def test_load_capture_rows_reads_ndjson(tmp_path: Path) -> None:
     path = tmp_path / "capture.ndjson"
     path.write_text(
-        '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11]}\n'
-        '{"schema_version":1,"id":2,"tool_name":"query","query":"q2","source_ids":["pydantic-ai","pydantic-ai-harness"],"retrieved_slugs":["docs/b"],"retrieved_chunk_ids":[22]}\n'
+        '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11],"created_at":"2026-08-16T16:10:20.070Z","as_of_ts":null}\n'
+        '{"schema_version":1,"id":2,"tool_name":"query","query":"q2","source_ids":["pydantic-ai","pydantic-ai-harness"],"retrieved_slugs":["docs/b"],"retrieved_chunk_ids":[22],"created_at":"2026-08-16T16:10:29.252Z","as_of_ts":null}\n'
     )
     rows = replay_module.load_capture_rows(path)
     assert [row["id"] for row in rows] == [1, 2]
@@ -93,7 +93,11 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
         ]
 
     async def fake_m3(**kwargs):
-        assert kwargs["question"] == "How does X work?"
+        assert kwargs["question"] == (
+            "How does X work?\n\n"
+            "Historical replay boundary: interpret current/latest/now relative to "
+            "2026-08-16T16:10:29.252Z (captured query time)."
+        )
         assert kwargs["evidence"].startswith("[E1]")
         return {
             "ok": True,
@@ -109,7 +113,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     report = asyncio.run(
         replay_module.run_replay(
-            [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31]}],
+            [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}],
             chunk_limit=4,
         )
     )
@@ -121,3 +125,58 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["controller_failures"] == 0
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
+    assert report["results"][0]["excluded_future_chunks"] == 0
+
+
+def test_replay_question_prefers_explicit_as_of_ts() -> None:
+    row = {
+        "query": "Which version is current?",
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": "2026-08-15T12:00:00.000Z",
+    }
+    assert replay_module.replay_question(row) == (
+        "Which version is current?\n\n"
+        "Historical replay boundary: interpret current/latest/now relative to "
+        "2026-08-15T12:00:00.000Z (captured as-of time)."
+    )
+
+
+def test_load_capture_rows_rejects_invalid_created_at(tmp_path: Path) -> None:
+    path = tmp_path / "bad-time.ndjson"
+    path.write_text(
+        '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11],"created_at":"not-a-time","as_of_ts":null}\n'
+    )
+    try:
+        replay_module.load_capture_rows(path)
+    except ValueError as exc:
+        assert "invalid created_at" in str(exc)
+    else:
+        raise AssertionError("invalid created_at must fail closed")
+
+
+def test_filter_future_temporal_evidence_excludes_post_boundary_content() -> None:
+    row = {
+        "query": "Which version is current?",
+        "created_at": "2026-08-16T00:00:00Z",
+        "as_of_ts": None,
+    }
+    chunks = [
+        {"id": 1, "effective_date": "2026-08-15", "effective_date_source": "published"},
+        {"id": 2, "effective_date": "2026-08-17", "effective_date_source": "published"},
+        {"id": 3, "effective_date": "2026-08-18", "effective_date_source": "fallback"},
+    ]
+    kept, excluded = replay_module.filter_future_temporal_evidence(row, chunks)
+    assert [chunk["id"] for chunk in kept] == [1, 3]
+    assert excluded == 1
+
+
+def test_filter_future_temporal_evidence_keeps_non_temporal_question() -> None:
+    row = {
+        "query": "How does version selection work?",
+        "created_at": "2026-08-16T00:00:00Z",
+        "as_of_ts": None,
+    }
+    chunks = [{"id": 2, "effective_date": "2026-08-17", "effective_date_source": "published"}]
+    kept, excluded = replay_module.filter_future_temporal_evidence(row, chunks)
+    assert kept == chunks
+    assert excluded == 0

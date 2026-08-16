@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import json
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,68 @@ from .m3_evidence import invoke_m3_evidence
 from .runtime_env import build_runtime_path
 
 _PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness"}
+_CURRENT_QUERY_RE = re.compile(r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE)
+
+
+def _validated_timestamp(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"capture has no valid {field}")
+    timestamp = value.strip()
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError as exc:
+        raise ValueError(f"capture has invalid {field}: {timestamp!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"capture {field} must include a timezone")
+    return timestamp
+
+
+def replay_boundary(row: dict[str, Any]) -> tuple[str, datetime, str]:
+    """Return the explicit as-of boundary, otherwise the query capture time."""
+    as_of = row.get("as_of_ts")
+    if as_of is not None:
+        boundary = _validated_timestamp(as_of, field="as_of_ts")
+        label = "captured as-of time"
+    else:
+        boundary = _validated_timestamp(row.get("created_at"), field="created_at")
+        label = "captured query time"
+    return boundary, datetime.fromisoformat(boundary), label
+
+
+def replay_question(row: dict[str, Any]) -> str:
+    """Anchor relative-time language to the captured historical query boundary."""
+    query = str(row["query"]).strip()
+    boundary, _, label = replay_boundary(row)
+    return (
+        f"{query}\n\n"
+        f"Historical replay boundary: interpret current/latest/now relative to {boundary} ({label})."
+    )
+
+
+def filter_future_temporal_evidence(
+    row: dict[str, Any], chunks: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], int]:
+    """Exclude post-boundary content dates only for current/latest-style historical questions."""
+    if not _CURRENT_QUERY_RE.search(str(row.get("query", ""))):
+        return chunks, 0
+    _, boundary, _ = replay_boundary(row)
+    kept: list[dict[str, Any]] = []
+    excluded = 0
+    for chunk in chunks:
+        date = chunk.get("effective_date")
+        source = chunk.get("effective_date_source")
+        if isinstance(date, str) and date and source != "fallback":
+            try:
+                effective = datetime.fromisoformat(date)
+            except ValueError:
+                effective = None
+            if effective is not None and effective.date() > boundary.date():
+                excluded += 1
+                continue
+        kept.append(chunk)
+    if not kept:
+        raise RuntimeError("all captured evidence is dated after the historical replay boundary")
+    return kept, excluded
 
 
 def load_capture_rows(path: Path) -> list[dict[str, Any]]:
@@ -43,6 +107,12 @@ def load_capture_rows(path: Path) -> list[dict[str, Any]]:
                 f"line {line_number} has no valid retrieved_chunk_ids; "
                 "re-export a current GBrain capture for exact evidence replay"
             )
+        try:
+            _validated_timestamp(value.get("created_at"), field="created_at")
+            if value.get("as_of_ts") is not None:
+                _validated_timestamp(value.get("as_of_ts"), field="as_of_ts")
+        except ValueError as exc:
+            raise ValueError(f"line {line_number}: {exc}") from exc
         if not slugs or not chunk_ids:
             continue
         rows.append(value)
@@ -151,9 +221,10 @@ async def run_replay(
     """Run captured Pydantic queries through their exact captured chunks and M3 analysis."""
     results: list[dict[str, Any]] = []
     for row in rows:
-        chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
+        captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
+        chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
         controller = await invoke_m3_evidence(
-            question=str(row["query"]),
+            question=replay_question(row),
             evidence=build_evidence_packet(chunks),
             max_queries=max_queries,
         )
@@ -163,6 +234,7 @@ async def run_replay(
                 "query": row["query"],
                 "source_ids": row["source_ids"],
                 "chunk_count": len(chunks),
+                "excluded_future_chunks": excluded_future_chunks,
                 "controller": controller,
             }
         )
