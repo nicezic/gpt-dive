@@ -9,6 +9,9 @@ from .bare import invoke_bare
 _REQUIRED_LIST_FIELDS = ("known", "missing", "conflicts", "queries")
 _EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 _EVIDENCE_ITEM_LABEL_RE = re.compile(r"(?m)^\s*(\[E[1-9][0-9]*\])(?=\s)")
+_FALLBACK_EFFECTIVE_DATE_RE = re.compile(
+    r"\beffective_date=\S+\s+(?=effective_date_source=fallback\b)"
+)
 
 
 def _evidence_labels(evidence: str) -> set[str]:
@@ -21,6 +24,7 @@ def _evidence_labels(evidence: str) -> set[str]:
 
 def _delimit_evidence(evidence: str) -> str:
     """Wrap source material in one stable delimiter pair."""
+    evidence = _FALLBACK_EFFECTIVE_DATE_RE.sub("", evidence)
     escaped = evidence.replace("<source_data>", "&lt;source_data&gt;").replace(
         "</source_data>", "&lt;/source_data&gt;"
     )
@@ -51,6 +55,7 @@ Rules:
 - If more evidence is needed, propose at most maximum {max_queries} concise independent retrieval queries.
 - Do not invent facts that are not supported by the packet.
 - When the exact question asks which source, version, or state is current or latest, and conflicting packet claims carry explicit dates, use the newest applicable explicitly dated evidence for the current value. Still report the older-versus-newer disagreement in `conflicts`; do not request another search merely to reconfirm the newer dated source when the requested current value is already supported.
+- `effective_date_source=fallback` means GBrain fell back to updated/created timestamps rather than a content date; it must not be used as recency evidence for current/latest resolution.
 - If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Never invent an evidence label.
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
 - Every query must be non-empty and distinct from the other proposed queries.
