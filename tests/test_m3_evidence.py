@@ -281,6 +281,76 @@ def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -
     assert result["usage"] == {"requests": 2, "output_tokens": 12}
 
 
+def test_invoke_m3_evidence_final_round_cannot_propose_more_queries(monkeypatch) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":["need one more source"],"conflicts":[],"queries":["search more"],"done":false}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(
+        evidence_module.invoke_m3_evidence(
+            question="q", evidence="e", round_number=3, max_rounds=3
+        )
+    )
+
+    assert result["ok"] is False
+    assert "final research round" in result["error"]
+
+
+def test_invoke_m3_evidence_final_round_can_report_unresolved_missing(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_invoke_bare(**kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":["need one more source"],"conflicts":[],"queries":[],"done":false}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(
+        evidence_module.invoke_m3_evidence(
+            question="q", evidence="e", round_number=3, max_rounds=3
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["done"] is False
+    assert result["missing"] == ["need one more source"]
+    assert result["queries"] == []
+    assert "final research round" in str(calls[0]["prompt"])
+
+
+def test_invoke_m3_evidence_rejects_round_beyond_max_before_model_call(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_invoke_bare(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"ok": True, "output": "{}"}
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+
+    try:
+        asyncio.run(
+            evidence_module.invoke_m3_evidence(
+                question="q", evidence="e", round_number=4, max_rounds=3
+            )
+        )
+    except ValueError as exc:
+        assert "round_number must not exceed max_rounds" in str(exc)
+    else:
+        raise AssertionError("round_number beyond max_rounds should be rejected")
+
+    assert calls == 0
+
+
 def test_invoke_m3_evidence_stops_after_two_invalid_structured_outputs(monkeypatch) -> None:
     calls = 0
 

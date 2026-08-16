@@ -183,6 +183,7 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
         "question": "q",
         "evidence": "e",
         "round_number": 1,
+        "max_rounds": 3,
         "max_queries": 2,
         "timeout": 120.0,
         "output_tokens_limit": 2048,

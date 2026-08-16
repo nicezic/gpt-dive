@@ -536,15 +536,17 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         question: str,
         evidence: str,
         round_number: int = 1,
+        max_rounds: int = 3,
         max_queries: int = 3,
         timeout: float = 120.0,
         output_tokens_limit: int = 2048,
     ) -> dict[str, Any]:
-        """Use tool-less MiniMax-M3 to assess evidence and propose bounded next queries."""
+        """Use tool-less MiniMax-M3 to assess evidence within a bounded research-round budget."""
         return await invoke_m3_evidence(
             question=question,
             evidence=evidence,
             round_number=round_number,
+            max_rounds=max_rounds,
             max_queries=max_queries,
             timeout=timeout,
             output_tokens_limit=output_tokens_limit,
