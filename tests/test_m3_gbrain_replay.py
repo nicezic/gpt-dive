@@ -32,20 +32,65 @@ def test_load_capture_rows_rejects_old_export_without_chunk_ids(tmp_path: Path) 
 def test_build_evidence_packet_labels_captured_chunks() -> None:
     packet = replay_module.build_evidence_packet(
         [
-            {"id": 11, "source_id": "pydantic-ai", "slug": "docs/agent", "chunk_text": "alpha"},
-            {"id": 22, "source_id": "pydantic-ai-harness", "slug": "docs/harness", "chunk_text": "beta"},
+            {
+                "id": 11,
+                "source_id": "pydantic-ai",
+                "slug": "docs/agent",
+                "title": "Agent API",
+                "effective_date": "2026-08-15",
+                "effective_date_source": "published",
+                "chunk_text": "alpha",
+            },
+            {
+                "id": 22,
+                "source_id": "pydantic-ai-harness",
+                "slug": "docs/harness",
+                "title": "Harness Guide",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "beta",
+            },
         ]
     )
     assert packet == (
-        "[E1] chunk_id=11 source=pydantic-ai slug=docs/agent\nalpha\n\n"
-        "[E2] chunk_id=22 source=pydantic-ai-harness slug=docs/harness\nbeta"
+        '[E1] chunk_id=11 source=pydantic-ai slug=docs/agent title="Agent API" '
+        'effective_date=2026-08-15 effective_date_source=published\nalpha\n\n'
+        '[E2] chunk_id=22 source=pydantic-ai-harness slug=docs/harness title="Harness Guide"\nbeta'
     )
+
+
+def test_build_evidence_packet_omits_fallback_date_value() -> None:
+    packet = replay_module.build_evidence_packet(
+        [
+            {
+                "id": 33,
+                "source_id": "pydantic-ai",
+                "slug": "docs/fallback",
+                "title": "Fallback Date",
+                "effective_date": "2026-08-16",
+                "effective_date_source": "fallback",
+                "chunk_text": "gamma",
+            }
+        ]
+    )
+    assert "effective_date=2026-08-16" not in packet
+    assert "effective_date_source=fallback" in packet
 
 
 def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
         assert chunk_limit == 4
-        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "chunk_text": "fact"}]
+        return [
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "title": "Source Title",
+                "effective_date": "2026-08-16",
+                "effective_date_source": "published",
+                "chunk_text": "fact",
+            }
+        ]
 
     async def fake_m3(**kwargs):
         assert kwargs["question"] == "How does X work?"

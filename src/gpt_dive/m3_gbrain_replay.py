@@ -58,11 +58,26 @@ def build_evidence_packet(chunks: list[dict[str, Any]]) -> str:
         chunk_text = str(chunk.get("chunk_text", "")).strip()
         if not chunk_text:
             continue
-        header = (
-            f"[E{index}] chunk_id={chunk.get('id', '?')} "
-            f"source={chunk.get('source_id', '?')} slug={chunk.get('slug', '?')}"
-        )
-        items.append(f"{header}\n{chunk_text}")
+        header_parts = [
+            f"[E{index}]",
+            f"chunk_id={chunk.get('id', '?')}",
+            f"source={chunk.get('source_id', '?')}",
+            f"slug={chunk.get('slug', '?')}",
+        ]
+        title = chunk.get("title")
+        if isinstance(title, str) and title.strip():
+            header_parts.append(f"title={json.dumps(title.strip(), ensure_ascii=False)}")
+        effective_date = chunk.get("effective_date")
+        effective_date_source = chunk.get("effective_date_source")
+        if (
+            isinstance(effective_date, str)
+            and effective_date
+            and effective_date_source != "fallback"
+        ):
+            header_parts.append(f"effective_date={effective_date}")
+        if isinstance(effective_date_source, str) and effective_date_source:
+            header_parts.append(f"effective_date_source={effective_date_source}")
+        items.append(f"{' '.join(header_parts)}\n{chunk_text}")
     if not items:
         raise ValueError("captured chunks contain no textual evidence")
     return "\n\n".join(items)
@@ -81,7 +96,7 @@ await engine.connect(engineConfig);
 try {
   const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
   const rows = await engine.executeRaw(
-    `SELECT c.id, p.source_id, p.slug, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE c.id IN (${placeholders})`,
+    `SELECT c.id, p.source_id, p.slug, p.title, p.effective_date::date::text AS effective_date, p.effective_date_source, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE c.id IN (${placeholders})`,
     ids,
   );
   console.log(JSON.stringify(rows));
