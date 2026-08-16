@@ -62,3 +62,58 @@ def test_run_cases_collects_retry_and_query_metrics(monkeypatch) -> None:
     assert report["passed"] == 1
     assert report["retry_cases"] == 1
     assert report["rows"][0]["query_count"] == 1
+
+
+def test_run_cases_repeat_reports_per_case_stability(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_invoke_m3_evidence(**kwargs):
+        nonlocal calls
+        calls += 1
+        passed = calls != 2
+        return {
+            "ok": True,
+            "done": passed,
+            "known": ["fact"] if passed else [],
+            "missing": [] if passed else ["x"],
+            "conflicts": [],
+            "queries": [],
+            "attempts": 2 if calls == 3 else 1,
+        }
+
+    monkeypatch.setattr(eval_module, "invoke_m3_evidence", fake_invoke_m3_evidence)
+    cases = [
+        {
+            "name": "x",
+            "question": "q",
+            "evidence": "e",
+            "expect": {"done": True, "missing_empty": True, "known_min": 1},
+        }
+    ]
+    report = asyncio.run(eval_module.run_cases(cases, repeat=3))
+    assert report["repeat"] == 3
+    assert report["samples"] == 3
+    assert report["passed"] == 2
+    assert report["failed"] == 1
+    assert report["retry_samples"] == 1
+    assert report["retry_cases"] == 1
+    assert report["flaky_cases"] == ["x"]
+    assert [
+        {key: stat[key] for key in ("run", "passed", "failed", "pass_rate", "retry_samples")}
+        for stat in report["run_stats"]
+    ] == [
+        {"run": 1, "passed": 1, "failed": 0, "pass_rate": 1.0, "retry_samples": 0},
+        {"run": 2, "passed": 0, "failed": 1, "pass_rate": 0.0, "retry_samples": 0},
+        {"run": 3, "passed": 1, "failed": 0, "pass_rate": 1.0, "retry_samples": 1},
+    ]
+    assert all(stat["mean_latency_ms"] >= 0 for stat in report["run_stats"])
+    assert report["case_stats"] == [
+        {
+            "name": "x",
+            "runs": 3,
+            "passed": 2,
+            "failed": 1,
+            "pass_rate": 2 / 3,
+            "retry_runs": 1,
+        }
+    ]

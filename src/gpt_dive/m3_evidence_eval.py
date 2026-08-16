@@ -42,34 +42,77 @@ def score_result(case: dict[str, Any], result: dict[str, Any]) -> tuple[bool, li
     return not errors, errors
 
 
-async def run_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
+async def run_cases(cases: list[dict[str, Any]], *, repeat: int = 1) -> dict[str, Any]:
+    if repeat <= 0:
+        raise ValueError("repeat must be greater than 0")
+
     rows: list[dict[str, Any]] = []
+    for run in range(1, repeat + 1):
+        for case in cases:
+            started = time.monotonic()
+            result = await invoke_m3_evidence(
+                question=case["question"],
+                evidence=case["evidence"],
+                round_number=case.get("round_number", 1),
+                max_rounds=case.get("max_rounds", 3),
+                max_queries=case.get("max_queries", 3),
+            )
+            passed, errors = score_result(case, result)
+            rows.append({
+                "name": case["name"],
+                "run": run,
+                "passed": passed,
+                "errors": errors,
+                "attempts": result.get("attempts", 1),
+                "done": result.get("done"),
+                "query_count": len(result.get("queries", [])),
+                "latency_ms": round((time.monotonic() - started) * 1000),
+            })
+
+    case_stats: list[dict[str, Any]] = []
+    flaky_cases: list[str] = []
     for case in cases:
-        started = time.monotonic()
-        result = await invoke_m3_evidence(
-            question=case["question"],
-            evidence=case["evidence"],
-            round_number=case.get("round_number", 1),
-            max_rounds=case.get("max_rounds", 3),
-            max_queries=case.get("max_queries", 3),
-        )
-        passed, errors = score_result(case, result)
-        rows.append({
-            "name": case["name"],
-            "passed": passed,
-            "errors": errors,
-            "attempts": result.get("attempts", 1),
-            "done": result.get("done"),
-            "query_count": len(result.get("queries", [])),
-            "latency_ms": round((time.monotonic() - started) * 1000),
+        name = case["name"]
+        samples = [row for row in rows if row["name"] == name]
+        passed_for_case = sum(1 for row in samples if row["passed"])
+        failed_for_case = len(samples) - passed_for_case
+        if passed_for_case and failed_for_case:
+            flaky_cases.append(name)
+        case_stats.append({
+            "name": name,
+            "runs": len(samples),
+            "passed": passed_for_case,
+            "failed": failed_for_case,
+            "pass_rate": passed_for_case / len(samples) if samples else 0.0,
+            "retry_runs": sum(1 for row in samples if row["attempts"] > 1),
         })
+
+    run_stats: list[dict[str, Any]] = []
+    for run in range(1, repeat + 1):
+        samples = [row for row in rows if row["run"] == run]
+        passed_for_run = sum(1 for row in samples if row["passed"])
+        run_stats.append({
+            "run": run,
+            "passed": passed_for_run,
+            "failed": len(samples) - passed_for_run,
+            "pass_rate": passed_for_run / len(samples) if samples else 0.0,
+            "retry_samples": sum(1 for row in samples if row["attempts"] > 1),
+            "mean_latency_ms": round(sum(row["latency_ms"] for row in samples) / len(samples)) if samples else 0,
+        })
+
     passed = sum(1 for row in rows if row["passed"])
     return {
-        "cases": len(rows),
+        "cases": len(cases),
+        "repeat": repeat,
+        "samples": len(rows),
         "passed": passed,
         "failed": len(rows) - passed,
         "pass_rate": passed / len(rows) if rows else 0.0,
-        "retry_cases": sum(1 for row in rows if row["attempts"] > 1),
+        "retry_samples": sum(1 for row in rows if row["attempts"] > 1),
+        "retry_cases": sum(1 for stat in case_stats if stat["retry_runs"] > 0),
+        "flaky_cases": flaky_cases,
+        "run_stats": run_stats,
+        "case_stats": case_stats,
         "rows": rows,
     }
 
@@ -77,8 +120,9 @@ async def run_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the fixed live MiniMax-M3 evidence-controller eval set.")
     parser.add_argument("--cases", type=Path, default=Path("tests/fixtures/m3_evidence_eval.json"))
+    parser.add_argument("--repeat", type=int, default=1, help="Run the fixed case set N times sequentially.")
     args = parser.parse_args()
-    report = asyncio.run(run_cases(load_cases(args.cases)))
+    report = asyncio.run(run_cases(load_cases(args.cases), repeat=args.repeat))
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["failed"] == 0 else 1)
 
