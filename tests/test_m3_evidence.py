@@ -184,6 +184,22 @@ def test_invoke_m3_evidence_unlabeled_packet_remains_backward_compatible(monkeyp
     assert result["known"] == ["supported fact"]
 
 
+def test_invoke_m3_evidence_rejects_missing_when_done(monkeypatch) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":["still need source evidence"],"conflicts":[],"queries":[],"done":true}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+
+    assert result["ok"] is False
+    assert "missing must be empty when done is true" in result["error"]
+
+
 def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -> None:
     outputs = iter(
         [

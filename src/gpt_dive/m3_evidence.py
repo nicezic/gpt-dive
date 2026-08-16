@@ -71,6 +71,8 @@ def _validate_payload(
         raise ValueError("queries must be distinct")
     if value["done"] and normalized_queries:
         raise ValueError("queries must be empty when done is true")
+    if value["done"] and value["missing"]:
+        raise ValueError("missing must be empty when done is true")
     value["queries"] = normalized_queries
     if evidence_labels:
         for field in ("known", "conflicts"):
