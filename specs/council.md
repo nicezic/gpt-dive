@@ -264,9 +264,11 @@ A failed turn leaves the cursor unchanged, so the same unread context remains av
 SOL input and output use different paths:
 
 ```text
-Input:  Council backend -> Playwright/CDP -> existing ChatGPT Web SOL composer
+Input:  Council backend -> playwright-cli -> Playwright Extension -> existing ChatGPT Web SOL composer
 Output: Web SOL -> GPT Dive MCP -> Council Git repo
 ```
+
+The current input adapter reuses the named `msedge` CLI session when available and otherwise attaches through the official Playwright Extension + stored token. Before insertion it requires the exact target tab's composer to be READY: visible, editable, empty, and without the visible ChatGPT stop button. After Enter it verifies that the composer accepted and cleared the message. This readiness gate protects repeated sends; it is not the SOL response-completion signal.
 
 Playwright is **input-only**.
 
@@ -359,7 +361,7 @@ After Council starts, the user should be able to remain on the GPT Dive Council 
 2. append # USER block to chat.md
 3. commit USER turn
 4. build SOL unread transcript from context/sol -> current commit
-5. send unread transcript through persistent Playwright/CDP bridge
+5. send unread transcript through `SolBridge` using the Playwright Extension after the composer READY gate
 6. Web SOL reasons in its existing ChatGPT conversation
 7. SOL emits response through MCP Council capability
 8. append # SOL block and commit
@@ -566,7 +568,7 @@ The final real SOL acceptance traversed the integrated path:
 ```text
 Svelte `To SOL`
   -> local Python Council server
-  -> persistent Edge/CDP input
+  -> SolBridge / playwright-cli / Playwright Extension input
   -> existing ChatGPT Web SOL
   -> code_mode / council_emit(expected_head=...)
   -> one SOL Git commit
@@ -579,7 +581,7 @@ Acceptance evidence from the throwaway Council repo showed the USER turn at `fad
 ### Meaningful implementation discoveries / deviations
 
 1. **Opus Pydantic calls are stateless across worker invocations.** Git cursor semantics remain authoritative, while the Opus adapter reconstructs previously synchronized transcript context plus the new unread suffix for each call. No separate conversation database was added.
-2. **The SOL bridge is Council-owned rather than a generic 600-second background job.** `SolBridge` has explicit start/close lifecycle, avoiding the timeout/stale-socket behavior seen in the feasibility probe.
+2. **The SOL bridge is Council-owned rather than a generic 600-second background job.** `SolBridge` has explicit start/close lifecycle, reuses a healthy shared `msedge` Playwright CLI session when present, and otherwise attaches through the official Extension. This removes the direct-CDP/socket lifetime from production while leaving a pre-existing shared browser session alive on close.
 3. **SOL output gained an `expected_head` guard.** `council_emit` remains backward compatible, while integrated SOL turns use compare-and-swap-style HEAD validation so late or duplicate responses cannot silently attach to the wrong Council state.
 4. **Retries preserve the original USER event.** OPUS and SOL retry paths reuse unchanged unread context instead of committing duplicate USER turns; a late SOL commit can be reconciled before reconnecting the browser.
 5. **The UI transport is simple REST, not WebSocket.** Starlette + Uvicorn is sufficient for the single-room v1 because one user-triggered turn can await its participant result while the Python process owns the persistent SOL bridge.

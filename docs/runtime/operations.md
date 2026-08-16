@@ -41,8 +41,8 @@ Completed job logs are retained for 5 days. The normal backend is `systemd --use
 
 ## Council Browser Bridge
 
-Council v1 owns a persistent Edge CDP connection through `gpt_dive.council.SolBridge` because reconnecting Playwright for every message triggers repeated browser approval friction. Playwright is input-only; SOL output returns explicitly through `code_mode -> council_emit`.
+Council v1 routes SOL input through `gpt_dive.council.SolBridge` -> the named `msedge` Playwright CLI session -> the official Playwright Extension -> the user's existing logged-in Edge tab. `SolBridge` reuses an already-open CLI session or attaches it through the stored Extension token, and it gates each send on the ChatGPT composer being READY before inserting text and pressing Enter. Playwright remains input-only; SOL output returns explicitly through `code_mode -> council_emit`.
 
-The historical feasibility experiment exposed a 600-second generic async-job timeout and stale-socket failure. The integrated Council runtime no longer uses that generic job lifetime as its effective session lifetime; the room owns bridge start/close. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
+The historical feasibility experiment used direct Edge CDP plus a Unix-socket bridge and exposed a 600-second generic async-job timeout and stale-socket failure. That transport is historical evidence only. The integrated Council runtime uses the current Extension transport and owns only its `SolBridge` lifecycle; if it created the `msedge` session it detaches it on close, while a pre-existing shared session is left alive. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
 
 Current manual Council startup remains `gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>` until the post-v1 start/reopen capability is implemented. See `docs/council/startup.md`.

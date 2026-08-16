@@ -92,11 +92,11 @@ evidence that changed the position
 The real SOL remains the **existing ChatGPT Web conversation**. It is not recreated inside Pydantic.
 
 ```text
-Input to SOL : Council backend -> Playwright/CDP -> ChatGPT composer
+Input to SOL : Council backend -> playwright-cli -> Playwright Extension -> existing ChatGPT composer
 Output from SOL: Web SOL -> MCP/code_mode -> council_emit -> Git
 ```
 
-Playwright is input-only. It does not scrape assistant output, inspect streaming completion, click Copy, or read the clipboard. A successful SOL Git commit is the local completion event.
+`SolBridge` reuses the named `msedge` Playwright CLI session when available and attaches through the official Playwright Extension when it is not. Before each send it gates on the exact target tab being input-ready: the visible `#prompt-textarea` must be empty/editable and the ChatGPT stop button must not be visible. The browser path remains input-only; it does not scrape assistant output or treat UI streaming state as the SOL completion signal. A successful SOL Git commit remains the local completion event.
 
 ## Opus Boundary
 
