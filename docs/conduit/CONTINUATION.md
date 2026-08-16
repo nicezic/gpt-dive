@@ -1,0 +1,172 @@
+# Conduit Continuation
+
+> Updated: 2026-08-16 KST
+> Purpose: current handoff state. Stable background is in `bootstrap.md`; active design ideas are in `adr/0_brainstorm-and-design-draft.md`.
+
+## Status
+
+**Core async canary: PASS.**
+
+Fresh ChatGPT Web session live acceptance observed from one user Enter:
+
+```text
+@c start
+  → detached task returned immediately: running
+
+SOL reasoning
+  → continued in the same turn
+
+@c sync
+  → same task snapshot: done
+```
+
+This proves the core Conduit hypothesis on the current ChatGPT Web surface:
+
+```text
+c1 → SOL reasoning → c2
+```
+
+The canary intentionally did not call `collect`; it isolated `start → reasoning → sync`.
+
+## Implemented checkpoint
+
+Conduit implementation commit:
+
+```text
+9e70cac feat(conduit): add async canary MCP
+```
+
+Current v0:
+
+- `@c` is the permanent Conduit app/namespace.
+- `start` launches detached work through GPT Dive `JobManager`.
+- `sync` is the short synchronous canary action.
+- `collect` reads task results non-destructively.
+- `emit` publishes conversation output/events.
+- every successful call returns compact task snapshots: `id`, `label`, `status`, `age_sec`.
+- Redis Stream `conduit:events` is the fixed event fan-out path.
+- `gpt-dive-conduit-log` writes Redis events to `/tmp/conduit-events.ndjson`.
+
+Local validation at implementation time:
+
+```text
+Conduit focused tests  6 passed
+Redis Stream → NDJSON  PASS
+ruff                   PASS
+pyright                0 errors / 0 warnings
+full pytest             109 passed
+```
+
+## Runtime state
+
+Verified at handoff:
+
+```text
+chatgpt-conduit-mcp.service      active
+gpt-dive-conduit-log.service    active
+```
+
+Relevant local paths:
+
+- tunnel profile: `~/.config/tunnel-client/conduit.yaml`
+- Conduit MCP: `~/gpt-dive/.venv/bin/python -m gpt_dive.conduit`
+- tunnel service: `~/.config/systemd/user/chatgpt-conduit-mcp.service`
+- logger service: `~/.config/systemd/user/gpt-dive-conduit-log.service`
+
+The existing `@dive` tunnel remains separate.
+
+## Settled
+
+Do not reopen without new evidence:
+
+- project: **Conduit**
+- Web-facing app/namespace: **`@c`**
+- one primary action per call
+- every successful call carries a compact task snapshot
+- completed results are non-destructive on collect in v0
+- Redis is event/fan-out transport, not the owner of Conduit domain semantics
+- ordinary `@c` calls / user turns are the intentional task-refresh cadence
+- server push is not required for the target workflow
+- lack of ChatGPT Web negotiation of `io.modelcontextprotocol/tasks` is not a blocker for this workflow
+- avoid speculative fallback trees; fail explicitly unless resilience protects a high-impact boundary
+- MCP schema/metadata changes require restart/refresh and fresh-session acceptance
+
+## Next
+
+1. **Light live semantics checks**
+   - collect the same completed task twice and confirm both reads succeed;
+   - on a later user Enter, confirm a retained completed task remains visible in the automatic snapshot.
+   - These are secondary; the core async hypothesis already passed.
+
+2. **Promote the proven decision to ADR**
+   - candidate: `docs/conduit/adr/0001-conversation-driven-task-pull.md`
+   - evidence: 2026-08-16 fresh-session `start → SOL reasoning → sync`, with snapshot `running → done` in one user turn.
+
+3. **Post-canary protocol design**
+   - evolve `@c` only from real workflow pressure;
+   - keep the Web-facing surface small;
+   - do not prematurely hide all GPT Dive execution behind Conduit.
+
+4. **Later: myWeb / Council generalization**
+   - reuse the existing Council Svelte/Starlette work where useful;
+   - preserve asymmetric transport: browser/Edge for input, explicit `@c` path for meaningful SOL output.
+
+5. **Later: GBrain pipeline**
+   - ingest selected/distilled Conduit events as a separate source/group;
+   - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
+
+## Infrastructure cleanup TODO
+
+Current tunnel-client health/admin listeners:
+
+```text
+@dive → 127.0.0.1:8080
+@c    → 127.0.0.1:8081
+```
+
+These are loopback-only health/admin listeners, not MCP data-plane ports. Still, generic numbered ports should not become a permanent allocation convention.
+
+Preferred cleanup later:
+
+```text
+@dive → tunnel-client health Unix socket
+@c    → tunnel-client health Unix socket
+```
+
+`tunnel-client` already supports `health.unix-socket`. Migrate both together as a dedicated infra cleanup, not as part of the already-proven canary path.
+
+Also housekeeping only: the control-plane tunnel display name was created as `wsl2-conuit` (missing `d`). This does not affect operation.
+
+## Known unrelated issue
+
+During code review, `agy_worker()` produced no review output because headless `read_file` permission was auto-denied despite the expected read-only worker contract. This is an `agy_worker` config/contract issue, not a Conduit failure, and was intentionally left out of the canary scope.
+
+## Fresh-session reading order
+
+```text
+@dive bootstrap
+→ docs/conduit/README.md
+→ docs/conduit/bootstrap.md
+→ docs/conduit/CONTINUATION.md
+→ docs/conduit/adr/0_brainstorm-and-design-draft.md only when active design detail is needed
+```
+
+Suggested workflow skills for the next non-trivial slice:
+
+- `/grill-me` for consequential user decisions
+- `/to-spec` before implementation
+- `/implement`
+- `/code-review`
+- `/handoff` or `/final` to refresh this file
+
+## Authority
+
+- Stable context: `docs/conduit/bootstrap.md`
+- Document map: `docs/conduit/README.md`
+- Active pre-ADR draft: `docs/conduit/adr/0_brainstorm-and-design-draft.md`
+- Canary plan: `plans/plan-260816-conduit-canary.md`
+- Runtime architecture: `docs/runtime/architecture.md`
+- Council precedent: `docs/council/README.md`, `docs/council/history.md`
+- Model economics/routing: `~/wiki/user/models-and-providers.md`
+- GBrain: `~/wiki/infra/gbrain.md`
+- Edge/Playwright: `~/wiki/skills/web/edge-playwright.md`
