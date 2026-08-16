@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .bare import invoke_bare
 
 _REQUIRED_LIST_FIELDS = ("known", "missing", "conflicts", "queries")
+_EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 
 
 def _prompt(*, question: str, evidence: str, round_number: int, max_queries: int) -> str:
@@ -17,6 +19,7 @@ Goal:
 - Separate confirmed facts, missing evidence, and conflicts.
 - If more evidence is needed, propose at most maximum {max_queries} concise independent retrieval queries.
 - Do not invent facts that are not supported by the packet.
+- If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Never invent an evidence label.
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
 - Stop when the evidence is sufficient; do not generate queries merely to appear thorough.
 
@@ -32,7 +35,9 @@ evidence packet:
 """
 
 
-def _validate_payload(value: Any, *, max_queries: int) -> dict[str, Any]:
+def _validate_payload(
+    value: Any, *, max_queries: int, evidence_labels: set[str] | None = None
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("top-level JSON must be an object")
     expected = {*_REQUIRED_LIST_FIELDS, "done"}
@@ -48,6 +53,17 @@ def _validate_payload(value: Any, *, max_queries: int) -> dict[str, Any]:
         raise ValueError(
             f"queries returned {len(value['queries'])} items, exceeding max_queries={max_queries}"
         )
+    if evidence_labels:
+        for field in ("known", "conflicts"):
+            for item in value[field]:
+                cited = set(_EVIDENCE_LABEL_RE.findall(item))
+                if not cited:
+                    raise ValueError(f"{field} item must cite an evidence label: {item!r}")
+                unknown = cited - evidence_labels
+                if unknown:
+                    raise ValueError(
+                        f"{field} item cites unknown evidence label(s): {sorted(unknown)}"
+                    )
     return value
 
 
@@ -87,7 +103,9 @@ async def invoke_m3_evidence(
     raw = str(bare.get("output", ""))
     try:
         parsed = json.loads(raw)
-        validated = _validate_payload(parsed, max_queries=max_queries)
+        validated = _validate_payload(
+            parsed, max_queries=max_queries, evidence_labels=set(_EVIDENCE_LABEL_RE.findall(evidence))
+        )
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         return {
             "ok": False,

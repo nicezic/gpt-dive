@@ -21,7 +21,7 @@ This page records **GPT Dive provider/model integration roles and adapter owners
 
 The alias layer should hide provider URL/key/model-name details from Monty orchestration code.
 
-`m3_evidence(question, evidence, ...)` is the narrow default M3 research seam. It delegates to the existing tool-less `bare(model="m3")` worker, requires a validated `known / missing / conflicts / queries / done` JSON contract, and caps proposed follow-up queries. The caller/Harness owns actual GBrain/Probe execution and may run independent proposed queries in parallel. This keeps M3 useful for high-volume evidence synthesis without relying on long sequential tool-result propagation.
+`m3_evidence(question, evidence, ...)` is the narrow default M3 research seam. It delegates to the existing tool-less `bare(model="m3")` worker, requires a validated `known / missing / conflicts / queries / done` JSON contract, and caps proposed follow-up queries. The caller/Harness owns actual GBrain/Probe execution and may run independent proposed queries in parallel. This keeps M3 useful for high-volume evidence synthesis without relying on long sequential tool-result propagation. When the caller labels packet items as `[E1]`, `[E2]`, etc., `known` and `conflicts` must cite real packet labels; uncited claims or invented labels fail validation, preserving provenance across batched retrieval.
 
 ## Pydantic adapters
 
