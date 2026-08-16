@@ -95,27 +95,28 @@ Do not reopen without new evidence:
 - avoid speculative fallback trees; fail explicitly unless resilience protects a high-impact boundary
 - MCP schema/metadata changes require restart/refresh and fresh-session acceptance
 
+## Completed after canary
+
+1. **Light live semantics checks — PASS**
+   - the same completed task was collected twice successfully with the same result;
+   - retained completed tasks remained visible in later automatic snapshots, including across later user turns.
+
+2. **Conversation-driven task pull ADR — ACCEPTED**
+   - `docs/conduit/adr/0001-conversation-driven-task-pull.md`
+   - grounded in the 2026-08-16 fresh-session `start → SOL reasoning → sync` acceptance plus the non-destructive collect/retention check.
+
 ## Next
 
-1. **Light live semantics checks**
-   - collect the same completed task twice and confirm both reads succeed;
-   - on a later user Enter, confirm a retained completed task remains visible in the automatic snapshot.
-   - These are secondary; the core async hypothesis already passed.
-
-2. **Promote the proven decision to ADR**
-   - candidate: `docs/conduit/adr/0001-conversation-driven-task-pull.md`
-   - evidence: 2026-08-16 fresh-session `start → SOL reasoning → sync`, with snapshot `running → done` in one user turn.
-
-3. **Post-canary protocol design**
+1. **Post-canary protocol design**
    - evolve `@c` only from real workflow pressure;
    - keep the Web-facing surface small;
    - do not prematurely hide all GPT Dive execution behind Conduit.
 
-4. **Later: myWeb / Council generalization**
+2. **Later: myWeb / Council generalization**
    - reuse the existing Council Svelte/Starlette work where useful;
    - preserve asymmetric transport: browser/Edge for input, explicit `@c` path for meaningful SOL output.
 
-5. **Later: GBrain pipeline**
+3. **Later: GBrain pipeline**
    - ingest selected/distilled Conduit events as a separate source/group;
    - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
 
