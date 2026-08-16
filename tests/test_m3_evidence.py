@@ -44,6 +44,26 @@ def test_invoke_m3_evidence_uses_bare_m3_and_validates_contract(monkeypatch) -> 
     assert "[E1] source evidence" in prompt
     assert "Do not call tools" in prompt
     assert "maximum 2" in prompt
+    assert "exact question asked" in prompt
+    assert "optional implementation details" in prompt
+    assert "every explicitly requested aspect" in prompt
+
+
+def test_invoke_m3_evidence_accepts_single_json_code_fence(monkeypatch) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '```json\n{"known":[],"missing":[],"conflicts":[],"queries":[],"done":true}\n```',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+
+    assert result["ok"] is True
+    assert result["done"] is True
+    assert result["queries"] == []
 
 
 def test_invoke_m3_evidence_rejects_invalid_json(monkeypatch) -> None:
@@ -74,6 +94,43 @@ def test_invoke_m3_evidence_rejects_query_overflow(monkeypatch) -> None:
 
     assert result["ok"] is False
     assert "max_queries=2" in result["error"]
+
+
+def test_invoke_m3_evidence_rejects_queries_when_done(monkeypatch) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":[],"conflicts":[],"queries":["extra search"],"done":true}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+
+    assert result["ok"] is False
+    assert "empty when done is true" in result["error"]
+
+
+def test_invoke_m3_evidence_rejects_empty_or_duplicate_queries(monkeypatch) -> None:
+    outputs = iter(
+        [
+            '{"known":[],"missing":[],"conflicts":[],"queries":["   "],"done":false}',
+            '{"known":[],"missing":[],"conflicts":[],"queries":["Find X"," find x "],"done":false}',
+        ]
+    )
+
+    async def fake_invoke_bare(**kwargs):
+        return {"ok": True, "model": "m3", "provider": "minimax", "output": next(outputs)}
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    empty = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    duplicate = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+
+    assert empty["ok"] is False
+    assert "empty strings" in empty["error"]
+    assert duplicate["ok"] is False
+    assert "must be distinct" in duplicate["error"]
 
 
 def test_invoke_m3_evidence_requires_known_provenance_when_packet_is_labeled(monkeypatch) -> None:

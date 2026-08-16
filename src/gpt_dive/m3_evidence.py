@@ -15,13 +15,14 @@ def _prompt(*, question: str, evidence: str, round_number: int, max_queries: int
 Do not call tools. You only analyze the evidence packet below.
 
 Goal:
-- Answer whether the evidence is sufficient for the question.
-- Separate confirmed facts, missing evidence, and conflicts.
+- Answer whether the evidence is sufficient for the exact question asked.
+- Separate confirmed facts, missing evidence, and conflicts. `missing` may contain only evidence required to answer an explicitly requested aspect; do not expand into optional implementation details or adjacent topics.
 - If more evidence is needed, propose at most maximum {max_queries} concise independent retrieval queries.
 - Do not invent facts that are not supported by the packet.
 - If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Never invent an evidence label.
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
-- Stop when the evidence is sufficient; do not generate queries merely to appear thorough.
+- Every query must be non-empty and distinct from the other proposed queries.
+- As soon as every explicitly requested aspect is supported, stop: set `done` true, `missing` empty, and `queries` empty.
 
 Return ONLY one JSON object with exactly these keys:
 {{"known":["..."],"missing":["..."],"conflicts":["..."],"queries":["..."],"done":true}}
@@ -33,6 +34,15 @@ question:
 evidence packet:
 {evidence}
 """
+
+
+def _parse_json_output(raw: str) -> Any:
+    text = raw.strip()
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[0] in {"```", "```json"} and lines[-1] == "```":
+            text = "\n".join(lines[1:-1]).strip()
+    return json.loads(text)
 
 
 def _validate_payload(
@@ -53,6 +63,15 @@ def _validate_payload(
         raise ValueError(
             f"queries returned {len(value['queries'])} items, exceeding max_queries={max_queries}"
         )
+    normalized_queries = [query.strip() for query in value["queries"]]
+    if any(not query for query in normalized_queries):
+        raise ValueError("queries must not contain empty strings")
+    query_keys = [query.casefold() for query in normalized_queries]
+    if len(query_keys) != len(set(query_keys)):
+        raise ValueError("queries must be distinct")
+    if value["done"] and normalized_queries:
+        raise ValueError("queries must be empty when done is true")
+    value["queries"] = normalized_queries
     if evidence_labels:
         for field in ("known", "conflicts"):
             for item in value[field]:
@@ -102,7 +121,7 @@ async def invoke_m3_evidence(
 
     raw = str(bare.get("output", ""))
     try:
-        parsed = json.loads(raw)
+        parsed = _parse_json_output(raw)
         validated = _validate_payload(
             parsed, max_queries=max_queries, evidence_labels=set(_EVIDENCE_LABEL_RE.findall(evidence))
         )
