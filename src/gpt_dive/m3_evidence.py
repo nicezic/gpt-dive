@@ -12,10 +12,19 @@ _EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 
 def _prompt(*, question: str, evidence: str, round_number: int, max_queries: int) -> str:
     return f"""You are an evidence controller for a local code/research workflow.
-Do not call tools. You only analyze the evidence packet below.
+Do not call tools.
 
-Goal:
-- Answer whether the evidence is sufficient for the exact question asked.
+evidence packet:
+{evidence}
+
+Task:
+Answer whether the evidence is sufficient for the exact question asked.
+
+round: {round_number}
+question:
+{question}
+
+Rules:
 - Separate confirmed facts, missing evidence, and conflicts. `missing` may contain only evidence required to answer an explicitly requested aspect; do not expand into optional implementation details or adjacent topics.
 - If more evidence is needed, propose at most maximum {max_queries} concise independent retrieval queries.
 - Do not invent facts that are not supported by the packet.
@@ -26,13 +35,6 @@ Goal:
 
 Return ONLY one JSON object with exactly these keys:
 {{"known":["..."],"missing":["..."],"conflicts":["..."],"queries":["..."],"done":true}}
-
-round: {round_number}
-question:
-{question}
-
-evidence packet:
-{evidence}
 """
 
 

@@ -42,6 +42,7 @@ def test_invoke_m3_evidence_uses_bare_m3_and_validates_contract(monkeypatch) -> 
     prompt = str(calls[0]["prompt"])
     assert "How does X work?" in prompt
     assert "[E1] source evidence" in prompt
+    assert prompt.index("[E1] source evidence") < prompt.index("How does X work?")
     assert "Do not call tools" in prompt
     assert "maximum 2" in prompt
     assert "exact question asked" in prompt
