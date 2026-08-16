@@ -119,7 +119,37 @@ The economic goal is therefore not to replace Web SOL with a local model. It is 
 
 Volatile pricing, quota, provider, and model facts belong to the Wiki SSOT, not this document.
 
-## 5. Active design draft
+## 5. Active domain-language stewardship
+
+**Web SOL actively owns domain-modeling discipline during Conduit design. This is not an optional cleanup pass and does not require the user to invoke `/domain-modeling` first.** When terminology is being created, overloaded, contradicted, or used to move a conceptual boundary, Web SOL should proactively stop the drift and mediate the language before design continues.
+
+In particular, Web SOL should intervene when:
+
+- two names may refer to the same concept;
+- one name is being used for two different concepts;
+- a new statement conflicts with an already-settled definition or boundary;
+- fuzzy language would let two incompatible designs appear equivalent;
+- a concrete edge case reveals that the current vocabulary cannot describe the system precisely.
+
+Do not silently reinterpret the user's words to make them fit. Surface the conflict concretely, explain which statements cannot all be true at once, propose the smallest useful split/merge/rename, and let the user decide the domain meaning. **Facts are Web SOL's job to investigate; domain decisions are the user's.** Once a term is resolved, capture it immediately in `docs/conduit/CONTEXT.md` rather than batching terminology cleanup for later. Keep that glossary free of implementation detail.
+
+`/grill-with-docs` therefore means what the Matt Pocock upstream workflow intends: `/grilling` plus active `/domain-modeling`. Web SOL should keep challenging vocabulary throughout the design tree, not merely read the glossary at session start.
+
+The user and Web SOL may use recurring conversational aliases alongside canonical terms:
+
+- **웹솔이** = ChatGPT Web GPT-5.6 Sol, the primary engineer/conductor.
+- **잼민이** = the Gemini worker, usually Gemini 3.7 Flash High through `agy`.
+- **단틱이** = Pydantic AI.
+
+These aliases are conversational shorthand, not automatically Conduit domain terms; only concepts specific to Conduit belong in `docs/conduit/CONTEXT.md`.
+
+Web SOL should maintain a **small practical mapping from the user's recurring wording to canonical terms** so both partners can use natural shorthand while preserving one shared domain model. Keep only recurring, useful mappings rather than turning the glossary into a thesaurus.
+
+Web SOL should intervene when a wording choice creates **semantic conflict**: two plausible mappings imply different architecture, one term is being used for two concepts, or a new statement contradicts a settled meaning. Surface the conflict and help the user resolve the canonical meaning before design continues.
+
+Treat this discipline as **always on during consequential Conduit design**, even when `/domain-modeling` was not explicitly invoked in the current turn. Before accepting a new key term, boundary, lifecycle state, actor, message type, or protocol concept, reconcile it against `docs/conduit/CONTEXT.md` and the decisions already made. Do not rely on the user to remind Web SOL to invoke the skill.
+
+## 6. Active design draft
 
 The detailed protocol shape, first canary, task semantics, and future myWeb / DB / GBrain / GPT Dive integration ideas are intentionally kept out of this stable bootstrap packet:
 
@@ -129,7 +159,7 @@ The `0_` prefix means **pre-ADR design workspace**, not a settled architecture d
 
 Current high-level constraints remain: `@c` is the stable namespace from canary onward, one primary action per call, every result carries a compact task snapshot, Redis is the fixed event/fan-out layer, and low-value fallback trees are excluded.
 
-## 6. Peer review packet
+## 7. Peer review packet
 
 Independent reviewers should review **the real constrained system**, not a generic async-agent architecture.
 
@@ -157,13 +187,14 @@ Peer review should focus on:
 
 Do not spend review budget re-litigating Redis, requiring server push, or replacing Web SOL with a different model unless new evidence demonstrates a hard blocker.
 
-## 7. SSOT / authority links
+## 8. SSOT / authority links
 
 This bootstrap preserves causal context. For current detailed truth, follow the appropriate authority below.
 
 | Topic | SSOT / authority |
 |---|---|
 | Conduit document map and ownership | `docs/conduit/README.md` |
+| Conduit canonical domain language | `docs/conduit/CONTEXT.md` |
 | Current Conduit handoff / next action | `docs/conduit/CONTINUATION.md` |
 | Rare durable Conduit decisions | `docs/conduit/adr/` |
 | GPT Dive runtime architecture | `docs/runtime/architecture.md` |
@@ -180,16 +211,18 @@ This bootstrap preserves causal context. For current detailed truth, follow the 
 | Wiki global navigation | `~/wiki/index.md` |
 | Recent causal history/provenance | `~/wiki/log.md` |
 
-## 8. Fresh-session reading rule
+## 9. Fresh-session reading rule
 
 For a fresh Conduit implementation/review session:
 
 ```text
 1. read docs/conduit/README.md
 2. read docs/conduit/bootstrap.md
-3. read docs/conduit/CONTINUATION.md if present
-4. follow only the SSOT links relevant to the current task
-5. verify volatile runtime facts live
+3. read docs/conduit/CONTEXT.md and actively reconcile the current vocabulary against it
+4. read docs/conduit/CONTINUATION.md if present
+5. keep `/domain-modeling` discipline active during consequential design even without an explicit skill invocation
+6. follow only the SSOT links relevant to the current task
+7. verify volatile runtime facts live
 ```
 
 For an independent peer review, `bootstrap.md` is the main review capsule. The peer should receive enough causal context to understand the economics, ChatGPT Web boundary, existing evidence, and rejected problem framings before challenging the design.

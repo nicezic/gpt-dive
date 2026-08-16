@@ -99,6 +99,26 @@ Redis
 myWeb
 ```
 
+### Basic text output
+
+The current text-output direction is **Mirrored Full Output**: SOL sends the same complete assistant answer through Conduit and also returns it as the native ChatGPT Web final. This preserves the normal ChatGPT conversation while giving the local event/output path the full answer.
+
+Each mirrored answer ends with the same visible **Turn Marker**, a monotonically increasing integer used to correlate the local/Conduit copy with the corresponding real ChatGPT conversation turn during debugging. Example:
+
+```text
+<complete assistant answer>
+
+7
+```
+
+The marker belongs to the mirrored output itself, so both copies remain conceptually identical at the conversation layer. Numbering is deliberately simple: a new ChatGPT conversation starts with Turn Marker `1` on its first real user turn, then increments by one for each subsequent real user turn. Tool calls and `@c` calls do not increment the marker.
+
+A successful Conduit call returns current task-awareness data rather than a separate boolean acknowledgement. The existing `@c` canary already has a compact task snapshot and terminal handling behavior; the chat canary should reuse that behavior without redesigning the `Task` / `TrackedTask` domain. The final cross-runner class/schema remains deliberately deferred until task design.
+
+ADR 0002 accepts extending the same refresh signal across the `@dive` surface so ordinary tool activity can become a task-awareness boundary. That cross-surface integration is still pending implementation; do not treat the accepted direction as current runtime behavior. The existing `@dive` tool-call middleware is a candidate implementation seam when that slice becomes active.
+
+**Promoted:** the task-awareness portion of this draft is now accepted in `0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md`, including the runner-agnostic OEP workflow. Future edits should treat ADR 0002 as authority for that decision.
+
 ### Durable conversation/event storage
 
 The first tracer can write NDJSON under `/tmp`. Later, a dedicated durable DB may subscribe to the same event stream. Do not force durable-storage design into the canary.
@@ -122,6 +142,12 @@ GBrain or another retrieval/knowledge layer
 Do not blindly embed every raw tool payload. Large logs, repetitive test output, HTML, stack traces, or credential-adjacent data should stay out of the semantic corpus unless intentionally distilled.
 
 Current production GBrain is narrowly scoped to Pydantic retrieval; Conduit knowledge ingestion should become a separate source/group rather than polluting that corpus.
+
+### GPT Dive durable-job surface TODO
+
+The current `@dive wsl2_async` name exposes an old transport/implementation framing rather than the emerging domain boundary. Its MCP function is already a thin dispatcher over GPT Dive `JobManager` (`start/status/result/cancel`), while the durable execution engine itself owns systemd/popen lifecycle, recovery, retention, and cancellation.
+
+**TODO:** when task design is active, redesign or replace the `wsl2_async` MCP surface around a clearer low-level **Job** concept rather than rewriting `JobManager` by default. Keep **Job** distinct from Conduit **TrackedTask**: a Job is a durable execution record/backend primitive; a TrackedTask is a higher-level Conduit item that Web SOL continues tracking even after execution reaches `done` until it is explicitly handled. The new surface should also account for background Code Mode, which already uses the same JobManager beneath its own worker envelope. Exact naming and compatibility/deprecation policy remain unsettled.
 
 ### GPT Dive relationship
 

@@ -1,6 +1,6 @@
 # Conduit Continuation
 
-> Updated: 2026-08-16 KST
+> Updated: 2026-08-17 KST
 > Purpose: current handoff state. Stable background is in `bootstrap.md`; active design ideas are in `adr/0_brainstorm-and-design-draft.md`.
 
 ## Status
@@ -112,23 +112,35 @@ Do not reopen without new evidence:
    - `ack` is terminal-task-only, removes the task from later automatic snapshots, and does not delete the retained JobManager result;
    - local validation: Conduit tests 6 passed, full pytest 125 passed, ruff PASS, pyright 0 errors / 0 warnings.
 
+4. **TrackedTasks / Opportunistic Evidence Pickup direction — ACCEPTED**
+   - canonical domain language is recorded in `docs/conduit/CONTEXT.md`;
+   - `docs/conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md` accepts the shared refresh/OEP direction across asynchronous runners;
+   - the final `Task` / `TrackedTask` class and cross-runner schema remain intentionally undecided;
+   - automatic TrackedTasks injection into ordinary `@dive` results is an accepted future direction, not current runtime behavior.
+
 ## Next
 
-1. **Fresh-session `ack` acceptance after MCP restart/refresh**
+1. **Conversation-plane live canary first**
+   - prove one real user turn can send the same complete assistant answer through Conduit and also return it as the native ChatGPT Web final;
+   - verify the Conduit copy reaches the Redis / NDJSON event path;
+   - use the Turn Marker to correlate the two copies during the canary;
+   - do not redesign `Task` / `TrackedTask` classes before this basic chat path is proven.
+
+2. **Fresh-session `ack` acceptance after MCP restart/refresh**
    - start and complete a small task;
    - `ack(task_id)` and confirm it disappears from the returned automatic snapshot;
-   - collect the same task after ack and confirm the retained result is still readable.
-   - Schema/metadata changed, so the current pre-refresh ChatGPT Web tool surface is not authority for this action.
+   - collect the same task after ack and confirm the retained result is still readable;
+   - schema/metadata changed, so a fresh ChatGPT Web tool surface is the authority for this action.
 
-2. **Continue post-canary protocol design only from observed workflow pressure**
+3. **Continue post-canary protocol design only from observed workflow pressure**
    - keep the Web-facing surface small;
    - do not prematurely hide all GPT Dive execution behind Conduit.
 
-3. **Later: myWeb / Council generalization**
+4. **Later: myWeb / Council generalization**
    - reuse the existing Council Svelte/Starlette work where useful;
    - preserve asymmetric transport: browser/Edge for input, explicit `@c` path for meaningful SOL output.
 
-4. **Later: GBrain pipeline**
+5. **Later: GBrain pipeline**
    - ingest selected/distilled Conduit events as a separate source/group;
    - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
 
@@ -167,6 +179,7 @@ During code review, `agy_worker()` produced no review output because headless `r
 @dive bootstrap
 → docs/conduit/README.md
 → docs/conduit/bootstrap.md
+→ docs/conduit/CONTEXT.md
 → docs/conduit/CONTINUATION.md
 → docs/conduit/adr/0_brainstorm-and-design-draft.md only when active design detail is needed
 ```
