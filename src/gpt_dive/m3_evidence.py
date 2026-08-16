@@ -105,39 +105,61 @@ async def invoke_m3_evidence(
     if not 0 <= max_queries <= 8:
         raise ValueError("max_queries must be between 0 and 8")
 
-    bare = await invoke_bare(
-        model="m3",
-        prompt=_prompt(
-            question=question,
-            evidence=evidence,
-            round_number=round_number,
-            max_queries=max_queries,
-        ),
-        timeout=timeout,
-        output_tokens_limit=output_tokens_limit,
+    prompt = _prompt(
+        question=question,
+        evidence=evidence,
+        round_number=round_number,
+        max_queries=max_queries,
     )
-    if not bare.get("ok"):
-        return bare
+    usage: dict[str, int | float] = {}
+    last_error: Exception | None = None
+    last_raw = ""
+    last_bare: dict[str, Any] = {}
 
-    raw = str(bare.get("output", ""))
-    try:
-        parsed = _parse_json_output(raw)
-        validated = _validate_payload(
-            parsed, max_queries=max_queries, evidence_labels=set(_EVIDENCE_LABEL_RE.findall(evidence))
+    for attempt in range(1, 3):
+        bare = await invoke_bare(
+            model="m3",
+            prompt=prompt,
+            timeout=timeout,
+            output_tokens_limit=output_tokens_limit,
         )
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        last_bare = bare
+        if not bare.get("ok"):
+            return bare
+
+        for key, value in bare.get("usage", {}).items():
+            if isinstance(value, (int, float)):
+                usage[key] = usage.get(key, 0) + value
+
+        raw = str(bare.get("output", ""))
+        last_raw = raw
+        try:
+            parsed = _parse_json_output(raw)
+            validated = _validate_payload(
+                parsed, max_queries=max_queries, evidence_labels=set(_EVIDENCE_LABEL_RE.findall(evidence))
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            last_error = exc
+            if attempt < 2:
+                continue
+            break
+
         return {
-            "ok": False,
+            "ok": True,
             "model": bare.get("model", "m3"),
             "provider": bare.get("provider", "minimax"),
-            "error": "invalid m3 evidence JSON" if isinstance(exc, json.JSONDecodeError) else str(exc),
-            "raw_output": raw,
+            **validated,
+            "usage": usage,
+            "attempts": attempt,
         }
 
+    assert last_error is not None
     return {
-        "ok": True,
-        "model": bare.get("model", "m3"),
-        "provider": bare.get("provider", "minimax"),
-        **validated,
-        "usage": bare.get("usage", {}),
+        "ok": False,
+        "model": last_bare.get("model", "m3"),
+        "provider": last_bare.get("provider", "minimax"),
+        "error": "invalid m3 evidence JSON" if isinstance(last_error, json.JSONDecodeError) else str(last_error),
+        "raw_output": last_raw,
+        "usage": usage,
+        "attempts": 2,
     }

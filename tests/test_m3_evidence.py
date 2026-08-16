@@ -113,12 +113,11 @@ def test_invoke_m3_evidence_rejects_queries_when_done(monkeypatch) -> None:
 
 
 def test_invoke_m3_evidence_rejects_empty_or_duplicate_queries(monkeypatch) -> None:
-    outputs = iter(
-        [
-            '{"known":[],"missing":[],"conflicts":[],"queries":["   "],"done":false}',
-            '{"known":[],"missing":[],"conflicts":[],"queries":["Find X"," find x "],"done":false}',
-        ]
+    empty_output = '{"known":[],"missing":[],"conflicts":[],"queries":["   "],"done":false}'
+    duplicate_output = (
+        '{"known":[],"missing":[],"conflicts":[],"queries":["Find X"," find x "],"done":false}'
     )
+    outputs = iter([empty_output, empty_output, duplicate_output, duplicate_output])
 
     async def fake_invoke_bare(**kwargs):
         return {"ok": True, "model": "m3", "provider": "minimax", "output": next(outputs)}
@@ -183,3 +182,59 @@ def test_invoke_m3_evidence_unlabeled_packet_remains_backward_compatible(monkeyp
 
     assert result["ok"] is True
     assert result["known"] == ["supported fact"]
+
+
+def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -> None:
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "model": "m3",
+                "provider": "minimax",
+                "output": "not-json",
+                "usage": {"requests": 1, "output_tokens": 5},
+            },
+            {
+                "ok": True,
+                "model": "m3",
+                "provider": "minimax",
+                "output": '{"known":["fact"],"missing":[],"conflicts":[],"queries":[],"done":true}',
+                "usage": {"requests": 1, "output_tokens": 7},
+            },
+        ]
+    )
+
+    async def fake_invoke_bare(**kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="plain evidence"))
+
+    assert result["ok"] is True
+    assert result["done"] is True
+    assert result["attempts"] == 2
+    assert result["usage"] == {"requests": 2, "output_tokens": 12}
+
+
+def test_invoke_m3_evidence_stops_after_two_invalid_structured_outputs(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_invoke_bare(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": "still-not-json",
+            "usage": {"requests": 1},
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+
+    assert calls == 2
+    assert result["ok"] is False
+    assert result["attempts"] == 2
+    assert result["usage"] == {"requests": 2}
+    assert result["raw_output"] == "still-not-json"
