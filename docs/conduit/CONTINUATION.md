@@ -129,13 +129,13 @@ Conduit health/admin listener cleanup is complete:
 
 Verified after restart on 2026-08-16: socket exists, `/readyz` returns `ready`, `/healthz` returns `live`, the old `~/.local/run/tunnel-conduit.sock` is gone, and `127.0.0.1:8081` is no longer listening.
 
-The existing Dive tunnel remains unchanged and is out of scope for this Conduit-only cleanup:
+The Dive tunnel has now been configured to use the same runtime socket directory:
 
 ```text
-@dive → 127.0.0.1:8080
+@dive → ~/.local/run/gpt-dive/tunnel-dive.sock
 ```
 
-If desired later, migrate `@dive` independently. Do not couple that change to Conduit.
+Pre-restart `tunnel-client doctor --profile wsl2-exec` passed while the existing 8080-backed service was still live. The actual service restart is intentionally handed off as the final operation because restarting `@dive` severs the current MCP bridge.
 
 Repo reconstruction templates live in `docs/conduit/runtime/`; runtime socket nodes and secrets do not belong in Git.
 
