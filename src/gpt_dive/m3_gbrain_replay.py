@@ -53,6 +53,37 @@ def replay_question(row: dict[str, Any]) -> str:
     )
 
 
+def reject_post_capture_page_updates(row: dict[str, Any], chunks: list[dict[str, Any]]) -> None:
+    """Fail closed when a captured chunk's page was rewritten after query capture.
+
+    GBrain upserts chunks by ``(page_id, chunk_index)`` and can update
+    ``chunk_text`` in place, preserving the chunk id. An id-only replay would
+    then silently read newer text than the model originally received.
+    """
+    capture_time = datetime.fromisoformat(_validated_timestamp(row.get("created_at"), field="created_at"))
+    changed_ids: list[int] = []
+    for chunk in chunks:
+        updated_raw = chunk.get("page_updated_at")
+        if not isinstance(updated_raw, str) or not updated_raw.strip():
+            raise RuntimeError(f"captured GBrain chunk {chunk.get('id', '?')} has no page update watermark")
+        try:
+            updated_at = datetime.fromisoformat(updated_raw.strip())
+        except ValueError as exc:
+            raise RuntimeError(
+                f"captured GBrain chunk {chunk.get('id', '?')} has invalid page update watermark"
+            ) from exc
+        if updated_at.tzinfo is None:
+            raise RuntimeError(f"captured GBrain chunk {chunk.get('id', '?')} page update watermark has no timezone")
+        if updated_at > capture_time:
+            chunk_id = chunk.get("id")
+            if isinstance(chunk_id, int):
+                changed_ids.append(chunk_id)
+    if changed_ids:
+        raise RuntimeError(
+            f"captured GBrain chunk pages were updated after capture; historical text is no longer provable: {changed_ids}"
+        )
+
+
 def filter_future_temporal_evidence(
     row: dict[str, Any], chunks: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], int]:
@@ -166,7 +197,7 @@ await engine.connect(engineConfig);
 try {
   const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
   const rows = await engine.executeRaw(
-    `SELECT c.id, p.source_id, p.slug, p.title, p.effective_date::date::text AS effective_date, p.effective_date_source, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE c.id IN (${placeholders})`,
+    `SELECT c.id, p.source_id, p.slug, p.title, p.updated_at::text AS page_updated_at, p.effective_date::date::text AS effective_date, p.effective_date_source, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE c.id IN (${placeholders})`,
     ids,
   );
   console.log(JSON.stringify(rows));
@@ -222,6 +253,7 @@ async def run_replay(
     results: list[dict[str, Any]] = []
     for row in rows:
         captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
+        reject_post_capture_page_updates(row, captured_chunks)
         chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
         controller = await invoke_m3_evidence(
             question=replay_question(row),

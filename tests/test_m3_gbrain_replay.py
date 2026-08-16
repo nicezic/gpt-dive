@@ -77,6 +77,30 @@ def test_build_evidence_packet_omits_fallback_date_value() -> None:
     assert "effective_date_source=fallback" in packet
 
 
+def test_reject_post_capture_page_updates_detects_rewritten_chunk_text() -> None:
+    row = {"created_at": "2026-08-16T16:10:20.070Z"}
+    chunks = [
+        {"id": 11, "page_updated_at": "2026-08-16T16:10:20.000+00:00"},
+        {"id": 22, "page_updated_at": "2026-08-16T16:11:00.000+00:00"},
+    ]
+    try:
+        replay_module.reject_post_capture_page_updates(row, chunks)
+    except RuntimeError as exc:
+        assert "22" in str(exc)
+        assert "updated after capture" in str(exc)
+    else:
+        raise AssertionError("post-capture page update must fail historical replay")
+
+
+def test_reject_post_capture_page_updates_accepts_original_snapshot() -> None:
+    row = {"created_at": "2026-08-16T16:10:20.070Z"}
+    chunks = [
+        {"id": 11, "page_updated_at": "2026-08-15T10:00:00.000+00:00"},
+        {"id": 22, "page_updated_at": "2026-08-16T16:10:20.000+00:00"},
+    ]
+    replay_module.reject_post_capture_page_updates(row, chunks)
+
+
 def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
         assert chunk_limit == 4
@@ -86,6 +110,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
                 "source_id": "pydantic-ai",
                 "slug": "s",
                 "title": "Source Title",
+                "page_updated_at": "2026-08-16T15:00:00.000+00:00",
                 "effective_date": "2026-08-16",
                 "effective_date_source": "published",
                 "chunk_text": "fact",
