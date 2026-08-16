@@ -94,6 +94,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "agy_worker",
         "subagent_call",
         "bare",
+        "m3_evidence",
         "repo_search",
         "council_emit",
         "gz64",
@@ -163,6 +164,29 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             "workspace_dir": None,
         }
     ]
+
+
+def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_invoke_m3_evidence(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "known": ["k"], "missing": [], "conflicts": [], "queries": [], "done": True}
+
+    monkeypatch.setattr(app_module, "invoke_m3_evidence", fake_invoke_m3_evidence)
+    code = "result = await m3_evidence(question='q', evidence='e', max_queries=2); result['done']"
+    assert asyncio.run(gpt_dive.code_mode(code)) == {"result": True}
+    assert calls == [{
+        "question": "q",
+        "evidence": "e",
+        "round_number": 1,
+        "max_queries": 2,
+        "timeout": 120.0,
+        "output_tokens_limit": 2048,
+    }]
 
 
 def test_bare_is_registry_capability(monkeypatch) -> None:

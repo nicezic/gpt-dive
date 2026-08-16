@@ -1,7 +1,7 @@
 ---
 title: GPT Dive Pydantic Providers
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-16
 type: reference
 status: trusted
 ---
@@ -15,11 +15,13 @@ This page records **GPT Dive provider/model integration roles and adapter owners
 | Alias | Provider path | Model family | Intended role |
 |---|---|---|---|
 | `opus5` | AIAPIFLOW, Anthropic-compatible | Claude Opus 5 | selective premium reviewer / design challenge |
-| `m3` | MiniMax Anthropic-compatible | MiniMax-M3 | available high-quota subagent; reliability evidence means do not assume default-worker suitability |
+| `m3` | MiniMax Anthropic-compatible | MiniMax-M3 | high-quota evidence analyst/controller; prefer bounded tool-less review over autonomous multi-tool loops |
 | `terra` | OpenAI Codex subscription | GPT-5.6 Terra | local subscription-backed judgment/review/worker candidate |
 | `luna` | OpenAI Codex subscription | GPT-5.6 Luna | subscription-backed conductor/judgment candidate |
 
 The alias layer should hide provider URL/key/model-name details from Monty orchestration code.
+
+`m3_evidence(question, evidence, ...)` is the narrow default M3 research seam. It delegates to the existing tool-less `bare(model="m3")` worker, requires a validated `known / missing / conflicts / queries / done` JSON contract, and caps proposed follow-up queries. The caller/Harness owns actual GBrain/Probe execution and may run independent proposed queries in parallel. This keeps M3 useful for high-volume evidence synthesis without relying on long sequential tool-result propagation.
 
 ## Pydantic adapters
 

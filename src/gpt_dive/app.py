@@ -27,6 +27,7 @@ from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .job_manager import JobManager
+from .m3_evidence import invoke_m3_evidence
 from .repo_search import search_repo
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
@@ -459,6 +460,25 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             output_tokens_limit=output_tokens_limit,
         )
 
+    async def m3_evidence(
+        *,
+        question: str,
+        evidence: str,
+        round_number: int = 1,
+        max_queries: int = 3,
+        timeout: float = 120.0,
+        output_tokens_limit: int = 2048,
+    ) -> dict[str, Any]:
+        """Use tool-less MiniMax-M3 to assess evidence and propose bounded next queries."""
+        return await invoke_m3_evidence(
+            question=question,
+            evidence=evidence,
+            round_number=round_number,
+            max_queries=max_queries,
+            timeout=timeout,
+            output_tokens_limit=output_tokens_limit,
+        )
+
     async def repo_search(
         *,
         query: str,
@@ -527,6 +547,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)
+    registry.register("m3_evidence", m3_evidence)
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)

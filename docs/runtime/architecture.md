@@ -46,13 +46,13 @@ Shell
   run_command / start_command / check_command / stop_command
 
 Model / orchestration
-  subagent_call / agy_worker / bare / council_emit
+  subagent_call / agy_worker / bare / m3_evidence / council_emit
 
 Retrieval / compatibility
   repo_search / local_exec / gz64
 ```
 
-The primary FileSystem write root is Code Mode `cwd`; selected trusted home-level reference trees can be addressed explicitly for read/list/search/find/info only. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
+The primary FileSystem write root is Code Mode `cwd`; selected trusted home-level reference trees can be addressed explicitly for read/list/search/find/info only. `m3_evidence` is deliberately tool-less: it analyzes a caller-supplied evidence packet and proposes a bounded next-query set, while retrieval execution remains owned by the caller/Harness. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
 
 Council registers `council_emit` behind Code Mode as the explicit Web SOL output path; it remains a capability, not a fifth Web-facing MCP tool. The implemented Council runtime lives under `gpt_dive.council`.
 
