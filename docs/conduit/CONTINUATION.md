@@ -119,7 +119,7 @@ Do not reopen without new evidence:
    - ingest selected/distilled Conduit events as a separate source/group;
    - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
 
-## Infrastructure cleanup TODO
+## Infrastructure cleanup — complete
 
 Conduit health/admin listener cleanup is complete:
 
@@ -129,13 +129,14 @@ Conduit health/admin listener cleanup is complete:
 
 Verified after restart on 2026-08-16: socket exists, `/readyz` returns `ready`, `/healthz` returns `live`, the old `~/.local/run/tunnel-conduit.sock` is gone, and `127.0.0.1:8081` is no longer listening.
 
-The Dive tunnel has now been configured to use the same runtime socket directory:
+The Dive tunnel is also migrated to the same runtime socket directory:
 
 ```text
-@dive → ~/.local/run/gpt-dive/tunnel-dive.sock
+@dive → ~/.local/run/gpt-dive/tunnel-dive.sock      PASS
+@c    → ~/.local/run/gpt-dive/tunnel-conduit.sock   PASS
 ```
 
-Pre-restart `tunnel-client doctor --profile wsl2-exec` passed while the existing 8080-backed service was still live. The actual service restart is intentionally handed off as the final operation because restarting `@dive` severs the current MCP bridge.
+Pre-restart `tunnel-client doctor --profile wsl2-exec` passed. After the delayed Dive tunnel restart, a fresh ChatGPT Web session verified both paths with `test -S`/equivalent and confirmed that both are actual Unix domain sockets. That final fresh-session test intentionally did **not** re-check TCP ports or `/readyz` / `/healthz`; do not claim those as part of the final Dive acceptance evidence.
 
 Repo reconstruction templates live in `docs/conduit/runtime/`; runtime socket nodes and secrets do not belong in Git.
 
