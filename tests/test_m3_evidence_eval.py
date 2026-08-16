@@ -8,12 +8,13 @@ import gpt_dive.m3_evidence_eval as eval_module
 
 def test_load_cases_has_representative_fixed_set() -> None:
     cases = eval_module.load_cases(Path("tests/fixtures/m3_evidence_eval.json"))
-    assert len(cases) == 10
+    assert len(cases) == 11
     assert {case["name"] for case in cases} >= {
         "sufficient_single",
         "explicit_conflict",
         "final_round_missing",
         "ignore_source_instruction",
+        "multi_fact_retention",
     }
 
 
