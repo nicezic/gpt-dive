@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp_types import CallToolResult, TextContent
 from pydantic import Field
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness._output import truncate_tail
@@ -231,6 +233,75 @@ def _read_bootstrap_packet() -> dict[str, Any]:
         "warnings": warnings,
         "stdout": "".join(chunks) + "\n",
     }
+
+
+_PERIODIC_BOOTSTRAP_INTERVAL = 10
+_PERIODIC_BOOTSTRAP_STATE_KEY = "gpt_dive_periodic_bootstrap_calls"
+
+
+def _periodic_bootstrap_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, Any]:
+    # ServerSession is per-request; its Connection persists and owns connection-scoped state.
+    connection = getattr(ctx.session, "_connection", None)
+    state = getattr(connection, "state", None)
+    if not isinstance(state, dict):
+        raise TypeError("MCP connection state is unavailable")
+    return state
+
+
+def _reset_periodic_bootstrap_counter(ctx: ServerRequestContext[Any, Any]) -> None:
+    _periodic_bootstrap_state(ctx)[_PERIODIC_BOOTSTRAP_STATE_KEY] = 0
+
+
+def _periodic_bootstrap_due(ctx: ServerRequestContext[Any, Any]) -> bool:
+    state = _periodic_bootstrap_state(ctx)
+    calls = int(state.get(_PERIODIC_BOOTSTRAP_STATE_KEY, 0)) + 1
+    if calls < _PERIODIC_BOOTSTRAP_INTERVAL:
+        state[_PERIODIC_BOOTSTRAP_STATE_KEY] = calls
+        return False
+    state[_PERIODIC_BOOTSTRAP_STATE_KEY] = 0
+    return True
+
+
+def _tool_name_from_request(params: Any) -> str | None:
+    if isinstance(params, dict):
+        name = params.get("name")
+    else:
+        name = getattr(params, "name", None)
+    return name if isinstance(name, str) else None
+
+
+async def _periodic_bootstrap_middleware(
+    ctx: ServerRequestContext[Any, Any], call_next: CallNext
+) -> HandlerResult:
+    if ctx.method != "tools/call":
+        return await call_next(ctx)
+
+    tool_name = _tool_name_from_request(ctx.params)
+    result = await call_next(ctx)
+
+    if tool_name == "bootstrap":
+        if isinstance(result, CallToolResult) and not result.is_error:
+            _reset_periodic_bootstrap_counter(ctx)
+        return result
+
+    if not isinstance(result, CallToolResult) or not _periodic_bootstrap_due(ctx):
+        return result
+
+    packet = _read_bootstrap_packet()
+    refresh = TextContent(
+        type="text",
+        text=(
+            "\n\n===== PERIODIC BOOTSTRAP REFRESH: 10 @dive tool calls =====\n"
+            "Re-read LIVE CODE MODE CAPABILITIES before the next call; "
+            "do not guess capability arguments from memory.\n\n"
+            f"{packet['stdout']}"
+            "===== END PERIODIC BOOTSTRAP REFRESH =====\n"
+        ),
+    )
+    return result.model_copy(update={"content": [*result.content, refresh]})
+
+
+mcp.middleware.append(_periodic_bootstrap_middleware)
 
 
 @mcp.tool(
