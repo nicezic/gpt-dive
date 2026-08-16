@@ -55,6 +55,8 @@ def test_invoke_m3_evidence_uses_bare_m3_and_validates_contract(monkeypatch) -> 
     assert "exact question asked" in prompt
     assert "optional implementation details" in prompt
     assert "every explicitly requested aspect" in prompt
+    assert "current or latest" in prompt
+    assert "newest applicable explicitly dated" in prompt
 
 
 def test_delimit_evidence_escapes_embedded_boundary_tags() -> None:

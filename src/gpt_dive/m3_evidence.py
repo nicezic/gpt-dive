@@ -50,6 +50,7 @@ Rules:
 - Separate confirmed facts, missing evidence, and conflicts. `missing` may contain only evidence required to answer an explicitly requested aspect; do not expand into optional implementation details or adjacent topics.
 - If more evidence is needed, propose at most maximum {max_queries} concise independent retrieval queries.
 - Do not invent facts that are not supported by the packet.
+- When the exact question asks which source, version, or state is current or latest, and conflicting packet claims carry explicit dates, use the newest applicable explicitly dated evidence for the current value. Still report the older-versus-newer disagreement in `conflicts`; do not request another search merely to reconfirm the newer dated source when the requested current value is already supported.
 - If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Never invent an evidence label.
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
 - Every query must be non-empty and distinct from the other proposed queries.
