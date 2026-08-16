@@ -1,0 +1,11 @@
+[Unit]
+Description=GPT Dive Conduit Redis to NDJSON logger
+
+[Service]
+Type=simple
+ExecStart=%h/gpt-dive/.venv/bin/gpt-dive-conduit-log
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

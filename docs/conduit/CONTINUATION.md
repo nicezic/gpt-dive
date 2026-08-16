@@ -69,9 +69,13 @@ gpt-dive-conduit-log.service    active
 Relevant local paths:
 
 - tunnel profile: `~/.config/tunnel-client/conduit.yaml`
+- health/admin socket: `~/.local/run/gpt-dive/tunnel-conduit.sock`
 - Conduit MCP: `~/gpt-dive/.venv/bin/python -m gpt_dive.conduit`
 - tunnel service: `~/.config/systemd/user/chatgpt-conduit-mcp.service`
 - logger service: `~/.config/systemd/user/gpt-dive-conduit-log.service`
+- reconstruction templates: `docs/conduit/runtime/`
+
+The `.sock` node is created by the running tunnel-client and is runtime-only; never commit it.
 
 The existing `@dive` tunnel remains separate.
 
@@ -117,23 +121,25 @@ Do not reopen without new evidence:
 
 ## Infrastructure cleanup TODO
 
-Current tunnel-client health/admin listeners:
+Conduit health/admin listener cleanup is complete:
+
+```text
+@c → ~/.local/run/gpt-dive/tunnel-conduit.sock   PASS
+```
+
+Verified after restart on 2026-08-16: socket exists, `/readyz` returns `ready`, `/healthz` returns `live`, the old `~/.local/run/tunnel-conduit.sock` is gone, and `127.0.0.1:8081` is no longer listening.
+
+The existing Dive tunnel remains unchanged and is out of scope for this Conduit-only cleanup:
 
 ```text
 @dive → 127.0.0.1:8080
-@c    → 127.0.0.1:8081
 ```
 
-These are loopback-only health/admin listeners, not MCP data-plane ports. Still, generic numbered ports should not become a permanent allocation convention.
+If desired later, migrate `@dive` independently. Do not couple that change to Conduit.
 
-Preferred cleanup later:
+Repo reconstruction templates live in `docs/conduit/runtime/`; runtime socket nodes and secrets do not belong in Git.
 
-```text
-@dive → tunnel-client health Unix socket
-@c    → tunnel-client health Unix socket
-```
-
-`tunnel-client` already supports `health.unix-socket`. Migrate both together as a dedicated infra cleanup, not as part of the already-proven canary path.
+Operational note: with the Conduit service already running, `tunnel-client doctor --profile conduit` may report `health_listener` failure because the Unix socket is already bound. For config acceptance, stop the Conduit tunnel service, remove any stale socket node, run `doctor`, then start the service and use `/readyz` + `/healthz` as runtime authority.
 
 Also housekeeping only: the control-plane tunnel display name was created as `wsl2-conuit` (missing `d`). This does not affect operation.
 

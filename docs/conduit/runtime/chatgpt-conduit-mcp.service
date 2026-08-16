@@ -1,0 +1,12 @@
+[Unit]
+Description=ChatGPT Conduit MCP tunnel
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/tunnel-client/wsl2-exec.env
+ExecStart=%h/.local/bin/tunnel-client run --profile conduit
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -29,6 +29,7 @@ Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the back
 | `README.md` | Stable entry point. Short project description, document map, and ownership boundaries. | The meaning or document structure of Conduit changes. |
 | `bootstrap.md` | Causal context packet for a fresh ChatGPT Web session or peer reviewer. Keeps the Why, user economics, ChatGPT Web constraints, proven infrastructure, settled design, and assumptions that still require live validation. | Background or a consequential design assumption changes. |
 | `CONTINUATION.md` | Current handoff state. Records the immediate objective, settled decisions relevant to the active work, current validation state, and next action. | `/handoff`, session change, or active implementation state changes. |
+| `runtime/` | Reconstructable Conduit tunnel/systemd templates. Runtime sockets and secrets never belong here. | The deployed Conduit tunnel/service contract changes. |
 | `adr/` | Rare Architecture Decision Records. Files prefixed `0_` are explicitly **pre-ADR brainstorm/design drafts**, not settled decisions. | A durable, consequential trade-off is settled, or an active design draft needs a temporary home before promotion. |
 
 Detailed protocol and runtime documents should be added only after the corresponding behavior exists or becomes stable enough to deserve its own SSOT. Do not create speculative documentation layers merely to fill out the tree.
