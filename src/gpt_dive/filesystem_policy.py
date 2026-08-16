@@ -55,17 +55,19 @@ def is_secret_path(path: Path, *, home: Path) -> bool:
 
 
 def harness_denied_patterns(*, root: Path, home: Path) -> tuple[str, ...]:
+    """Return secret-deny globs relative to an arbitrary Harness filesystem root."""
     root = root.resolve()
     home = home.resolve()
-    if root == Path("/"):
-        home_from_root = home.relative_to(Path("/")).as_posix()
-        return (
-            *GLOBAL_SECRET_PATTERNS,
-            *(f"{home_from_root}/{pattern}" for pattern in HOME_SECRET_PATTERNS),
-        )
-    if root == home:
-        return (*GLOBAL_SECRET_PATTERNS, *HOME_SECRET_PATTERNS)
-    raise ValueError(f"unsupported Code Mode filesystem root: {root}")
+    try:
+        home_relative = home.relative_to(root).as_posix()
+    except ValueError:
+        return GLOBAL_SECRET_PATTERNS
+
+    prefix = "" if home_relative == "." else f"{home_relative}/"
+    return (
+        *GLOBAL_SECRET_PATTERNS,
+        *(f"{prefix}{pattern}" for pattern in HOME_SECRET_PATTERNS),
+    )
 
 
 class HostFileSystemOS(AbstractOS):

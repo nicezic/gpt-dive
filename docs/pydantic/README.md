@@ -26,6 +26,7 @@ Keep elsewhere:
 
 - `architecture.md` — Pydantic adoption → current GPT Dive integration, including major customizations and their Why.
 - `code-mode.md` — Code Mode registry, FileSystem/Shell wiring, workspace boundaries, lifecycle, and model-facing contract.
+- `peer-review.md` — draft peer-review lane behind Code Mode `bare(...)`, review-packet guidance, read-only inspection boundary, and experimental acceptance lessons.
 - `tool-output-limits.md` — SubAgent ToolOutputLimits policy and the distinct Code Mode final-output spill seam.
 - `providers.md` — provider/model alias integration roles and repository ownership boundaries.
 - Root `README.patch.openai.provider.md` — intentionally prominent maintenance SSOT for the local ChatGPT Codex subscription compatibility layer; keep it at repository root so Pydantic upgrades encounter it early.

@@ -517,13 +517,21 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         prompt: str,
         timeout: float = 120.0,
         output_tokens_limit: int = 4096,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Call a model with no tools, filesystem, shell, workspace, or extra instructions."""
+        """Call an independent peer reviewer with on-demand read-only Code Mode inspection.
+
+        The reviewer receives the full prompt first. It should use run_code only when the
+        supplied review packet leaves a material evidence gap. File access is read-only and
+        scoped to cwd (or the current Code Mode workspace when cwd is omitted).
+        """
         return await invoke_bare(
             model=model,
             prompt=prompt,
             timeout=timeout,
             output_tokens_limit=output_tokens_limit,
+            peer_review=True,
+            workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
     async def m3_evidence(

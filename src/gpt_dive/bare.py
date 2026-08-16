@@ -8,13 +8,42 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent, UsageLimits
+from pydantic_ai_harness import CodeMode, FileSystem
 
+from .filesystem_policy import harness_denied_patterns, is_secret_path
 from .model_registry import ModelAlias, build_model, resolve_model
 from .runtime_env import build_runtime_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
+
+_PEER_REVIEW_INSTRUCTIONS = (
+    "Act as an independent peer reviewer. The packet carries the causal context and may include "
+    "a first-run Code Mode evidence loader; use that supplied packet as the primary evidence path. "
+    "Keep extra tool turns rare because third-party gateways may replay expensive uncached input. "
+    "If evidence is still insufficient, identify the missing information and suggest focused questions "
+    "or a better next packet instead of exploratory browsing unless the gap materially blocks judgment."
+)
+
+
+def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
+    """Build a compact read-only inspection surface for peer review."""
+    workspace = Path(workspace_dir).expanduser().resolve()
+    home = Path.home().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"workspace_dir is not a directory: {workspace}")
+    if is_secret_path(workspace, home=home):
+        raise ValueError(f"workspace_dir is a credential/secret path: {workspace}")
+    denied_patterns = harness_denied_patterns(root=workspace, home=home)
+    return [
+        FileSystem(
+            root_dir=workspace,
+            read_only=True,
+            denied_patterns=denied_patterns,
+        ),
+        CodeMode(),
+    ]
 
 
 def _usage_summary(result: Any) -> dict[str, Any]:
@@ -61,9 +90,19 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     prompt = str(payload["prompt"])
     output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
 
-    # Intentionally bare: no tools, capabilities, filesystem, shell, workspace,
-    # repo context, system prompt, or additional instructions.
-    agent = Agent(build_model(alias))
+    peer_review = bool(payload.get("peer_review", False))
+    workspace_dir = payload.get("workspace_dir")
+    if peer_review:
+        if not workspace_dir:
+            raise ValueError("workspace_dir is required for peer-review mode")
+        agent = Agent(
+            build_model(alias),
+            instructions=_PEER_REVIEW_INSTRUCTIONS,
+            capabilities=_build_peer_review_capabilities(str(workspace_dir)),
+        )
+    else:
+        # Preserve the true tool-less primitive for m3_evidence and direct low-level use.
+        agent = Agent(build_model(alias))
     # output_tokens_limit is a Pydantic usage budget, NOT the provider max_tokens cap.
     result = await agent.run(
         prompt,
@@ -75,6 +114,7 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         "provider": alias.provider,
         "model_name": alias.model_name,
         "output": str(result.output),
+        "mode": "peer-review" if peer_review else "bare",
         "usage": _usage_summary(result),
     }
 
@@ -85,14 +125,18 @@ async def invoke_bare(
     prompt: str,
     timeout: float = 120.0,
     output_tokens_limit: int = 4096,
+    peer_review: bool = False,
+    workspace_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Run one tool-less model call through the central model registry."""
+    """Run a model call through the registry, optionally with peer-review inspection tools."""
     alias = _validate(model, prompt, timeout, output_tokens_limit)
     payload = json.dumps(
         {
             "model": alias.value,
             "prompt": prompt,
             "output_tokens_limit": output_tokens_limit,
+            "peer_review": peer_review,
+            "workspace_dir": workspace_dir,
         },
         ensure_ascii=False,
     ).encode()

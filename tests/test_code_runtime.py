@@ -211,6 +211,8 @@ def test_bare_is_registry_capability(monkeypatch) -> None:
             "prompt": "think",
             "timeout": 120.0,
             "output_tokens_limit": 4096,
+            "peer_review": True,
+            "workspace_dir": "/tmp/ignored",
         }
     ]
 
