@@ -18,18 +18,16 @@ Validate source changes locally first. Use a fresh ChatGPT Web session for live 
 
 ## Safe MCP Service Reload
 
-Do not restart the active GPT Dive MCP/tunnel service inline while the current MCP call is still returning. Doing so can cut the transport underneath the response and leave the Web call pending.
+Use a detached delayed restart so the current MCP response can finish before the service exits:
 
-When a live reload is initiated from the active ChatGPT session, dispatch it through `wsl2_async(start)` and let a detached `nohup` command perform the actual restart after a short delay:
-
-```text
-wsl2_async(
-  action="start",
-  command="nohup sh -c 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tmp/gpt-dive-restart.log 2>&1 &",
-)
+```bash
+nohup bash -c 'sleep 2; systemctl --user restart chatgpt-wsl2-mcp.service' \
+  >/tmp/chatgpt-wsl2-mcp-restart.log 2>&1 &
 ```
 
-Treat a successful `wsl2_async(start)` dispatch as the handoff boundary. Do not perform an in-session confirmation round-trip before or after the restart; the three-second delay exists only to let the initiating MCP response clear the transport before the service is replaced.
+- `sleep 2` gives the initiating MCP response time to clear the transport.
+- Do not wrap this handoff in `wsl2_async`; its transient systemd job may clean up the detached child before the restart runs.
+- Return immediately and verify only from a later or reconnected call.
 
 ## Durable Jobs
 
