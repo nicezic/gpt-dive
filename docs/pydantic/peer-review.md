@@ -53,86 +53,57 @@ Choose the **narrowest common workspace root** that contains every reference the
 
 ## Review Packet
 
-The packet preserves the **Why** before optimizing token count. Council experiments showed that incomplete causal context can make a strong reviewer reason correctly about the wrong problem.
+The **workflow policy SSOT** for packet composition is:
 
-It is intentionally a compact causal model rather than a pile of imperatives. The reviewer should understand **why the problem exists, why the current position exists, why the constraints are real, and why each reference is relevant** before exercising independent judgment. Hard commands are reserved for actual boundaries.
+- `~/wiki/skills/web/peer-review.md` — runtime review procedure;
+- `~/wiki/skills/web/peer-review-adr.md` — rationale, external research, and change triggers.
 
-Useful packet material, only when relevant:
+This GPT Dive document owns the implementation/evidence-loader boundary and current provider economics. Do not duplicate or override the Wiki's evolving DRAFT review policy here.
+
+The current workflow distinguishes:
 
 ```text
-Why / causal chain
-Background Knowledge
-Current Reality
-Focused Question / Goal
-Constraints / Invariants + why they matter
-Current Position + Reason
-Rejected Alternatives + why rejected
-Uncertainty
-Original References + why each matters
-Review Lens
+Ground Truth / Problem Why
+        +
+Review Target
+        -> independent judgment
+
+Prior Opinion / Verdict
+        -> normally withheld until a later informed challenge
 ```
 
-Do not mechanically fill every heading. Missing material context is bad; unrelated context flooding is also bad.
+This still preserves the original Council lesson: incomplete causal context can make a strong reviewer reason correctly about the wrong problem. The change is that **Problem Why** and original evidence are front-loaded while avoidable prior-opinion framing is not treated as ground truth.
 
-### Background Knowledge vs Original References
+### Evidence loader
 
-- **Background Knowledge** is SOL's compact map that helps the peer understand the situation quickly.
-- **Original References** are source code, plans, ADRs, experiments, logs, or docs that the peer can inspect directly.
-
-Keep both when useful. SOL's paraphrase should not become the only source of truth.
-
-### Code-shaped packet
-
-For GPT Dive peer review, comments carry the causal model and Code Mode carries the known evidence. The format exists for a reason: the current `opus5` route is a third-party gateway where useful prompt-cache reuse has not been reliable, so **known relevant references are front-loaded into one deliberate evidence-loading turn** rather than discovered one-by-one later.
+For GPT Dive peer review, comments carry the compact task/causal context and Code Mode carries known evidence. The current `opus5` route is a third-party gateway where useful prompt-cache reuse has not been reliable, so known relevant references are normally loaded together in one deliberate `run_code` turn rather than discovered piecemeal.
 
 > **Cheap reads, expensive turns. Optimize for decision completeness per model turn, not minimum input size.**
 
+Representative loader shape:
+
 ```python
-# PEER REVIEW PACKET
-# Why this review exists: <causal chain that produced the decision/problem>
-# Background: <compact knowledge needed to understand that causal chain>
-# Current reality: <runtime/economics/platform/policy facts that change the answer>
-# Goal: <what success must accomplish and why it matters>
-# Review question: <the focused judgment whose answer changes the next decision>
-# Constraints: <invariants + why those constraints are real>
-# Current position: <SOL's current answer>
-# Why this position: <evidence/reasoning that led there>
-# Rejected alternatives: <real alternatives + why they were rejected>
-# Uncertainty: <where an independent judgment path has the most value>
-# Review lens: Independent Peer
-#
-# Evidence plan: these sources are already known to be relevant, so they are loaded
-# together in the first run_code round instead of being discovered across later turns.
-# Economics: reads are cheap relative to another model turn on the current route.
-# Favor enough relevant evidence for a sound first judgment over minimizing packet size.
+# PEER REVIEW PACKET — exact review framing is owned by the Wiki skill.
+# Problem Why / current reality / goal / constraints / uncertainty
+# Review Target: the artifact or hypothesis being judged, when ordinary review is intended.
+# Evidence plan: these sources are already known to be relevant.
 docs = await asyncio.gather(
     read_file(path="/path/to/background.md"),
     read_file(path="/path/to/review-target.md"),
-    read_file(path="/path/to/decision-or-council-context.md"),
-    read_file(path="/path/to/provider-or-runtime-evidence.md"),
+    read_file(path="/path/to/material-evidence.md"),
 )
 
-# NOTE: REQUIRED — do not remove this final expression. Without it, run_code returns {}.
+# REQUIRED — without this final expression run_code returns {}.
 docs
-
-# Evidence boundary: project facts are reliable when supported by supplied or directly
-# inspected evidence; unsupported possibilities belong in hypotheses/proposals.
-# Material disagreement is useful output; consensus is not a completion requirement.
-#
-# If the packet is insufficient, useful output includes the exact missing information,
-# focused follow-up questions, and a suggested next packet composition: what to add,
-# what to retain, and what to omit because it was redundant or noisy.
-#
-# Extra tool turns are expensive on the current gateway because each one creates another
-# provider request without useful prompt-cache reuse. Additional investigation is therefore
-# reserved for a material blocker that prevents a sound judgment from this packet.
 ```
+
+For a fresh-eye **Independent Solver**, the Wiki workflow may deliberately omit the current solution/Review Target until a comparison phase. That is a review-policy choice, not a different GPT Dive capability.
 
 > **IMPORTANT:** Keep `docs` as the final expression. If it is removed, `run_code` returns `{}` and the peer does not receive the loaded evidence.
 
-The packet is reviewer-facing intent. The model may issue an equivalent `run_code` program rather than copying it literally. The comments are mostly explanatory rather than imperative: they build the reviewer's world model and make the evidence economy explicit.
+The packet is reviewer-facing intent. The model may issue an equivalent `run_code` program rather than copying it literally. Independent reads should normally be grouped in one `asyncio.gather(...)` inside a single `run_code` call. This is not only parallel I/O; it keeps known evidence acquisition inside one provider round-trip.
 
-Independent reads should normally be grouped into one `asyncio.gather(...)` inside a single `run_code` call. This is not only parallel I/O; it keeps known evidence acquisition inside one provider round-trip. If evidence is still insufficient after that load, the reviewer should usually propose the next packet instead of browsing out of curiosity.
+If evidence remains insufficient after that load, the reviewer should usually identify the missing fact or propose a better next packet instead of browsing out of curiosity. Additional investigation is reserved for a material blocker because each extra tool/model turn may replay expensive uncached input on the current provider route.
 
 ## Review lenses
 
