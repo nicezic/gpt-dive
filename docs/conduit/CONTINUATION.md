@@ -42,6 +42,7 @@ Current v0:
 - `start` launches detached work through GPT Dive `JobManager`.
 - `sync` is the short synchronous canary action.
 - `collect` reads task results non-destructively.
+- `ack` marks a terminal task as handled so it disappears from automatic snapshots while its retained result remains collectable.
 - `emit` publishes conversation output/events.
 - every successful call returns compact task snapshots: `id`, `label`, `status`, `age_sec`.
 - Redis Stream `conduit:events` is the fixed event fan-out path.
@@ -105,18 +106,29 @@ Do not reopen without new evidence:
    - `docs/conduit/adr/0001-conversation-driven-task-pull.md`
    - grounded in the 2026-08-16 fresh-session `start → SOL reasoning → sync` acceptance plus the non-destructive collect/retention check.
 
+3. **First post-canary protocol slice — local PASS**
+   - real pressure observed: retained terminal tasks accumulate in every automatic snapshot for the JobManager retention window;
+   - added `ack(task_id)` as the minimal lifecycle action;
+   - `ack` is terminal-task-only, removes the task from later automatic snapshots, and does not delete the retained JobManager result;
+   - local validation: Conduit tests 6 passed, full pytest 125 passed, ruff PASS, pyright 0 errors / 0 warnings.
+
 ## Next
 
-1. **Post-canary protocol design**
-   - evolve `@c` only from real workflow pressure;
+1. **Fresh-session `ack` acceptance after MCP restart/refresh**
+   - start and complete a small task;
+   - `ack(task_id)` and confirm it disappears from the returned automatic snapshot;
+   - collect the same task after ack and confirm the retained result is still readable.
+   - Schema/metadata changed, so the current pre-refresh ChatGPT Web tool surface is not authority for this action.
+
+2. **Continue post-canary protocol design only from observed workflow pressure**
    - keep the Web-facing surface small;
    - do not prematurely hide all GPT Dive execution behind Conduit.
 
-2. **Later: myWeb / Council generalization**
+3. **Later: myWeb / Council generalization**
    - reuse the existing Council Svelte/Starlette work where useful;
    - preserve asymmetric transport: browser/Edge for input, explicit `@c` path for meaningful SOL output.
 
-3. **Later: GBrain pipeline**
+4. **Later: GBrain pipeline**
    - ingest selected/distilled Conduit events as a separate source/group;
    - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
 

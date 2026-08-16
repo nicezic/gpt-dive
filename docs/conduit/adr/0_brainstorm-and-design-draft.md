@@ -64,10 +64,12 @@ done
   ↓
 result remains retrievable
   ↓
+ack hides handled task from automatic snapshots
+  ↓
 archive / cleanup policy later
 ```
 
-Do not make `collect` destructive in the first version. Duplicate reads are preferable to losing a result because the tool response was interrupted after server-side state mutation.
+Do not make `collect` destructive in the first version. Duplicate reads are preferable to losing a result because the tool response was interrupted after server-side state mutation. `ack(task_id)` is the small post-canary lifecycle addition for terminal tasks: it hides a handled task from later automatic snapshots without deleting the retained JobManager result.
 
 Task identity should be stable and understandable enough to correlate work across later conversation turns. A short intent label alongside the task ID is preferred.
 

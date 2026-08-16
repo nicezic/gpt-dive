@@ -23,8 +23,9 @@ mcp = MCPServer(
     instructions=(
         "Use start to launch detached work and continue reasoning without waiting. Every call "
         "returns current task status, so normal conversation turns provide task refresh. Use sync "
-        "for a short synchronous marker, collect to read a task result non-destructively, and emit "
-        "for user-facing conversation output. Do not repeatedly poll a running task."
+        "for a short synchronous marker, collect to read a task result non-destructively, ack to "
+        "hide a terminal task from automatic snapshots without deleting its result, and emit for "
+        "user-facing conversation output. Do not repeatedly poll a running task."
     ),
 )
 
@@ -40,7 +41,7 @@ mcp = MCPServer(
 def c(
     action: Annotated[
         str,
-        Field(description="One action: start, sync, collect, or emit."),
+        Field(description="One action: start, sync, collect, ack, or emit."),
     ],
     *,
     label: Annotated[
@@ -61,7 +62,7 @@ def c(
     ] = 600.0,
     task_id: Annotated[
         str | None,
-        Field(description="Conduit task ID for collect."),
+        Field(description="Conduit task ID for collect or ack."),
     ] = None,
     text: Annotated[
         str | None,

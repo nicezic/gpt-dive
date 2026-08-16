@@ -74,6 +74,51 @@ def test_start_returns_compact_snapshot_and_collect_is_non_destructive(tmp_path:
     assert actions[-2:] == ["collect", "collect"]
 
 
+def test_ack_hides_terminal_task_but_keeps_result_retrievable(tmp_path: Path) -> None:
+    runtime, publisher = _runtime(tmp_path)
+    started = runtime.call(
+        action="start",
+        label="ack-canary",
+        command="printf ACKME",
+        timeout=3,
+    )
+    task_id = started["result"]["task_id"]
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        collected = runtime.call(action="collect", task_id=task_id)
+        if collected["result"]["ready"]:
+            break
+        time.sleep(0.03)
+    else:
+        raise AssertionError("ack canary job did not complete")
+
+    acked = runtime.call(action="ack", task_id=task_id)
+    assert acked["result"] == {"task_id": task_id, "status": "done", "acked": True}
+    assert acked["tasks"] == []
+
+    after_ack = runtime.call(action="collect", task_id=task_id)
+    assert after_ack["result"]["stdout"] == "ACKME"
+    assert after_ack["tasks"] == []
+    assert publisher.events[-2]["action"] == "ack"
+    assert publisher.events[-1]["action"] == "collect"
+
+
+def test_ack_rejects_running_task(tmp_path: Path) -> None:
+    runtime, _ = _runtime(tmp_path)
+    started = runtime.call(
+        action="start", label="still-running", command="sleep 1", timeout=3
+    )
+    task_id = started["result"]["task_id"]
+
+    try:
+        runtime.call(action="ack", task_id=task_id)
+    except ValueError as exc:
+        assert "terminal task" in str(exc)
+    else:
+        raise AssertionError("running task should not be acked")
+
+
 def test_every_action_returns_task_snapshot(tmp_path: Path) -> None:
     runtime, _ = _runtime(tmp_path)
     assert runtime.call(action="sync", text="hello") == {
@@ -92,6 +137,7 @@ def test_action_validation_is_explicit(tmp_path: Path) -> None:
     for action, message in [
         ("start", "requires command"),
         ("collect", "requires task_id"),
+        ("ack", "requires task_id"),
         ("sync", "requires text"),
         ("emit", "requires text"),
     ]:
@@ -112,6 +158,6 @@ def test_action_validation_is_explicit(tmp_path: Path) -> None:
     try:
         runtime.call(action="future")
     except ValueError as exc:
-        assert "start, sync, collect, emit" in str(exc)
+        assert "start, sync, collect, ack, emit" in str(exc)
     else:
         raise AssertionError("unknown action should have failed")

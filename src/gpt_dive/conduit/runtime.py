@@ -55,12 +55,16 @@ class ConduitRuntime:
                 raise ValueError("collect requires task_id")
             result = self.jobs.result(task_id.strip())
             result["status"] = self._map_status(str(result["status"]))
+        elif action == "ack":
+            if not task_id or not task_id.strip():
+                raise ValueError("ack requires task_id")
+            result = self._ack_task(task_id.strip())
         elif action == "emit":
             if text is None or not text.strip():
                 raise ValueError("emit requires text")
             result = {"emitted": True}
         else:
-            raise ValueError("action must be one of: start, sync, collect, emit")
+            raise ValueError("action must be one of: start, sync, collect, ack, emit")
 
         tasks = self.snapshot()
         event: dict[str, object] = {
@@ -83,6 +87,8 @@ class ConduitRuntime:
                 continue
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if meta.get("acked_at"):
+                    continue
                 status = self.jobs.status(job_dir.name)
             except (OSError, ValueError, json.JSONDecodeError, JobNotFoundError):
                 continue
@@ -97,6 +103,23 @@ class ConduitRuntime:
                 }
             )
         return tasks
+
+    def _ack_task(self, task_id: str) -> dict[str, object]:
+        status = self.jobs.status(task_id)
+        mapped_status = self._map_status(str(status["status"]))
+        if mapped_status not in {"done", "failed", "cancelled"}:
+            raise ValueError("ack requires a terminal task")
+
+        meta_path = self.jobs.root / task_id / "conduit.json"
+        if not meta_path.is_file():
+            raise JobNotFoundError(task_id)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["acked_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        return {"task_id": task_id, "status": mapped_status, "acked": True}
 
     def _write_task_meta(self, task_id: str, label: str) -> None:
         job_dir = self.jobs.root / task_id
@@ -128,6 +151,12 @@ class ConduitRuntime:
                 "task_id": str(result["task_id"]),
                 "label": str(result["label"]),
                 "status": str(result["status"]),
+            }
+        if action == "ack":
+            return {
+                "task_id": str(result["task_id"]),
+                "status": str(result["status"]),
+                "acked": bool(result["acked"]),
             }
         return {
             "task_id": str(result.get("job_id", "")),
