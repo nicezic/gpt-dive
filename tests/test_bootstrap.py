@@ -25,7 +25,10 @@ def _write_test_wiki(tmp_path: Path) -> Path:
 - `log.md`
 """
     )
-    (wiki / "bootstrap" / "intro.md").write_text("INTRO")
+    (wiki / "bootstrap" / "intro.md").write_text(
+        "INTRO\n\n## Code Mode capability index\nINDEX\n\n"
+        "## AI Reminder\nREMINDER\n\n## Dive call preview\nPREVIEW\n"
+    )
     (wiki / "user" / "profile.md").write_text("PROFILE")
     (wiki / "log.md").write_text("RECENT LOG MUST NOT BE PRELOADED")
     return wiki
@@ -59,6 +62,23 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert "INTRO" in result["stdout"]
     assert "PROFILE" in result["stdout"]
     assert "RECENT LOG MUST NOT BE PRELOADED" not in result["stdout"]
+    assert "LIVE CODE MODE CAPABILITIES" not in result["stdout"]
+
+
+def test_periodic_reminder_reads_only_compact_intro_sections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _write_test_wiki(tmp_path)
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    reminder = app_module._read_periodic_reminder()
+
+    assert reminder == (
+        "## Code Mode capability index\nINDEX\n\n"
+        "## AI Reminder\nREMINDER"
+    )
+    assert "PREVIEW" not in reminder
+    assert "INTRO" not in reminder
 
 
 def test_bootstrap_public_function_has_no_log_tail_parameter() -> None:

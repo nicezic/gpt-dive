@@ -213,19 +213,6 @@ def _read_bootstrap_packet() -> dict[str, Any]:
             f"===== END {doc['path']} ====="
         )
 
-    live_capabilities = _build_code_registry(None).describe()
-    capability_sections = []
-    for name, metadata in live_capabilities.items():
-        description = metadata["description"].strip() or "(no description)"
-        capability_sections.append(f"{name}{metadata['signature']}\n{description}")
-    chunks.append(
-        "\n\n===== BEGIN LIVE CODE MODE CAPABILITIES =====\n"
-        "Fresh-session live inner `--help`: use these signatures and descriptions as the "
-        "current Code Mode call contract.\n\n"
-        + "\n\n".join(capability_sections)
-        + "\n===== END LIVE CODE MODE CAPABILITIES ====="
-    )
-
     return {
         "wiki_path": str(wiki),
         "preload_path": str(preload),
@@ -235,12 +222,29 @@ def _read_bootstrap_packet() -> dict[str, Any]:
     }
 
 
-_PERIODIC_BOOTSTRAP_INTERVAL = 10
-_PERIODIC_BOOTSTRAP_STATE_KEY = "gpt_dive_periodic_bootstrap_calls"
+_PERIODIC_REMINDER_INTERVAL = 10
+_PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
+_PERIODIC_REMINDER_SECTIONS = ("Code Mode capability index", "AI Reminder")
 
 
-def _periodic_bootstrap_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, Any]:
-    # ServerSession is per-request; its Connection persists and owns connection-scoped state.
+def _read_periodic_reminder() -> str:
+    """Read only the compact manually maintained reminder sections from bootstrap intro."""
+    intro = _wiki_path() / "bootstrap" / "intro.md"
+    text = intro.read_text(errors="replace")
+    sections: list[str] = []
+    for heading in _PERIODIC_REMINDER_SECTIONS:
+        match = re.search(
+            rf"^## {re.escape(heading)}\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
+            text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if not match:
+            raise ValueError(f"bootstrap intro missing periodic reminder section: {heading}")
+        sections.append(f"## {heading}\n{match.group('body').rstrip()}")
+    return "\n\n".join(sections)
+
+
+def _periodic_reminder_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, Any]:
     connection = getattr(ctx.session, "_connection", None)
     state = getattr(connection, "state", None)
     if not isinstance(state, dict):
@@ -248,17 +252,17 @@ def _periodic_bootstrap_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, 
     return state
 
 
-def _reset_periodic_bootstrap_counter(ctx: ServerRequestContext[Any, Any]) -> None:
-    _periodic_bootstrap_state(ctx)[_PERIODIC_BOOTSTRAP_STATE_KEY] = 0
+def _reset_periodic_reminder_counter(ctx: ServerRequestContext[Any, Any]) -> None:
+    _periodic_reminder_state(ctx)[_PERIODIC_REMINDER_STATE_KEY] = 0
 
 
-def _periodic_bootstrap_due(ctx: ServerRequestContext[Any, Any]) -> bool:
-    state = _periodic_bootstrap_state(ctx)
-    calls = int(state.get(_PERIODIC_BOOTSTRAP_STATE_KEY, 0)) + 1
-    if calls < _PERIODIC_BOOTSTRAP_INTERVAL:
-        state[_PERIODIC_BOOTSTRAP_STATE_KEY] = calls
+def _periodic_reminder_due(ctx: ServerRequestContext[Any, Any]) -> bool:
+    state = _periodic_reminder_state(ctx)
+    calls = int(state.get(_PERIODIC_REMINDER_STATE_KEY, 0)) + 1
+    if calls < _PERIODIC_REMINDER_INTERVAL:
+        state[_PERIODIC_REMINDER_STATE_KEY] = calls
         return False
-    state[_PERIODIC_BOOTSTRAP_STATE_KEY] = 0
+    state[_PERIODIC_REMINDER_STATE_KEY] = 0
     return True
 
 
@@ -270,7 +274,7 @@ def _tool_name_from_request(params: Any) -> str | None:
     return name if isinstance(name, str) else None
 
 
-async def _periodic_bootstrap_middleware(
+async def _periodic_reminder_middleware(
     ctx: ServerRequestContext[Any, Any], call_next: CallNext
 ) -> HandlerResult:
     if ctx.method != "tools/call":
@@ -281,27 +285,24 @@ async def _periodic_bootstrap_middleware(
 
     if tool_name == "bootstrap":
         if isinstance(result, CallToolResult) and not result.is_error:
-            _reset_periodic_bootstrap_counter(ctx)
+            _reset_periodic_reminder_counter(ctx)
         return result
 
-    if not isinstance(result, CallToolResult) or not _periodic_bootstrap_due(ctx):
+    if not isinstance(result, CallToolResult) or not _periodic_reminder_due(ctx):
         return result
 
-    packet = _read_bootstrap_packet()
     refresh = TextContent(
         type="text",
         text=(
-            "\n\n===== PERIODIC BOOTSTRAP REFRESH: 10 @dive tool calls =====\n"
-            "Re-read LIVE CODE MODE CAPABILITIES before the next call; "
-            "do not guess capability arguments from memory.\n\n"
-            f"{packet['stdout']}"
-            "===== END PERIODIC BOOTSTRAP REFRESH =====\n"
+            "\n\n===== PERIODIC DIVE REMINDER: 10 tool calls =====\n"
+            f"{_read_periodic_reminder()}\n"
+            "===== END PERIODIC DIVE REMINDER =====\n"
         ),
     )
     return result.model_copy(update={"content": [*result.content, refresh]})
 
 
-mcp.middleware.append(_periodic_bootstrap_middleware)
+mcp.middleware.append(_periodic_reminder_middleware)
 
 
 @mcp.tool(

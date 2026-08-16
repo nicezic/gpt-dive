@@ -66,7 +66,7 @@ def _middleware_tool_result(text: str = "ok") -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)])
 
 
-async def _call_periodic_bootstrap_middleware(
+async def _call_periodic_reminder_middleware(
     tool_name: str, connection_state: dict[str, object]
 ) -> CallToolResult:
     connection = SimpleNamespace(state=connection_state)
@@ -76,61 +76,49 @@ async def _call_periodic_bootstrap_middleware(
     async def call_next(_ctx):
         return _middleware_tool_result()
 
-    result = await app._periodic_bootstrap_middleware(ctx, call_next)
+    result = await app._periodic_reminder_middleware(ctx, call_next)
     assert isinstance(result, CallToolResult)
     return result
 
 
-def test_periodic_bootstrap_is_appended_to_every_tenth_dive_tool_result(monkeypatch) -> None:
-    monkeypatch.setattr(app, "_read_bootstrap_packet", lambda: {"stdout": "BOOTSTRAP-LIVE\n"})
+def test_periodic_reminder_appends_compact_sections_on_tenth_tool_call(monkeypatch) -> None:
+    monkeypatch.setattr(
+        app,
+        "_read_periodic_reminder",
+        lambda: "## Code Mode capability index\nINDEX\n\n## AI Reminder\nREMINDER",
+    )
     state: dict[str, object] = {}
 
-    names = ["wsl2_sync", "code_mode", "wsl2_async"] * 3
-    for name in names:
-        result = asyncio.run(_call_periodic_bootstrap_middleware(name, state))
+    for _ in range(9):
+        result = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
         assert len(result.content) == 1
 
-    tenth = asyncio.run(_call_periodic_bootstrap_middleware("code_mode", state))
+    tenth = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
     assert len(tenth.content) == 2
     assert isinstance(tenth.content[-1], TextContent)
-    assert "PERIODIC BOOTSTRAP REFRESH: 10 @dive tool calls" in tenth.content[-1].text
-    assert "do not guess capability arguments from memory" in tenth.content[-1].text
-    assert "BOOTSTRAP-LIVE" in tenth.content[-1].text
-
-    eleventh = asyncio.run(_call_periodic_bootstrap_middleware("wsl2_sync", state))
-    assert len(eleventh.content) == 1
-
-
-def test_periodic_bootstrap_counter_is_connection_scoped(monkeypatch) -> None:
-    monkeypatch.setattr(app, "_read_bootstrap_packet", lambda: {"stdout": "BOOTSTRAP-LIVE\n"})
-    first: dict[str, object] = {}
-    second: dict[str, object] = {}
-
-    for _ in range(9):
-        asyncio.run(_call_periodic_bootstrap_middleware("code_mode", first))
-
-    other_session = asyncio.run(_call_periodic_bootstrap_middleware("wsl2_sync", second))
-    assert len(other_session.content) == 1
-
-    first_tenth = asyncio.run(_call_periodic_bootstrap_middleware("wsl2_async", first))
-    assert len(first_tenth.content) == 2
+    text = tenth.content[-1].text
+    assert "PERIODIC DIVE REMINDER: 10 tool calls" in text
+    assert "## Code Mode capability index" in text
+    assert "## AI Reminder" in text
+    assert "BOOTSTRAP PACKET" not in text
+    assert "LIVE CODE MODE CAPABILITIES" not in text
 
 
-def test_explicit_bootstrap_resets_periodic_tool_counter(monkeypatch) -> None:
-    monkeypatch.setattr(app, "_read_bootstrap_packet", lambda: {"stdout": "BOOTSTRAP-LIVE\n"})
+def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> None:
+    monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "REMINDER")
     state: dict[str, object] = {}
 
     for _ in range(9):
-        asyncio.run(_call_periodic_bootstrap_middleware("code_mode", state))
+        asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
 
-    explicit = asyncio.run(_call_periodic_bootstrap_middleware("bootstrap", state))
+    explicit = asyncio.run(_call_periodic_reminder_middleware("bootstrap", state))
     assert len(explicit.content) == 1
 
     for _ in range(9):
-        result = asyncio.run(_call_periodic_bootstrap_middleware("wsl2_sync", state))
+        result = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
         assert len(result.content) == 1
 
-    tenth_after_reset = asyncio.run(_call_periodic_bootstrap_middleware("wsl2_async", state))
+    tenth_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
     assert len(tenth_after_reset.content) == 2
 
 
