@@ -32,13 +32,21 @@ def score_result(case: dict[str, Any], result: dict[str, Any]) -> tuple[bool, li
         if key in expect and actual != expect[key]:
             errors.append(f"{key}: expected {expect[key]!r}, got {actual!r}")
     for field in ("known", "missing", "conflicts", "queries"):
-        count = len(result.get(field, []))
+        items = result.get(field, [])
+        count = len(items)
         minimum = expect.get(f"{field}_min")
         maximum = expect.get(f"{field}_max")
         if minimum is not None and count < minimum:
             errors.append(f"{field}: expected >= {minimum}, got {count}")
         if maximum is not None and count > maximum:
             errors.append(f"{field}: expected <= {maximum}, got {count}")
+
+        required_substrings = expect.get(f"{field}_contains", [])
+        haystack = "\n".join(str(item) for item in items).casefold()
+        for required in required_substrings:
+            needle = str(required).casefold()
+            if needle not in haystack:
+                errors.append(f"{field}: missing required substring {required!r}")
     return not errors, errors
 
 

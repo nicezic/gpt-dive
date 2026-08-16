@@ -37,6 +37,27 @@ def test_score_result_reports_semantic_contract_failure() -> None:
     assert len(errors) == 2
 
 
+def test_score_result_checks_required_semantic_substrings() -> None:
+    case = {
+        "expect": {
+            "known_contains": ["10,000", "[E1]"],
+            "missing_contains": ["cleanup ttl"],
+            "queries_contains": ["cleanup"],
+        }
+    }
+    result = {
+        "ok": True,
+        "done": False,
+        "known": ["The threshold is 8,000 characters [E1]."],
+        "missing": ["Cleanup TTL is still required."],
+        "conflicts": [],
+        "queries": ["Find the cleanup policy."],
+    }
+    passed, errors = eval_module.score_result(case, result)
+    assert passed is False
+    assert errors == ["known: missing required substring '10,000'"]
+
+
 def test_run_cases_collects_retry_and_query_metrics(monkeypatch) -> None:
     async def fake_invoke_m3_evidence(**kwargs):
         return {
