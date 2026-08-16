@@ -86,7 +86,7 @@ Implementation/acceptance history: `plans/code_mode/plan-260814-files-and-shell.
 
 ### 6. Host filesystem boundary
 
-Code Mode resolves relative filesystem paths from the effective `cwd`, allows host reads across `/` except explicitly blocked credential/secret paths, and allows writes only under the user's home directory with the same secret exclusions. Registered Harness FileSystem capabilities and Monty direct filesystem primitives share this policy so one path cannot bypass the other.
+Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities and Monty direct filesystem primitives share this policy so one path cannot bypass the other.
 
 This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface. Shell has separate environment stripping and executable guards, including Python toolchain routing.
 

@@ -10,18 +10,18 @@ status: accepted
 
 ## Decision
 
-Code Mode uses a broad local read boundary and a narrow mutation boundary:
+Code Mode uses a broad local filesystem boundary with explicit secret exclusions:
 
 ```text
 READ  -> host filesystem `/`, except credential/secret paths
-WRITE -> user home `~/`, except credential/secret paths
+WRITE -> host filesystem `/`, except credential/secret paths and normal OS permission failures
 ```
 
 Relative paths continue to resolve from the effective `cwd`.
 
 The same policy applies to both registered Harness FileSystem capabilities and Monty direct filesystem primitives such as `Path.read_text()` / `Path.write_text()`. GPT Dive owns a small host-backed Monty OS adapter so direct Python filesystem calls cannot bypass the FileSystem policy.
 
-Credential/secret paths are denied explicitly, including common `.env`, private key, SSH/GPG/keyring, cloud credential, and similar local secret stores. Harness default `.git` write protection is disabled for Code Mode because Git metadata under `~/` is a normal development target; the explicit secret deny list and home-only write boundary are the deterministic guards.
+Credential/secret paths are denied explicitly, including common `.env`, private key, SSH/GPG/keyring, cloud credential, and similar local secret stores. Harness default `.git` write protection is disabled for Code Mode because Git metadata is a normal development target; the explicit secret deny list and the local OS identity/permissions are the deterministic boundaries.
 
 ## Why
 
@@ -29,8 +29,8 @@ The earlier curated-root model allowed reads only from a small list of project/r
 
 GPT Dive runs on the user's own WSL2 machine. The useful deterministic boundaries are therefore:
 
-- prevent model-visible reads of credential/secret material;
-- prevent filesystem mutation outside the user's home tree;
+- prevent model-visible reads and writes of credential/secret material;
+- let ordinary local engineering use writable host paths such as `/tmp` without artificial root exceptions;
 - keep stale-write conflict detection;
 - keep explicit toolchain guards for known bad execution paths such as old Python versions and direct pip/npm usage.
 
@@ -38,10 +38,10 @@ These guards target concrete failure modes instead of treating ordinary local fi
 
 ## Consequences
 
-- `/tmp`, `/etc`, `/usr`, and other host paths may be read when OS permissions allow and the path is not secret-blocked.
-- FileSystem and Monty direct writes outside `~/` fail.
-- Reads and writes of blocked credential/secret paths fail even inside `~/`.
-- `.git` and ordinary repository/Wiki files under `~/` are writable.
+- `/tmp`, `/etc`, `/usr`, and other host paths may be read or written when OS permissions allow and the path is not secret-blocked.
+- Registered FileSystem capabilities and Monty direct filesystem primitives use the same host-wide write boundary.
+- Reads and writes of blocked credential/secret paths fail regardless of location.
+- Ordinary writable repository, Wiki, `.git`, cache, and temporary files are writable wherever the OS permits.
 - `write_file` / `edit_file` retain `expected_hash` optimistic concurrency checks.
 - Shell remains an OS-level execution surface governed separately by PATH guards, environment stripping, and the user's local OS permissions.
 
@@ -51,9 +51,9 @@ These guards target concrete failure modes instead of treating ordinary local fi
 
 Rejected because they caused repeated false-positive denials during ordinary cross-project work and required policy maintenance whenever a new local tree became relevant.
 
-### Whole-host writes
+### Home-only writes
 
-Rejected because normal project work has no need to mutate system paths. `~/` is the useful mutation boundary.
+Rejected because they create false denials for legitimate local engineering paths such as `/tmp`, require special-case write roots, and do not meaningfully match the broader OS-level reach already available to Code Mode Shell.
 
 ### Secret reads allowed everywhere
 

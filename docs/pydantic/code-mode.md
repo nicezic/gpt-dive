@@ -47,14 +47,14 @@ Code Mode uses one simple local policy:
 
 ```text
 READ  -> host filesystem `/`, except credential/secret paths
-WRITE -> user home `~/`, except credential/secret paths
+WRITE -> host filesystem `/`, except credential/secret paths and normal OS permission failures
 ```
 
-Relative paths resolve from the effective `cwd`. Absolute and `~/...` reads may target any host path allowed by the OS unless it matches the shared credential/secret deny policy. `write_file`, `edit_file`, and `create_directory` reject targets outside `~/` and reject credential/secret paths inside it.
+Relative paths resolve from the effective `cwd`. Absolute and `~/...` reads or writes may target any host path allowed by the OS unless it matches the shared credential/secret deny policy. `write_file`, `edit_file`, and `create_directory` therefore support `/tmp` and other writable host paths without separate root exceptions.
 
-The same policy also applies to direct Monty filesystem primitives such as `Path.read_text()` and `Path.write_text()` through GPT Dive's host-backed Monty OS adapter, so direct Python code cannot bypass the FileSystem capability boundary. Ordinary `.git` metadata under `~/` is writable; explicit secret paths remain denied.
+The same policy also applies to direct Monty filesystem primitives such as `Path.read_text()` and `Path.write_text()` through GPT Dive's host-backed Monty OS adapter, so direct Python code cannot bypass the FileSystem capability boundary. Ordinary writable `.git` metadata and repository files are writable wherever the OS permits; explicit secret paths remain denied.
 
-Architecture decision and rejected alternatives: `adr/0004-code-mode-trusted-filesystem-roots.md`.
+Architecture decision and rejected alternatives: `adr/0004-code-mode-host-filesystem-policy.md`.
 
 ## Direct Harness Shell
 

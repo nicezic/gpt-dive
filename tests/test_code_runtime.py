@@ -585,19 +585,23 @@ def test_code_mode_reads_anywhere_outside_home(tmp_path: Path) -> None:
     assert direct == "visible\n"
 
 
-def test_code_mode_rejects_writes_outside_home(tmp_path: Path) -> None:
-    target = tmp_path / "outside-write.txt"
+def test_code_mode_writes_outside_home(tmp_path: Path) -> None:
+    harness_target = tmp_path / "outside-write.txt"
+    direct_target = tmp_path / "outside-direct-write.txt"
 
-    with pytest.raises(Exception, match="outside the Code Mode write root"):
-        asyncio.run(code_mode(f'await write_file({str(target)!r}, "blocked")'))
+    result = asyncio.run(
+        code_mode(f'await write_file({str(harness_target)!r}, "allowed")')
+    )["result"]
+    assert "Wrote" in result
+    assert harness_target.read_text() == "allowed"
 
-    with pytest.raises(Exception, match="Write path is outside the Code Mode home root"):
-        asyncio.run(
-            code_mode(
-                f"from pathlib import Path\nPath({str(target)!r}).write_text('blocked')"
-            )
+    direct = asyncio.run(
+        code_mode(
+            f"from pathlib import Path\nPath({str(direct_target)!r}).write_text('allowed')"
         )
-    assert not target.exists()
+    )["result"]
+    assert direct == len("allowed")
+    assert direct_target.read_text() == "allowed"
 
 
 def test_code_mode_blocks_secret_reads_and_writes(tmp_path: Path) -> None:
@@ -610,6 +614,15 @@ def test_code_mode_blocks_secret_reads_and_writes(tmp_path: Path) -> None:
     with pytest.raises(Exception, match="Credential/secret path is blocked"):
         asyncio.run(
             code_mode(f"from pathlib import Path\nPath({str(secret)!r}).read_text()")
+        )
+
+    with pytest.raises(Exception, match="denied by pattern"):
+        asyncio.run(code_mode(f'await write_file({str(secret)!r}, "blocked")'))
+    with pytest.raises(Exception, match="Credential/secret path is blocked"):
+        asyncio.run(
+            code_mode(
+                f"from pathlib import Path\nPath({str(secret)!r}).write_text('blocked')"
+            )
         )
 
     with tempfile.TemporaryDirectory(dir=Path.home()) as td:

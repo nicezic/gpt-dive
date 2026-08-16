@@ -64,7 +64,7 @@ registered capabilities
               └─ Web gets path + size + small preview
 ```
 
-The planned Code Mode spill returns the **real local file path**, not an opaque handle. Spill files under `/tmp` are directly readable through the broad host-read policy, while FileSystem writes remain limited to `~/`. A later call can inspect the returned path with `read_file`, `search_files`, `file_info`, or Shell without a separate `read_tool_result` handle API.
+The planned Code Mode spill returns the **real local file path**, not an opaque handle. Spill files under `/tmp` are directly readable and writable through the broad host filesystem policy, subject to normal OS permissions and credential/secret denial. A later call can inspect the returned path with `read_file`, `search_files`, `file_info`, or Shell without a separate `read_tool_result` handle API.
 
 The final-output adapter applies only to successful foreground completion and successful background `action='result'` retrieval. Failure diagnostics remain unchanged.
 

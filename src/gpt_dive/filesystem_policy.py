@@ -69,7 +69,7 @@ def harness_denied_patterns(*, root: Path, home: Path) -> tuple[str, ...]:
 
 
 class HostFileSystemOS(AbstractOS):
-    """Host-backed Monty filesystem with broad reads and home-scoped writes."""
+    """Host-backed Monty filesystem with broad non-secret reads and writes."""
 
     def __init__(self, *, cwd: str | Path, home: str | Path) -> None:
         self.cwd = Path(cwd).expanduser().resolve()
@@ -85,8 +85,6 @@ class HostFileSystemOS(AbstractOS):
         canonical = self._lexical(arg).resolve()
         if is_secret_path(canonical, home=self.home):
             raise PermissionError(f"Credential/secret path is blocked: {canonical}")
-        if write and not canonical.is_relative_to(self.home):
-            raise PermissionError(f"Write path is outside the Code Mode home root: {canonical}")
         return canonical
 
     def path_exists(self, path: PurePosixPath) -> bool:

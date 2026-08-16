@@ -52,7 +52,7 @@ Retrieval / compatibility
   repo_search / local_exec / gz64
 ```
 
-The primary FileSystem write root is Code Mode `cwd`; selected trusted home-level reference trees can be addressed explicitly for read/list/search/find/info only. `m3_evidence` is deliberately tool-less: it analyzes a caller-supplied evidence packet and proposes a bounded next-query set, while retrieval execution remains owned by the caller/Harness. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
+Code Mode FileSystem resolves relative paths from `cwd` but permits host-wide non-secret reads and writes across `/` subject to normal OS permissions; credential/secret paths remain denied. `m3_evidence` is deliberately tool-less: it analyzes a caller-supplied evidence packet and proposes a bounded next-query set, while retrieval execution remains owned by the caller/Harness. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
 
 Council registers `council_emit` behind Code Mode as the explicit Web SOL output path; it remains a capability, not a fifth Web-facing MCP tool. The implemented Council runtime lives under `gpt_dive.council`.
 
