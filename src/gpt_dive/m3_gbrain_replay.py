@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -84,6 +85,38 @@ def reject_post_capture_page_updates(row: dict[str, Any], chunks: list[dict[str,
         )
 
 
+def verify_captured_chunk_hashes(
+    row: dict[str, Any], chunks: list[dict[str, Any]], *, chunk_limit: int
+) -> bool:
+    """Verify exact captured evidence text when SHA-256 provenance is available."""
+    captured = row.get("retrieved_chunk_hashes")
+    if captured is None or captured == []:
+        return False
+    if not isinstance(captured, list):
+        raise TypeError("captured chunk hash provenance is invalid")
+    chunk_ids = row.get("retrieved_chunk_ids")
+    if not isinstance(chunk_ids, list) or len(captured) != len(chunk_ids):
+        raise RuntimeError("captured chunk hash provenance is not aligned with retrieved_chunk_ids")
+    expected = captured[:chunk_limit]
+    if len(expected) != len(chunks):
+        raise RuntimeError("captured chunk hash provenance does not cover materialized chunks")
+    changed_ids: list[int] = []
+    for expected_hash, chunk in zip(expected, chunks, strict=True):
+        if not isinstance(expected_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
+            raise RuntimeError("captured chunk hash provenance contains an invalid SHA-256 value")
+        text = chunk.get("chunk_text")
+        if not isinstance(text, str):
+            raise TypeError(f"captured GBrain chunk {chunk.get('id', '?')} has no text for hash verification")
+        current_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if current_hash != expected_hash:
+            chunk_id = chunk.get("id")
+            if isinstance(chunk_id, int):
+                changed_ids.append(chunk_id)
+    if changed_ids:
+        raise RuntimeError(f"captured GBrain chunk text hash drift: {changed_ids}")
+    return True
+
+
 def filter_future_temporal_evidence(
     row: dict[str, Any], chunks: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], int]:
@@ -138,6 +171,13 @@ def load_capture_rows(path: Path) -> list[dict[str, Any]]:
                 f"line {line_number} has no valid retrieved_chunk_ids; "
                 "re-export a current GBrain capture for exact evidence replay"
             )
+        chunk_hashes = value.get("retrieved_chunk_hashes")
+        if chunk_hashes not in (None, []) and (
+            not isinstance(chunk_hashes, list)
+            or len(chunk_hashes) != len(chunk_ids)
+            or not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item) for item in chunk_hashes)
+        ):
+            raise ValueError(f"line {line_number} has invalid retrieved_chunk_hashes")
         try:
             _validated_timestamp(value.get("created_at"), field="created_at")
             if value.get("as_of_ts") is not None:
@@ -318,7 +358,9 @@ async def run_replay(
     for row in rows:
         schema_pack_checked = await verify_schema_pack_provenance(row)
         captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
-        reject_post_capture_page_updates(row, captured_chunks)
+        chunk_hashes_checked = verify_captured_chunk_hashes(row, captured_chunks, chunk_limit=chunk_limit)
+        if not chunk_hashes_checked:
+            reject_post_capture_page_updates(row, captured_chunks)
         chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
         controller = await invoke_m3_evidence(
             question=replay_question(row),
@@ -333,6 +375,7 @@ async def run_replay(
                 "chunk_count": len(chunks),
                 "excluded_future_chunks": excluded_future_chunks,
                 "schema_pack_checked": schema_pack_checked,
+                "chunk_hashes_checked": chunk_hashes_checked,
                 "controller": controller,
             }
         )

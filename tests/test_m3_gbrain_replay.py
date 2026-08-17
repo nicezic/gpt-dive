@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 import gpt_dive.m3_gbrain_replay as replay_module
@@ -27,6 +28,30 @@ def test_load_capture_rows_rejects_old_export_without_chunk_ids(tmp_path: Path) 
         assert "retrieved_chunk_ids" in str(exc)
     else:
         raise AssertionError("old capture without chunk ids must fail closed")
+
+
+def test_load_capture_rows_rejects_misaligned_chunk_hashes(tmp_path: Path) -> None:
+    path = tmp_path / "bad-hashes.ndjson"
+    path.write_text(
+        '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11,12],"retrieved_chunk_hashes":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"created_at":"2026-08-16T16:10:20.070Z","as_of_ts":null}\n'
+    )
+    try:
+        replay_module.load_capture_rows(path)
+    except ValueError as exc:
+        assert "retrieved_chunk_hashes" in str(exc)
+    else:
+        raise AssertionError("misaligned chunk hashes must fail closed")
+
+
+def test_empty_chunk_hashes_are_legacy_provenance(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-empty-hashes.ndjson"
+    path.write_text(
+        '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11],"retrieved_chunk_hashes":[],"created_at":"2026-08-16T16:10:20.070Z","as_of_ts":null}\n'
+    )
+    row = replay_module.load_capture_rows(path)[0]
+    assert replay_module.verify_captured_chunk_hashes(
+        row, [{"id": 11, "chunk_text": "current"}], chunk_limit=4
+    ) is False
 
 
 def test_build_evidence_packet_labels_captured_chunks() -> None:
@@ -77,6 +102,33 @@ def test_build_evidence_packet_omits_fallback_date_value() -> None:
     assert "effective_date_source=fallback" in packet
 
 
+def test_verify_captured_chunk_hashes_accepts_exact_text() -> None:
+    row = {
+        "retrieved_chunk_ids": [11, 22],
+        "retrieved_chunk_hashes": [
+            hashlib.sha256(b"alpha").hexdigest(),
+            hashlib.sha256(b"beta").hexdigest(),
+        ],
+    }
+    chunks = [{"id": 11, "chunk_text": "alpha"}, {"id": 22, "chunk_text": "beta"}]
+    assert replay_module.verify_captured_chunk_hashes(row, chunks, chunk_limit=4) is True
+
+
+def test_verify_captured_chunk_hashes_rejects_text_drift() -> None:
+    row = {
+        "retrieved_chunk_ids": [11],
+        "retrieved_chunk_hashes": [hashlib.sha256(b"old").hexdigest()],
+    }
+    chunks = [{"id": 11, "chunk_text": "new"}]
+    try:
+        replay_module.verify_captured_chunk_hashes(row, chunks, chunk_limit=4)
+    except RuntimeError as exc:
+        assert "hash drift" in str(exc)
+        assert "11" in str(exc)
+    else:
+        raise AssertionError("changed chunk text must fail exact replay")
+
+
 def test_reject_post_capture_page_updates_detects_rewritten_chunk_text() -> None:
     row = {"created_at": "2026-08-16T16:10:20.070Z"}
     chunks = [
@@ -110,7 +162,9 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
                 "source_id": "pydantic-ai",
                 "slug": "s",
                 "title": "Source Title",
-                "page_updated_at": "2026-08-16T15:00:00.000+00:00",
+                # Page-level metadata changed after capture, but the exact chunk
+                # text is unchanged. New hash provenance must avoid a false rejection.
+                "page_updated_at": "2026-08-16T17:00:00.000+00:00",
                 "effective_date": "2026-08-16",
                 "effective_date_source": "published",
                 "chunk_text": "fact",
@@ -138,7 +192,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     report = asyncio.run(
         replay_module.run_replay(
-            [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}],
+            [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [hashlib.sha256(b"fact").hexdigest()], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}],
             chunk_limit=4,
         )
     )
@@ -152,6 +206,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0
     assert report["results"][0]["schema_pack_checked"] is False
+    assert report["results"][0]["chunk_hashes_checked"] is True
 
 
 def test_replay_question_prefers_explicit_as_of_ts() -> None:
