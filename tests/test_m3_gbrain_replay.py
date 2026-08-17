@@ -186,6 +186,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
             "conflicts": [],
             "queries": ["find detail"],
             "attempts": 2,
+            "validation_errors": ["missing must be empty when done is true"],
         }
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
@@ -202,6 +203,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["retry_rows"] == 1
     assert report["proposed_queries"] == 1
     assert report["controller_failures"] == 0
+    assert report["validation_error_counts"] == {"missing must be empty when done is true": 1}
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0

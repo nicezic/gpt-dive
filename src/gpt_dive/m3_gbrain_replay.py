@@ -383,6 +383,13 @@ async def run_replay(
         )
 
     ok_results = [item for item in results if item["controller"].get("ok")]
+    validation_error_counts: dict[str, int] = {}
+    for item in results:
+        errors = item["controller"].get("validation_errors", [])
+        if isinstance(errors, list):
+            for error in errors:
+                if isinstance(error, str) and error:
+                    validation_error_counts[error] = validation_error_counts.get(error, 0) + 1
     return {
         "rows": len(results),
         "done_rows": sum(1 for item in ok_results if item["controller"].get("done") is True),
@@ -390,6 +397,7 @@ async def run_replay(
         "retry_rows": sum(1 for item in ok_results if item["controller"].get("attempts", 1) > 1),
         "proposed_queries": sum(len(item["controller"].get("queries", [])) for item in ok_results),
         "controller_failures": len(results) - len(ok_results),
+        "validation_error_counts": dict(sorted(validation_error_counts.items())),
         "results": results,
     }
 
