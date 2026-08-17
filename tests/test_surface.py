@@ -96,7 +96,7 @@ async def _call_periodic_reminder_middleware(
     return result
 
 
-def test_periodic_reminder_appends_compact_sections_on_tenth_tool_call(monkeypatch) -> None:
+def test_periodic_reminder_appends_compact_sections_on_seventh_tool_call(monkeypatch) -> None:
     monkeypatch.setattr(
         app,
         "_read_periodic_reminder",
@@ -104,15 +104,15 @@ def test_periodic_reminder_appends_compact_sections_on_tenth_tool_call(monkeypat
     )
     state: dict[str, object] = {}
 
-    for _ in range(9):
+    for _ in range(6):
         result = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
         assert len(result.content) == 1
 
-    tenth = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
-    assert len(tenth.content) == 2
-    assert isinstance(tenth.content[-1], TextContent)
-    text = tenth.content[-1].text
-    assert "PERIODIC DIVE REMINDER: 10 tool calls" in text
+    seventh = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
+    assert len(seventh.content) == 2
+    assert isinstance(seventh.content[-1], TextContent)
+    text = seventh.content[-1].text
+    assert "PERIODIC DIVE REMINDER: 7 tool calls" in text
     assert "## Code Mode capability index" in text
     assert "## AI Reminder" in text
     assert "BOOTSTRAP PACKET" not in text
@@ -141,18 +141,18 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
     monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "REMINDER")
     state: dict[str, object] = {}
 
-    for _ in range(9):
+    for _ in range(6):
         asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
 
     explicit = asyncio.run(_call_periodic_reminder_middleware("bootstrap", state))
     assert len(explicit.content) == 1
 
-    for _ in range(9):
+    for _ in range(6):
         result = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
         assert len(result.content) == 1
 
-    tenth_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
-    assert len(tenth_after_reset.content) == 2
+    seventh_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
+    assert len(seventh_after_reset.content) == 2
 
 
 def test_wsl2_async_capabilities_are_runtime_discoverable() -> None:

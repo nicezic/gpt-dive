@@ -230,7 +230,7 @@ def _read_bootstrap_packet() -> dict[str, Any]:
     }
 
 
-_PERIODIC_REMINDER_INTERVAL = 10
+_PERIODIC_REMINDER_INTERVAL = 7
 _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
 _PERIODIC_REMINDER_SECTIONS = ("Code Mode capability index", "AI Reminder")
 _ERROR_CASE_FILE = "EORROR_CASE.md"
@@ -308,7 +308,7 @@ async def _periodic_reminder_middleware(
     refresh = TextContent(
         type="text",
         text=(
-            "\n\n===== PERIODIC DIVE REMINDER: 10 tool calls =====\n"
+            "\n\n===== PERIODIC DIVE REMINDER: 7 tool calls =====\n"
             f"{_read_periodic_reminder()}\n"
             "===== END PERIODIC DIVE REMINDER =====\n"
         ),
