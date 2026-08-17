@@ -77,6 +77,15 @@ def _parse_json_output(raw: str) -> Any:
     return json.loads(text)
 
 
+def _retry_prompt(prompt: str, error: Exception) -> str:
+    """Add only the failed contract invariant when retrying structured output."""
+    return f"""{prompt}
+
+Your previous JSON response failed validation: {error}
+Return a corrected JSON object that satisfies that invariant and all rules above.
+"""
+
+
 def _validate_payload(
     value: Any,
     *,
@@ -193,6 +202,7 @@ async def invoke_m3_evidence(
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             last_error = exc
             if attempt < 2:
+                prompt = _retry_prompt(prompt, exc)
                 continue
             break
 

@@ -263,6 +263,7 @@ def test_invoke_m3_evidence_rejects_missing_when_done(monkeypatch) -> None:
 
 
 def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
     outputs = iter(
         [
             {
@@ -283,6 +284,7 @@ def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -
     )
 
     async def fake_invoke_bare(**kwargs):
+        calls.append(kwargs)
         return next(outputs)
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
@@ -292,6 +294,27 @@ def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -
     assert result["done"] is True
     assert result["attempts"] == 2
     assert result["usage"] == {"requests": 2, "output_tokens": 12}
+    assert "previous JSON response failed validation" not in str(calls[0]["prompt"])
+    assert "previous JSON response failed validation" in str(calls[1]["prompt"])
+
+
+def test_invoke_m3_evidence_retry_reports_semantic_validation_error(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    outputs = iter([
+        '{"known":[],"missing":["need evidence"],"conflicts":[],"queries":[],"done":true}',
+        '{"known":[],"missing":["need evidence"],"conflicts":[],"queries":["find evidence"],"done":false}',
+    ])
+
+    async def fake_invoke_bare(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "model": "m3", "provider": "minimax", "output": next(outputs)}
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    assert result["ok"] is True
+    assert result["attempts"] == 2
+    assert result["queries"] == ["find evidence"]
+    assert "missing must be empty when done is true" in str(calls[1]["prompt"])
 
 
 def test_invoke_m3_evidence_final_round_cannot_propose_more_queries(monkeypatch) -> None:
