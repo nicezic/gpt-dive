@@ -36,11 +36,26 @@ def test_server_instructions_do_not_own_progress_presentation() -> None:
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    description = tools["code_mode"].description
+    tool = tools["code_mode"]
+    description = tool.description
     assert description is not None
     assert "Primary programmable execution root for GPT Dive" in description
+    assert "Default to code_mode for normal local work" in description
+    assert "Every MCP call requires input as a string" in description
     assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
+    assert "Never invent capability names, arguments, optional fields, or return shapes" in description
     assert "Prefer Harness FileSystem/Shell capabilities" in description
+    assert "input" in tool.input_schema["required"]
+    assert tool.input_schema["properties"]["input"]["type"] == "string"
+
+
+def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> None:
+    instructions = gpt_dive.mcp.instructions
+    assert instructions is not None
+    assert "use code_mode as the default execution root" in instructions
+    assert "Web Search current primary sources before retrying" in instructions
+    assert "Never invent capability names" in instructions
+    assert "Use wsl2_sync only for transport/smoke" in instructions
 
 
 def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
@@ -102,6 +117,24 @@ def test_periodic_reminder_appends_compact_sections_on_tenth_tool_call(monkeypat
     assert "## AI Reminder" in text
     assert "BOOTSTRAP PACKET" not in text
     assert "LIVE CODE MODE CAPABILITIES" not in text
+
+
+def test_periodic_reminder_includes_error_case_ledger(monkeypatch, tmp_path) -> None:
+    (tmp_path / "bootstrap").mkdir()
+    (tmp_path / "bootstrap" / "intro.md").write_text(
+        "## Code Mode capability index\nINDEX\n\n## AI Reminder\nREMINDER\n"
+    )
+    (tmp_path / "EORROR_CASE.md").write_text(
+        "# EORROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
+        "\n## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록.\n"
+    )
+    monkeypatch.setattr(app, "_wiki_path", lambda: tmp_path)
+
+    text = app._read_periodic_reminder()
+    assert "## Code Mode capability index" in text
+    assert "## AI Reminder" in text
+    assert "# EORROR_CASE" in text
+    assert "- sample | 1 | 260817-000000" in text
 
 
 def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> None:

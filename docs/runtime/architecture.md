@@ -17,7 +17,7 @@ ChatGPT Web
   -> local WSL2
 ```
 
-`code_mode` is the primary harnessable execution root. `wsl2_sync` and `wsl2_async` remain lower-level escape/control paths rather than the main orchestration API.
+`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `input` (`input=""` when no payload is needed). `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the durable process-lifecycle path.
 
 ## Stable Web MCP Surface
 
@@ -25,7 +25,7 @@ Exactly four top-level tools are exposed:
 
 - `bootstrap` — loads trusted fresh-session context from the user's local WSL2 wiki.
 - `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports foreground execution and durable background execution with `background=True` plus `status/result/cancel` lifecycle actions.
-- `wsl2_sync` — short synchronous shell execution with immediate result.
+- `wsl2_sync` — exceptional short synchronous shell path for transport/smoke checks or explicit cases where Code Mode is not appropriate.
 - `wsl2_async` — durable shell/process lifecycle interface, normally backed by `systemd --user`.
 
 The surface stays intentionally small. New reusable behavior should normally become a registered `code_mode` capability instead of a new top-level MCP tool.

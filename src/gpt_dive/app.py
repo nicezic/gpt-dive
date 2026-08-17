@@ -43,21 +43,29 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Prefer code_mode for "
-        "multi-step, parallel, preprocessing, or quote-heavy work; wsl2_sync for simple "
-        "one-shot shell; wsl2_async for durable jobs. On error/mistake, report immediately "
-        "and use /grill-me."
+        "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
+        "default for normal local work, including one-shot file/shell operations; use "
+        "wsl2_async for durable jobs and wsl2_sync only for transport/smoke checks or when "
+        "explicitly required. Every MCP code_mode call requires string input; use input='' "
+        "when there is no payload. Never guess capability names, arguments, or return shapes: "
+        "inspect the live contract first. On error/mistake, report immediately and Web Search "
+        "current primary sources before retrying or theorizing."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
         "processes, network state, and command results as belonging to the user's local "
         "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
-        "session, call bootstrap first. After bootstrap, prefer code_mode as the primary execution "
-        "root for normal work: it composes capabilities, runs independent work in parallel, "
-        "preprocesses large results locally, and accepts opaque input separately from Monty source. "
-        "On any tool error or assistant mistake, report it to the user immediately and use /grill-me "
-        "to examine cause and response. Use wsl2_sync only for short direct commands "
-        "that need an immediate result, and "
+        "session, call bootstrap first. After bootstrap, use code_mode as the default execution "
+        "root for normal local work, including short one-shot file and shell operations. Every Web "
+        "MCP code_mode call must explicitly provide input as a string; use input='' when there is no "
+        "payload or for lifecycle calls. Never pass an object/list as input; serialize structured "
+        "payloads to text and parse them inside Code Mode if needed. Never invent capability names, "
+        "parameter names, optional arguments, or return shapes from memory. Inspect the live MCP "
+        "schema/CAPABILITIES contract first whenever uncertain. On any tool error or assistant "
+        "mistake, report it immediately, Web Search current primary sources before retrying or "
+        "committing to a theory, then verify against live local state. Use /grill-me only when deeper "
+        "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke "
+        "checks, explicit user requests, or cases where Code Mode is genuinely inapplicable; use "
         "wsl2_async for durable background job "
         "lifecycle operations. Background jobs survive MCP server restarts and completed job "
         "logs are retained for 5 days. When the client negotiates "
@@ -225,10 +233,15 @@ def _read_bootstrap_packet() -> dict[str, Any]:
 _PERIODIC_REMINDER_INTERVAL = 10
 _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
 _PERIODIC_REMINDER_SECTIONS = ("Code Mode capability index", "AI Reminder")
+_ERROR_CASE_FILE = "EORROR_CASE.md"
+
+
+def _error_case_path() -> Path:
+    return _wiki_path() / _ERROR_CASE_FILE
 
 
 def _read_periodic_reminder() -> str:
-    """Read only the compact manually maintained reminder sections from bootstrap intro."""
+    """Read the compact reminder sections plus the current mistake ledger."""
     intro = _wiki_path() / "bootstrap" / "intro.md"
     text = intro.read_text(errors="replace")
     sections: list[str] = []
@@ -241,6 +254,7 @@ def _read_periodic_reminder() -> str:
         if not match:
             raise ValueError(f"bootstrap intro missing periodic reminder section: {heading}")
         sections.append(f"## {heading}\n{match.group('body').rstrip()}")
+    sections.append(_error_case_path().read_text(errors="replace").rstrip())
     return "\n\n".join(sections)
 
 
@@ -782,18 +796,6 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
     return _background_error(raw, code=error_code, message=error_message)
 
 
-@mcp.tool(
-    title="Pydantic Monty Code Mode",
-    description=(
-        "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
-        "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
-        "- Call registered capabilities directly with await name(...).\n"
-        "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
-        "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
-        "- Use INPUT for complex payloads and CWD as the capability workspace.\n"
-        "- Use background=True only for detached Code Mode jobs."
-    ),
-)
 async def code_mode(
     code: Annotated[
         str | None,
@@ -888,6 +890,82 @@ async def code_mode(
         await asyncio.to_thread(_cleanup_code_mode_payload, job_id)
         return state
     raise ValueError("unsupported code_mode action; choose status, result, or cancel")
+
+
+@mcp.tool(
+    name="code_mode",
+    title="Pydantic Monty Code Mode",
+    description=(
+        "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
+        "- Default to code_mode for normal local work, including one-shot file/shell operations.\n"
+        "- Every MCP call requires input as a string; use input='' when there is no payload.\n"
+        "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
+        "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
+        "- Call registered capabilities directly with await name(...).\n"
+        "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
+        "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
+        "- Use INPUT for payload data and CWD as the capability workspace.\n"
+        "- Use background=True only for detached Code Mode jobs."
+    ),
+)
+async def _mcp_code_mode(
+    input: Annotated[
+        str,
+        Field(
+            description=(
+                "Required opaque string payload exposed to Monty code as INPUT. Always provide this "
+                "field: use input='' when no payload is needed or for lifecycle actions. Never pass "
+                "an object/list directly. For structured data, serialize it to text first and parse "
+                "inside Code Mode. Safe shell example: input='set -e\\npwd\\n' with "
+                "code='r = await local_exec(command=\"bash\", stdin=INPUT, cwd=CWD); r'."
+            )
+        ),
+    ],
+    code: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Monty Python executable logic. Keep code simple and keep payload/data in INPUT. "
+                "Do not guess capability contracts: inspect CAPABILITIES/live schema when uncertain. "
+                "Capability results are dicts, e.g. r['stdout']."
+            )
+        ),
+    ] = None,
+    cwd: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional default WSL2 working directory exposed to code as CWD and inherited by "
+                "registered capabilities when supported. CWD is a path string, not process chdir."
+            )
+        ),
+    ] = None,
+    background: Annotated[
+        bool,
+        Field(description="Detach this Code Mode program as a durable background job."),
+    ] = False,
+    action: Annotated[
+        str | None,
+        Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
+    ] = None,
+    job_id: Annotated[
+        str | None,
+        Field(description="Background Code Mode job ID for lifecycle actions."),
+    ] = None,
+) -> dict[str, Any]:
+    """Model-facing Code Mode wrapper with an explicit INPUT contract."""
+    if action is not None and input != "":
+        raise ValueError(
+            "code_mode lifecycle calls require input='' because lifecycle actions have no payload"
+        )
+    return await code_mode(
+        code=code,
+        cwd=cwd,
+        input=input if action is None else None,
+        background=background,
+        action=action,
+        job_id=job_id,
+    )
 
 
 def _required_job_id(action: str, job_id: str | None) -> str:
