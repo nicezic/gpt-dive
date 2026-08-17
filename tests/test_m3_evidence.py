@@ -293,6 +293,7 @@ def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -
     assert result["ok"] is True
     assert result["done"] is True
     assert result["attempts"] == 2
+    assert result["validation_errors"] == ["invalid m3 evidence JSON"]
     assert result["usage"] == {"requests": 2, "output_tokens": 12}
     assert "previous JSON response failed validation" not in str(calls[0]["prompt"])
     assert "previous JSON response failed validation" in str(calls[1]["prompt"])
@@ -314,6 +315,7 @@ def test_invoke_m3_evidence_retry_reports_semantic_validation_error(monkeypatch)
     assert result["ok"] is True
     assert result["attempts"] == 2
     assert result["queries"] == ["find evidence"]
+    assert result["validation_errors"] == ["missing must be empty when done is true"]
     assert "missing must be empty when done is true" in str(calls[1]["prompt"])
 
 
@@ -383,6 +385,10 @@ def test_invoke_m3_evidence_rejects_unresolved_missing_without_query_before_fina
 
     assert result["ok"] is False
     assert result["attempts"] == 2
+    assert result["validation_errors"] == [
+        "unresolved missing evidence requires at least one query before the final research round",
+        "unresolved missing evidence requires at least one query before the final research round",
+    ]
     assert "at least one query" in result["error"]
 
 

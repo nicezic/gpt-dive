@@ -171,6 +171,7 @@ async def invoke_m3_evidence(
     )
     usage: dict[str, int | float] = {}
     last_error: Exception | None = None
+    validation_errors: list[str] = []
     last_raw = ""
     last_bare: dict[str, Any] = {}
 
@@ -201,6 +202,9 @@ async def invoke_m3_evidence(
             )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             last_error = exc
+            validation_errors.append(
+                "invalid m3 evidence JSON" if isinstance(exc, json.JSONDecodeError) else str(exc)
+            )
             if attempt < 2:
                 prompt = _retry_prompt(prompt, exc)
                 continue
@@ -213,6 +217,7 @@ async def invoke_m3_evidence(
             **validated,
             "usage": usage,
             "attempts": attempt,
+            "validation_errors": validation_errors,
         }
 
     assert last_error is not None
@@ -224,4 +229,5 @@ async def invoke_m3_evidence(
         "raw_output": last_raw,
         "usage": usage,
         "attempts": 2,
+        "validation_errors": validation_errors,
     }
