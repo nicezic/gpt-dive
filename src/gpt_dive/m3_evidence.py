@@ -60,6 +60,7 @@ Rules:
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
 - Every query must be non-empty and distinct from the other proposed queries.
 - As soon as every explicitly requested aspect is supported, stop: set `done` true, `missing` empty, and `queries` empty.
+- Before the final research round, if `missing` is non-empty and the maximum query budget is greater than zero, `queries` must contain at least one useful retrieval query so the harness can continue.
 - If this is the final research round ({max_rounds}), do not propose any more queries. If required evidence is still missing, report it in `missing`, leave `queries` empty, and set `done` false.
 
 Return ONLY one JSON object with exactly these keys:
@@ -110,6 +111,8 @@ def _validate_payload(
         raise ValueError("queries must be empty when done is true")
     if value["done"] and value["missing"]:
         raise ValueError("missing must be empty when done is true")
+    if not final_round and max_queries > 0 and value["missing"] and not normalized_queries:
+        raise ValueError("unresolved missing evidence requires at least one query before the final research round")
     value["queries"] = normalized_queries
     if evidence_labels:
         for field in ("known", "conflicts"):

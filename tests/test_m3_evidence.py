@@ -340,6 +340,52 @@ def test_invoke_m3_evidence_final_round_can_report_unresolved_missing(monkeypatc
     assert "final research round" in str(calls[0]["prompt"])
 
 
+def test_invoke_m3_evidence_rejects_unresolved_missing_without_query_before_final_round(
+    monkeypatch,
+) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":["need one more source"],"conflicts":[],"queries":[],"done":false}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(
+        evidence_module.invoke_m3_evidence(
+            question="q", evidence="e", round_number=1, max_rounds=3, max_queries=3
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["attempts"] == 2
+    assert "at least one query" in result["error"]
+
+
+def test_invoke_m3_evidence_allows_unresolved_missing_without_query_when_queries_disabled(
+    monkeypatch,
+) -> None:
+    async def fake_invoke_bare(**kwargs):
+        return {
+            "ok": True,
+            "model": "m3",
+            "provider": "minimax",
+            "output": '{"known":[],"missing":["need one more source"],"conflicts":[],"queries":[],"done":false}',
+        }
+
+    monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
+    result = asyncio.run(
+        evidence_module.invoke_m3_evidence(
+            question="q", evidence="e", round_number=1, max_rounds=3, max_queries=0
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["missing"] == ["need one more source"]
+    assert result["queries"] == []
+
+
 def test_invoke_m3_evidence_rejects_round_beyond_max_before_model_call(monkeypatch) -> None:
     calls = 0
 
