@@ -224,6 +224,12 @@ def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
     assert "auto-reroute" in result["stderr"]
 
 
+def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
+    result = gpt_dive.wsl2_sync("pytest --version", timeout=5)
+    assert result["returncode"] == 2
+    assert "Direct 'pytest' execution is prohibited" in result["stderr"]
+
+
 def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> None:
     import time
 
@@ -245,6 +251,31 @@ def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> Non
         assert result["exit_code"] == 0
         assert "Python 3.14" in result["stdout"]
         assert "auto-reroute" in result["stderr"]
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
+    import time
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path
+        gpt_dive.jobs._systemd_available = False
+        started = gpt_dive.wsl2_async("start", command="pytest --version", timeout=5)
+        deadline = time.monotonic() + 3
+        state = started
+        while time.monotonic() < deadline:
+            state = gpt_dive.wsl2_async("status", job_id=started["job_id"])
+            if state["status"] != "running":
+                break
+            time.sleep(0.03)
+        result = gpt_dive.wsl2_async("result", job_id=started["job_id"])
+        assert result["ready"] is True
+        assert result["exit_code"] == 2
+        assert "Direct 'pytest' execution is prohibited" in result["stderr"]
     finally:
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd
