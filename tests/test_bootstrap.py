@@ -19,7 +19,7 @@ def _write_test_wiki(tmp_path: Path) -> Path:
 
 1. `bootstrap/intro.md`
 2. `user/profile.md`
-3. `EORROR_CASE.md`
+3. `ERROR_CASE.md`
 
 ## On demand
 
@@ -31,8 +31,8 @@ def _write_test_wiki(tmp_path: Path) -> Path:
         "## AI Reminder\nREMINDER\n\n## Dive call preview\nPREVIEW\n"
     )
     (wiki / "user" / "profile.md").write_text("PROFILE")
-    (wiki / "EORROR_CASE.md").write_text(
-        "# EORROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
+    (wiki / "ERROR_CASE.md").write_text(
+        "# ERROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
         "\n## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록.\n"
     )
     (wiki / "log.md").write_text("RECENT LOG MUST NOT BE PRELOADED")
@@ -65,7 +65,7 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert result["preloaded_files"] == [
         "bootstrap/intro.md",
         "user/profile.md",
-        "EORROR_CASE.md",
+        "ERROR_CASE.md",
     ]
     assert "===== BEGIN bootstrap/preload.md =====" in result["stdout"]
     assert "INTRO" in result["stdout"]
@@ -86,7 +86,7 @@ def test_periodic_reminder_reads_compact_intro_sections_and_error_cases(
     assert reminder == (
         "## Code Mode capability index\nINDEX\n\n"
         "## AI Reminder\nREMINDER\n\n"
-        "# EORROR_CASE\n\n## Tool / command mistakes\n"
+        "# ERROR_CASE\n\n## Tool / command mistakes\n"
         "- sample | 1 | 260817-000000\n\n"
         "## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록."
     )

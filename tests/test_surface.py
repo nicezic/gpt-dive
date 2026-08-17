@@ -96,7 +96,7 @@ async def _call_periodic_reminder_middleware(
     return result
 
 
-def test_periodic_reminder_appends_compact_sections_on_seventh_tool_call(monkeypatch) -> None:
+def test_periodic_reminder_appends_compact_sections_on_third_tool_call(monkeypatch) -> None:
     monkeypatch.setattr(
         app,
         "_read_periodic_reminder",
@@ -104,15 +104,15 @@ def test_periodic_reminder_appends_compact_sections_on_seventh_tool_call(monkeyp
     )
     state: dict[str, object] = {}
 
-    for _ in range(6):
+    for _ in range(2):
         result = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
         assert len(result.content) == 1
 
-    seventh = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
-    assert len(seventh.content) == 2
-    assert isinstance(seventh.content[-1], TextContent)
-    text = seventh.content[-1].text
-    assert "PERIODIC DIVE REMINDER: 7 tool calls" in text
+    third = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
+    assert len(third.content) == 2
+    assert isinstance(third.content[-1], TextContent)
+    text = third.content[-1].text
+    assert "PERIODIC DIVE REMINDER: 3 tool calls" in text
     assert "## Code Mode capability index" in text
     assert "## AI Reminder" in text
     assert "BOOTSTRAP PACKET" not in text
@@ -124,8 +124,8 @@ def test_periodic_reminder_includes_error_case_ledger(monkeypatch, tmp_path) -> 
     (tmp_path / "bootstrap" / "intro.md").write_text(
         "## Code Mode capability index\nINDEX\n\n## AI Reminder\nREMINDER\n"
     )
-    (tmp_path / "EORROR_CASE.md").write_text(
-        "# EORROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
+    (tmp_path / "ERROR_CASE.md").write_text(
+        "# ERROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
         "\n## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록.\n"
     )
     monkeypatch.setattr(app, "_wiki_path", lambda: tmp_path)
@@ -133,7 +133,7 @@ def test_periodic_reminder_includes_error_case_ledger(monkeypatch, tmp_path) -> 
     text = app._read_periodic_reminder()
     assert "## Code Mode capability index" in text
     assert "## AI Reminder" in text
-    assert "# EORROR_CASE" in text
+    assert "# ERROR_CASE" in text
     assert "- sample | 1 | 260817-000000" in text
 
 
@@ -141,18 +141,18 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
     monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "REMINDER")
     state: dict[str, object] = {}
 
-    for _ in range(6):
+    for _ in range(2):
         asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
 
     explicit = asyncio.run(_call_periodic_reminder_middleware("bootstrap", state))
     assert len(explicit.content) == 1
 
-    for _ in range(6):
+    for _ in range(2):
         result = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
         assert len(result.content) == 1
 
-    seventh_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
-    assert len(seventh_after_reset.content) == 2
+    third_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
+    assert len(third_after_reset.content) == 2
 
 
 def test_wsl2_async_capabilities_are_runtime_discoverable() -> None:

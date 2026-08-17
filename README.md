@@ -12,7 +12,7 @@ ChatGPT Web
        -> wsl2_async     # durable job lifecycle
 ```
 
-Fresh sessions begin with `bootstrap`. After every 10 non-bootstrap `@dive` tool calls on the same MCP connection, the 10th tool result automatically appends a fresh bootstrap packet so live Code Mode signatures are re-injected; an explicit `bootstrap` resets that connection's counter. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
+Fresh sessions begin with `bootstrap`. After every 3 non-bootstrap `@dive` tool calls on the same MCP connection, the 3rd tool result automatically appends the compact periodic Dive reminder (Code Mode capability index, AI Reminder, and the current error-case ledger); an explicit `bootstrap` resets that connection's counter. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
 
 ## OpenAI Codex subscription compatibility
 
