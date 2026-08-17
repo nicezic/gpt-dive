@@ -207,6 +207,70 @@ try {
 """
 
 
+_SCHEMA_PACK_READER = r"""
+import { loadConfig, toEngineConfig } from './src/core/config.ts';
+import { createEngine } from './src/core/engine-factory.ts';
+import { buildSchemaPackPerSourceSnapshot } from './src/core/eval-capture.ts';
+const sourceIds = JSON.parse(process.env.GPT_DIVE_GBRAIN_SOURCE_IDS ?? '[]');
+const remote = process.env.GPT_DIVE_GBRAIN_REMOTE === '1';
+if (!Array.isArray(sourceIds) || sourceIds.length === 0 || !sourceIds.every(x => typeof x === 'string')) throw new Error('invalid source ids');
+const config = loadConfig();
+if (!config) throw new Error('no GBrain config');
+const engineConfig = toEngineConfig(config);
+const engine = await createEngine(engineConfig);
+await engine.connect(engineConfig);
+try {
+  const snapshot = await buildSchemaPackPerSourceSnapshot(engine, sourceIds, remote, config);
+  console.log(JSON.stringify(snapshot));
+} finally {
+  await engine.disconnect();
+}
+"""
+
+
+async def read_current_schema_pack_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the current per-source schema-pack snapshot using GBrain's canonical resolver."""
+    source_ids = row.get("source_ids")
+    if not isinstance(source_ids, list) or not source_ids or not all(isinstance(item, str) for item in source_ids):
+        raise RuntimeError("capture has invalid source_ids for schema-pack verification")
+    env = os.environ.copy()
+    env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
+    env["GPT_DIVE_GBRAIN_SOURCE_IDS"] = json.dumps(source_ids)
+    env["GPT_DIVE_GBRAIN_REMOTE"] = "1" if row.get("remote") is True else "0"
+    gbrain_repo = Path(env.get("GPT_DIVE_GBRAIN_REPO", Path.home() / "gbrain"))
+    proc = await asyncio.create_subprocess_exec(
+        "bun",
+        "-",
+        cwd=gbrain_repo,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    stdout, stderr = await proc.communicate(_SCHEMA_PACK_READER.encode())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"failed to resolve current GBrain schema-pack provenance: {stderr.decode(errors='replace').strip()}"
+        )
+    value = json.loads(stdout)
+    if not isinstance(value, dict):
+        raise TypeError("current GBrain schema-pack snapshot is unavailable")
+    return value
+
+
+async def verify_schema_pack_provenance(row: dict[str, Any]) -> bool:
+    """Fail closed on pack drift for new captures; legacy captures without provenance remain replayable."""
+    captured = row.get("schema_pack_per_source")
+    if captured is None:
+        return False
+    if not isinstance(captured, dict):
+        raise TypeError("captured schema-pack provenance is invalid")
+    current = await read_current_schema_pack_snapshot(row)
+    if current != captured:
+        raise RuntimeError("schema-pack provenance drift: current active pack differs from the captured replay snapshot")
+    return True
+
+
 async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int) -> list[dict[str, Any]]:
     """Materialize captured chunk IDs exactly, without issuing a new retrieval query."""
     if chunk_limit <= 0:
@@ -252,6 +316,7 @@ async def run_replay(
     """Run captured Pydantic queries through their exact captured chunks and M3 analysis."""
     results: list[dict[str, Any]] = []
     for row in rows:
+        schema_pack_checked = await verify_schema_pack_provenance(row)
         captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
         reject_post_capture_page_updates(row, captured_chunks)
         chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
@@ -267,6 +332,7 @@ async def run_replay(
                 "source_ids": row["source_ids"],
                 "chunk_count": len(chunks),
                 "excluded_future_chunks": excluded_future_chunks,
+                "schema_pack_checked": schema_pack_checked,
                 "controller": controller,
             }
         )

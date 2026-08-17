@@ -151,6 +151,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0
+    assert report["results"][0]["schema_pack_checked"] is False
 
 
 def test_replay_question_prefers_explicit_as_of_ts() -> None:
@@ -205,3 +206,55 @@ def test_filter_future_temporal_evidence_keeps_non_temporal_question() -> None:
     kept, excluded = replay_module.filter_future_temporal_evidence(row, chunks)
     assert kept == chunks
     assert excluded == 0
+
+
+def test_schema_pack_provenance_legacy_capture_skips_check() -> None:
+    row = {"schema_pack_per_source": None}
+    assert asyncio.run(replay_module.verify_schema_pack_provenance(row)) is False
+
+
+def test_schema_pack_provenance_accepts_exact_match(monkeypatch) -> None:
+    snapshot = {
+        "pydantic-ai": {
+            "pack_name": "gbrain-base-v2",
+            "pack_version": "1.0.0",
+            "manifest_sha8": "deadbeef",
+            "alias_closure_resolved": {"note": ["memo", "note"]},
+        }
+    }
+
+    async def fake_current(row):
+        return snapshot
+
+    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
+    assert asyncio.run(replay_module.verify_schema_pack_provenance({"schema_pack_per_source": snapshot})) is True
+
+
+def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
+    captured = {
+        "pydantic-ai": {
+            "pack_name": "gbrain-base-v2",
+            "pack_version": "1.0.0",
+            "manifest_sha8": "deadbeef",
+            "alias_closure_resolved": {"note": ["memo", "note"]},
+        }
+    }
+    current = {
+        "pydantic-ai": {
+            "pack_name": "gbrain-base-v2",
+            "pack_version": "1.0.1",
+            "manifest_sha8": "cafebabe",
+            "alias_closure_resolved": {"note": ["memo", "note"]},
+        }
+    }
+
+    async def fake_current(row):
+        return current
+
+    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
+    try:
+        asyncio.run(replay_module.verify_schema_pack_provenance({"schema_pack_per_source": captured}))
+    except RuntimeError as exc:
+        assert "schema-pack provenance drift" in str(exc)
+    else:
+        raise AssertionError("schema-pack drift must fail historical replay")
