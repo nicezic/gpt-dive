@@ -86,7 +86,7 @@ def reject_post_capture_page_updates(row: dict[str, Any], chunks: list[dict[str,
 
 
 def verify_captured_chunk_hashes(
-    row: dict[str, Any], chunks: list[dict[str, Any]], *, chunk_limit: int
+    row: dict[str, Any], chunks: list[dict[str, Any]], *, chunk_limit: int | None
 ) -> bool:
     """Verify exact captured evidence text when SHA-256 provenance is available."""
     captured = row.get("retrieved_chunk_hashes")
@@ -97,7 +97,7 @@ def verify_captured_chunk_hashes(
     chunk_ids = row.get("retrieved_chunk_ids")
     if not isinstance(chunk_ids, list) or len(captured) != len(chunk_ids):
         raise RuntimeError("captured chunk hash provenance is not aligned with retrieved_chunk_ids")
-    expected = captured[:chunk_limit]
+    expected = captured if chunk_limit is None else captured[:chunk_limit]
     if len(expected) != len(chunks):
         raise RuntimeError("captured chunk hash provenance does not cover materialized chunks")
     changed_ids: list[int] = []
@@ -311,11 +311,13 @@ async def verify_schema_pack_provenance(row: dict[str, Any]) -> bool:
     return True
 
 
-async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int) -> list[dict[str, Any]]:
+async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) -> list[dict[str, Any]]:
     """Materialize captured chunk IDs exactly, without issuing a new retrieval query."""
-    if chunk_limit <= 0:
+    if chunk_limit is not None and chunk_limit <= 0:
         raise ValueError("chunk_limit must be greater than 0")
-    chunk_ids = list(row["retrieved_chunk_ids"])[:chunk_limit]
+    chunk_ids = list(row["retrieved_chunk_ids"])
+    if chunk_limit is not None:
+        chunk_ids = chunk_ids[:chunk_limit]
     source_ids = set(row["source_ids"])
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
@@ -350,7 +352,7 @@ async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int) -> list
 async def run_replay(
     rows: list[dict[str, Any]],
     *,
-    chunk_limit: int = 4,
+    chunk_limit: int | None = None,
     max_queries: int = 3,
 ) -> dict[str, Any]:
     """Run captured Pydantic queries through their exact captured chunks and M3 analysis."""
@@ -398,7 +400,12 @@ def main() -> None:
     )
     parser.add_argument("--against", type=Path, required=True, help="NDJSON from `gbrain eval export`.")
     parser.add_argument("--limit", type=int, default=10, help="Maximum captured query rows to replay.")
-    parser.add_argument("--chunk-limit", type=int, default=4, help="Maximum captured chunks supplied to M3 per query.")
+    parser.add_argument(
+        "--chunk-limit",
+        type=int,
+        default=None,
+        help="Optional maximum captured chunks supplied to M3 per query; default preserves all captured chunks.",
+    )
     parser.add_argument("--max-queries", type=int, default=3, help="Maximum M3 follow-up queries per row.")
     args = parser.parse_args()
     if args.limit <= 0:

@@ -209,6 +209,52 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["results"][0]["chunk_hashes_checked"] is True
 
 
+def test_run_replay_preserves_all_captured_chunks_by_default(monkeypatch) -> None:
+    async def fake_read(row, *, chunk_limit):
+        assert chunk_limit is None
+        return [
+            {
+                "id": i,
+                "source_id": "pydantic-ai",
+                "slug": f"s{i}",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": f"fact {i}",
+            }
+            for i in range(1, 7)
+        ]
+
+    async def fake_m3(**kwargs):
+        for i in range(1, 7):
+            assert f"[E{i}]" in kwargs["evidence"]
+        return {
+            "ok": True,
+            "done": True,
+            "known": ["all facts"],
+            "missing": [],
+            "conflicts": [],
+            "queries": [],
+            "attempts": 1,
+        }
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    row = {
+        "schema_version": 1,
+        "id": 8,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": [f"s{i}" for i in range(1, 7)],
+        "retrieved_chunk_ids": list(range(1, 7)),
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
+    report = asyncio.run(replay_module.run_replay([row]))
+    assert report["results"][0]["chunk_count"] == 6
+
 def test_replay_question_prefers_explicit_as_of_ts() -> None:
     row = {
         "query": "Which version is current?",
