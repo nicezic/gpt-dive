@@ -8,7 +8,7 @@ from gpt_dive.subagent_runtime import MODEL_SPECS, invoke_subagent, model_catalo
 
 
 def test_model_catalog_is_sanitized_and_complete() -> None:
-    assert set(MODEL_SPECS) == {"opus5", "m3", "sol", "terra", "luna"}
+    assert set(MODEL_SPECS) == {"opus5", "kunavo-opus5", "m3", "sol", "terra", "luna"}
     catalog = model_catalog()
     assert catalog["opus5"]["provider"] == "aiapiflow"
     assert catalog["m3"]["model"] == "MiniMax-M3"

@@ -30,6 +30,8 @@ Implementation:
 
 The current reviewer instruction is intentionally small. Its job is not to teach a frontier model how to review; it explains the packet/evidence economics and the escape hatch when context is still insufficient:
 
+For the Kunavo cached multi-round path, the current policy is deliberately asymmetric: a decisive read-only tool call is allowed when it prevents reasoning from a false premise, while broad exploratory research should normally be requested as focused next-packet evidence. Web SOL may gather that evidence itself or delegate suitable factual research to the cheaper `agy_worker` lane. Prompt-cache reuse lowers stable-prefix replay cost; it does not make premium reasoning/tool output free.
+
 ```text
 Act as an independent peer reviewer.
 The packet carries causal context and may include a first-run Code Mode evidence loader.
@@ -176,6 +178,28 @@ Treat cache support and effective price as runtime/provider evidence, not as a p
 - `~/wiki/user/models-and-providers.md`
 - `~/wiki/user/aiapiflow-provider.md`
 - provider-lab profiles/results
+
+### Kunavo repeated-review path
+
+For a multi-round premium review, GPT Dive also exposes `kunavo-opus5` as a **bare-only** alias. It routes `claude-opus-5` through the verified Kunavo Anthropic-compatible endpoint and is intentionally disabled for the ordinary subagent lane.
+
+The repeated-review cache shape stays inside the existing `bare()` capability rather than adding another MCP tool. Web SOL sends:
+
+```text
+<stable base packet>
+<!-- GPT_DIVE_PEER_CACHE_BREAK -->
+<round-specific delta>
+```
+
+For `kunavo-opus5` peer-review mode, `bare.py` splits that marker and calls Pydantic AI with:
+
+```python
+[stable_base, CachePoint(ttl="5m"), round_delta]
+```
+
+This matters because `bare()` is stateless across calls: there is no durable provider conversation to reuse. Cache reuse therefore depends on preserving the **same stable prefix** across review rounds. The review target's stable `PEER-REVIEW.md` content belongs before the cache point; new answers, corrections, or challenges belong after it as the round delta.
+
+Local provider testing previously observed Kunavo cache reuse as `WRITE -> READ -> READ` for a repeated prefix. The 5-minute TTL is the currently verified conservative choice. Do not infer 1-hour support or build a fallback path until live evidence justifies it. If a round misses the cache because the TTL expired, ordinary input billing is acceptable; the workflow does not add recovery complexity merely to force a hit.
 
 ## Invocation
 

@@ -7,7 +7,8 @@ import signal
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent, UsageLimits
+from pydantic_ai import Agent, CachePoint, UsageLimits
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai_harness import CodeMode, FileSystem
 
 from .filesystem_policy import harness_denied_patterns, is_secret_path
@@ -18,12 +19,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
 
+_PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
+
 _PEER_REVIEW_INSTRUCTIONS = (
-    "Act as an independent peer reviewer. The packet carries the causal context and may include "
-    "a first-run Code Mode evidence loader; use that supplied packet as the primary evidence path. "
-    "Keep extra tool turns rare because third-party gateways may replay expensive uncached input. "
-    "If evidence is still insufficient, identify the missing information and suggest focused questions "
-    "or a better next packet instead of exploratory browsing unless the gap materially blocks judgment."
+    "Act as an independent peer reviewer. Use the supplied packet as the primary evidence path. "
+    "Read-only tools are allowed when a missing fact materially blocks judgment or is likely to change the answer; "
+    "do not guess merely to save tokens. Still consider token economy because premium-model reasoning, tool outputs, "
+    "and new context cost money even when a stable prompt prefix is cached. Avoid broad exploratory tool use by default. "
+    "When broader research can wait, state focused questions or the exact evidence needed so the host can return it in "
+    "the next packet, potentially using a cheaper subagent."
 )
 
 
@@ -95,26 +99,47 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     if peer_review:
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
+        peer_model_settings = (
+            AnthropicModelSettings(max_tokens=output_tokens_limit)
+            if alias is ModelAlias.KUNAVO_OPUS5
+            else None
+        )
         agent = Agent(
             build_model(alias),
             instructions=_PEER_REVIEW_INSTRUCTIONS,
             capabilities=_build_peer_review_capabilities(str(workspace_dir)),
+            model_settings=peer_model_settings,
         )
     else:
         # Preserve the true tool-less primitive for m3_evidence and direct low-level use.
         agent = Agent(build_model(alias))
+    run_prompt: str | list[Any] = prompt
+    if peer_review and alias is ModelAlias.KUNAVO_OPUS5 and _PEER_CACHE_BREAK in prompt:
+        stable_base, round_delta = prompt.split(_PEER_CACHE_BREAK, 1)
+        if not stable_base.strip() or not round_delta.strip():
+            raise ValueError("Kunavo peer cache marker requires non-empty base and round delta")
+        run_prompt = [stable_base, CachePoint(ttl="5m"), round_delta]
+
     # output_tokens_limit is a Pydantic usage budget, NOT the provider max_tokens cap.
     result = await agent.run(
-        prompt,
+        run_prompt,
         usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),
     )
+    response = result.response
+    finish_reason = response.finish_reason
+    provider_details = response.provider_details or {}
+    provider_finish_reason = provider_details.get("finish_reason")
+    truncated = finish_reason == "length"
     return {
-        "ok": True,
+        "ok": not truncated,
         "model": alias.value,
         "provider": alias.provider,
         "model_name": alias.model_name,
         "output": str(result.output),
         "mode": "peer-review" if peer_review else "bare",
+        "finish_reason": finish_reason,
+        "provider_finish_reason": provider_finish_reason,
+        "truncated": truncated,
         "usage": _usage_summary(result),
     }
 

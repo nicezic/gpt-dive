@@ -49,6 +49,16 @@ class ModelAlias(StrEnum):
         "AIAPIFLOW_CLAUDE_KEY",
         "https://aiapiflow.com",
     )
+    KUNAVO_OPUS5 = (
+        "kunavo-opus5",
+        "kunavo",
+        "claude-opus-5",
+        "anthropic-compatible",
+        "KUNAVO_API_KEY",
+        "https://api.kunavo.com",
+        True,
+        False,
+    )
     M3 = (
         "m3",
         "minimax",
