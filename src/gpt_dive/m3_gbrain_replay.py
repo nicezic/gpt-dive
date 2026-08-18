@@ -453,12 +453,29 @@ async def run_replay(
         {"run": run, **summarize([item for item in results if item["run"] == run])}
         for run in range(1, repeat + 1)
     ]
+    capture_stability = []
+    for row in rows:
+        capture_id = row.get("id")
+        samples = [item for item in results if item["capture_id"] == capture_id]
+        ok_samples = [item for item in samples if item["controller"].get("ok")]
+        done_values = [item["controller"].get("done") for item in ok_samples]
+        capture_stability.append(
+            {
+                "capture_id": capture_id,
+                "samples": len(samples),
+                "successful_samples": len(ok_samples),
+                "done_true": sum(value is True for value in done_values),
+                "done_false": sum(value is False for value in done_values),
+                "completion_stable": len(set(done_values)) <= 1 and len(ok_samples) == len(samples),
+            }
+        )
     return {
         "rows": len(rows),
         "repeat": repeat,
         "samples": len(results),
         **summary,
         "run_stats": run_stats,
+        "capture_stability": capture_stability,
         "results": results,
     }
 

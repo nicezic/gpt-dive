@@ -204,6 +204,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["proposed_queries"] == 1
     assert report["controller_failures"] == 0
     assert report["validation_error_counts"] == {"missing must be empty when done is true": 1}
+    assert report["capture_stability"] == [{"capture_id": 7, "samples": 1, "successful_samples": 1, "done_true": 0, "done_false": 1, "completion_stable": True}]
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0
@@ -533,3 +534,25 @@ def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
         assert "schema-pack provenance drift" in str(exc)
     else:
         raise AssertionError("schema-pack drift must fail historical replay")
+
+
+def test_capture_stability_detects_completion_flip_across_repeats(monkeypatch) -> None:
+    async def fake_read(row, *, chunk_limit):
+        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact"}]
+
+    outputs = iter([
+        {"ok": True, "done": False, "known": ["fact [E1]"], "missing": ["detail"], "conflicts": [], "queries": ["detail"], "attempts": 1, "validation_errors": []},
+        {"ok": True, "done": True, "known": ["fact [E1]"], "missing": [], "conflicts": [], "queries": [], "attempts": 1, "validation_errors": []},
+        {"ok": True, "done": False, "known": ["fact [E1]"], "missing": ["detail"], "conflicts": [], "queries": ["detail"], "attempts": 1, "validation_errors": []},
+    ])
+
+    async def fake_m3(**kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    row = {"schema_version": 1, "id": 7, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+
+    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+
+    assert report["capture_stability"] == [{"capture_id": 7, "samples": 3, "successful_samples": 3, "done_true": 1, "done_false": 2, "completion_stable": False}]
