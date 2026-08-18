@@ -476,6 +476,35 @@ def test_schema_pack_provenance_accepts_exact_match(monkeypatch) -> None:
     assert asyncio.run(replay_module.verify_schema_pack_provenance({"schema_pack_per_source": snapshot})) is True
 
 
+
+def test_schema_pack_provenance_allows_source_commit_drift(monkeypatch) -> None:
+    captured = {
+        "pydantic-ai": {
+            "pack_name": "gbrain-base-v2",
+            "pack_version": "1.0.0",
+            "manifest_sha8": "deadbeef",
+            "alias_closure_resolved": {"note": ["memo", "note"]},
+            "source_commit": "old123",
+        }
+    }
+    current = {
+        "pydantic-ai": {
+            "pack_name": "gbrain-base-v2",
+            "pack_version": "1.0.0",
+            "manifest_sha8": "deadbeef",
+            "alias_closure_resolved": {"note": ["memo", "note"]},
+            "source_commit": "new456",
+        }
+    }
+
+    async def fake_current(row):
+        return current
+
+    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
+    row = {"schema_pack_per_source": captured}
+    assert asyncio.run(replay_module.verify_schema_pack_provenance(row)) is True
+    assert replay_module.captured_source_commits(row) == {"pydantic-ai": "old123"}
+
 def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
     captured = {
         "pydantic-ai": {

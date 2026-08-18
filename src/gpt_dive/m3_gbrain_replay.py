@@ -311,15 +311,42 @@ async def read_current_schema_pack_snapshot(row: dict[str, Any]) -> dict[str, An
     return value
 
 
+def _schema_pack_semantics(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return only schema-pack semantics, excluding informational source revision lineage."""
+    normalized: dict[str, Any] = {}
+    for source_id, value in snapshot.items():
+        if isinstance(value, dict):
+            normalized[source_id] = {key: item for key, item in value.items() if key != "source_commit"}
+        else:
+            normalized[source_id] = value
+    return normalized
+
+
+def captured_source_commits(row: dict[str, Any]) -> dict[str, str | None]:
+    """Expose source revisions recorded with a capture without turning them into a replay gate."""
+    captured = row.get("schema_pack_per_source")
+    if not isinstance(captured, dict):
+        return {}
+    commits: dict[str, str | None] = {}
+    for source_id, value in captured.items():
+        if not isinstance(source_id, str) or not isinstance(value, dict) or "source_commit" not in value:
+            continue
+        commit = value.get("source_commit")
+        if commit is not None and not isinstance(commit, str):
+            raise TypeError("captured source commit provenance is invalid")
+        commits[source_id] = commit
+    return dict(sorted(commits.items()))
+
+
 async def verify_schema_pack_provenance(row: dict[str, Any]) -> bool:
-    """Fail closed on pack drift for new captures; legacy captures without provenance remain replayable."""
+    """Fail closed on pack-semantic drift; source revision lineage is informational."""
     captured = row.get("schema_pack_per_source")
     if captured is None:
         return False
     if not isinstance(captured, dict):
         raise TypeError("captured schema-pack provenance is invalid")
     current = await read_current_schema_pack_snapshot(row)
-    if current != captured:
+    if _schema_pack_semantics(current) != _schema_pack_semantics(captured):
         raise RuntimeError("schema-pack provenance drift: current active pack differs from the captured replay snapshot")
     return True
 
@@ -396,6 +423,7 @@ async def run_replay(
                     "chunk_count": len(chunks),
                     "excluded_future_chunks": excluded_future_chunks,
                     "schema_pack_checked": schema_pack_checked,
+                    "source_commits": captured_source_commits(row),
                     "chunk_hashes_checked": chunk_hashes_checked,
                     "controller": controller,
                 }
