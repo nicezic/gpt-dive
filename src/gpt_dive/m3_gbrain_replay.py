@@ -17,6 +17,7 @@ from .runtime_env import build_runtime_path
 
 _PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness"}
 _CURRENT_QUERY_RE = re.compile(r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE)
+_EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 _DYNAMIC_VALIDATION_ERROR_PATTERNS = (
     (re.compile(r"^(known|conflicts) item must cite an evidence label:.*$"), r"\1 item must cite an evidence label"),
     (re.compile(r"^(known|conflicts) item cites unknown evidence label\(s\):.*$"), r"\1 item cites unknown evidence label(s)"),
@@ -462,6 +463,21 @@ async def run_replay(
         known_counts = [len(item["controller"].get("known", [])) for item in ok_samples]
         missing_counts = [len(item["controller"].get("missing", [])) for item in ok_samples]
         query_counts = [len(item["controller"].get("queries", [])) for item in ok_samples]
+        known_evidence_label_sets = sorted(
+            {
+                tuple(
+                    sorted(
+                        {
+                            label
+                            for known in item["controller"].get("known", [])
+                            if isinstance(known, str)
+                            for label in _EVIDENCE_LABEL_RE.findall(known)
+                        }
+                    )
+                )
+                for item in ok_samples
+            }
+        )
         count_ranges = {
             "known_count_range": [min(known_counts), max(known_counts)] if known_counts else [0, 0],
             "missing_count_range": [min(missing_counts), max(missing_counts)] if missing_counts else [0, 0],
@@ -475,6 +491,10 @@ async def run_replay(
                 "done_true": sum(value is True for value in done_values),
                 "done_false": sum(value is False for value in done_values),
                 "completion_stable": len(set(done_values)) <= 1 and len(ok_samples) == len(samples),
+                "known_evidence_label_sets": [list(labels) for labels in known_evidence_label_sets],
+                "known_evidence_coverage_stable": (
+                    len(known_evidence_label_sets) <= 1 and len(ok_samples) == len(samples)
+                ),
                 **count_ranges,
                 "decision_shape_stable": (
                     len(ok_samples) == len(samples)
@@ -487,6 +507,9 @@ async def run_replay(
             item["done_true"] > 0 and item["done_false"] > 0 for item in capture_stability
         ),
         "known_count": sum(item["known_count_range"][0] != item["known_count_range"][1] for item in capture_stability),
+        "known_evidence_coverage": sum(
+            len(item["known_evidence_label_sets"]) > 1 for item in capture_stability
+        ),
         "missing_count": sum(item["missing_count_range"][0] != item["missing_count_range"][1] for item in capture_stability),
         "query_count": sum(item["query_count_range"][0] != item["query_count_range"][1] for item in capture_stability),
         "decision_shape": sum(not item["decision_shape_stable"] for item in capture_stability),

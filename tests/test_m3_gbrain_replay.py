@@ -204,7 +204,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["proposed_queries"] == 1
     assert report["controller_failures"] == 0
     assert report["validation_error_counts"] == {"missing must be empty when done is true": 1}
-    assert report["capture_stability"] == [{"capture_id": 7, "samples": 1, "successful_samples": 1, "done_true": 0, "done_false": 1, "completion_stable": True, "known_count_range": [1, 1], "missing_count_range": [1, 1], "query_count_range": [1, 1], "decision_shape_stable": True}]
+    assert report["capture_stability"] == [{"capture_id": 7, "samples": 1, "successful_samples": 1, "done_true": 0, "done_false": 1, "completion_stable": True, "known_evidence_label_sets": [["[E1]"]], "known_evidence_coverage_stable": True, "known_count_range": [1, 1], "missing_count_range": [1, 1], "query_count_range": [1, 1], "decision_shape_stable": True}]
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0
@@ -555,7 +555,7 @@ def test_capture_stability_detects_completion_flip_across_repeats(monkeypatch) -
 
     report = asyncio.run(replay_module.run_replay([row], repeat=3))
 
-    assert report["capture_stability"] == [{"capture_id": 7, "samples": 3, "successful_samples": 3, "done_true": 1, "done_false": 2, "completion_stable": False, "known_count_range": [1, 1], "missing_count_range": [0, 1], "query_count_range": [0, 1], "decision_shape_stable": False}]
+    assert report["capture_stability"] == [{"capture_id": 7, "samples": 3, "successful_samples": 3, "done_true": 1, "done_false": 2, "completion_stable": False, "known_evidence_label_sets": [["[E1]"]], "known_evidence_coverage_stable": True, "known_count_range": [1, 1], "missing_count_range": [0, 1], "query_count_range": [0, 1], "decision_shape_stable": False}]
 
 
 def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) -> None:
@@ -585,6 +585,7 @@ def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) 
     assert report["stability_drift_counts"] == {
         "completion": 0,
         "known_count": 1,
+        "known_evidence_coverage": 1,
         "missing_count": 0,
         "query_count": 0,
         "decision_shape": 1,
@@ -613,4 +614,35 @@ def test_stability_drift_separates_controller_failure_from_completion_flip(monke
 
     assert report["capture_stability"][0]["completion_stable"] is False
     assert report["stability_drift_counts"]["completion"] == 0
+    assert report["stability_drift_counts"]["known_evidence_coverage"] == 0
     assert report["stability_drift_counts"]["controller_failure"] == 1
+
+
+def test_known_count_drift_can_preserve_evidence_coverage(monkeypatch) -> None:
+    async def fake_read(row, *, chunk_limit):
+        return [
+            {"id": 31, "source_id": "pydantic-ai", "slug": "a", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact a"},
+            {"id": 32, "source_id": "pydantic-ai", "slug": "b", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact b"},
+        ]
+
+    outputs = iter([
+        {"ok": True, "done": False, "known": ["combined [E1] [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
+        {"ok": True, "done": False, "known": ["a [E1]", "b [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
+        {"ok": True, "done": False, "known": ["a and b [E2] [E1]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
+    ])
+
+    async def fake_m3(**kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a", "b"], "retrieved_chunk_ids": [31, 32], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+
+    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    stability = report["capture_stability"][0]
+
+    assert stability["known_count_range"] == [1, 2]
+    assert stability["known_evidence_label_sets"] == [["[E1]", "[E2]"]]
+    assert stability["known_evidence_coverage_stable"] is True
+    assert report["stability_drift_counts"]["known_count"] == 1
+    assert report["stability_drift_counts"]["known_evidence_coverage"] == 0
