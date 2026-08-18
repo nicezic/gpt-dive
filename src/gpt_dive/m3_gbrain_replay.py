@@ -367,51 +367,70 @@ async def run_replay(
     *,
     chunk_limit: int | None = None,
     max_queries: int = 3,
+    repeat: int = 1,
 ) -> dict[str, Any]:
     """Run captured Pydantic queries through their exact captured chunks and M3 analysis."""
-    results: list[dict[str, Any]] = []
-    for row in rows:
-        schema_pack_checked = await verify_schema_pack_provenance(row)
-        captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
-        chunk_hashes_checked = verify_captured_chunk_hashes(row, captured_chunks, chunk_limit=chunk_limit)
-        if not chunk_hashes_checked:
-            reject_post_capture_page_updates(row, captured_chunks)
-        chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
-        controller = await invoke_m3_evidence(
-            question=replay_question(row),
-            evidence=build_evidence_packet(chunks),
-            max_queries=max_queries,
-        )
-        results.append(
-            {
-                "capture_id": row.get("id"),
-                "query": row["query"],
-                "source_ids": row["source_ids"],
-                "chunk_count": len(chunks),
-                "excluded_future_chunks": excluded_future_chunks,
-                "schema_pack_checked": schema_pack_checked,
-                "chunk_hashes_checked": chunk_hashes_checked,
-                "controller": controller,
-            }
-        )
+    if repeat <= 0:
+        raise ValueError("repeat must be greater than 0")
 
-    ok_results = [item for item in results if item["controller"].get("ok")]
-    validation_error_counts: dict[str, int] = {}
-    for item in results:
-        errors = item["controller"].get("validation_errors", [])
-        if isinstance(errors, list):
-            for error in errors:
-                if isinstance(error, str) and error:
-                    invariant = validation_error_invariant(error)
-                    validation_error_counts[invariant] = validation_error_counts.get(invariant, 0) + 1
+    results: list[dict[str, Any]] = []
+    for run in range(1, repeat + 1):
+        for row in rows:
+            schema_pack_checked = await verify_schema_pack_provenance(row)
+            captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
+            chunk_hashes_checked = verify_captured_chunk_hashes(row, captured_chunks, chunk_limit=chunk_limit)
+            if not chunk_hashes_checked:
+                reject_post_capture_page_updates(row, captured_chunks)
+            chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
+            controller = await invoke_m3_evidence(
+                question=replay_question(row),
+                evidence=build_evidence_packet(chunks),
+                max_queries=max_queries,
+            )
+            results.append(
+                {
+                    "run": run,
+                    "capture_id": row.get("id"),
+                    "query": row["query"],
+                    "source_ids": row["source_ids"],
+                    "chunk_count": len(chunks),
+                    "excluded_future_chunks": excluded_future_chunks,
+                    "schema_pack_checked": schema_pack_checked,
+                    "chunk_hashes_checked": chunk_hashes_checked,
+                    "controller": controller,
+                }
+            )
+
+    def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
+        ok_items = [item for item in items if item["controller"].get("ok")]
+        error_counts: dict[str, int] = {}
+        for item in items:
+            errors = item["controller"].get("validation_errors", [])
+            if isinstance(errors, list):
+                for error in errors:
+                    if isinstance(error, str) and error:
+                        invariant = validation_error_invariant(error)
+                        error_counts[invariant] = error_counts.get(invariant, 0) + 1
+        return {
+            "done_rows": sum(1 for item in ok_items if item["controller"].get("done") is True),
+            "unresolved_rows": sum(1 for item in ok_items if item["controller"].get("done") is False),
+            "retry_rows": sum(1 for item in ok_items if item["controller"].get("attempts", 1) > 1),
+            "proposed_queries": sum(len(item["controller"].get("queries", [])) for item in ok_items),
+            "controller_failures": len(items) - len(ok_items),
+            "validation_error_counts": dict(sorted(error_counts.items())),
+        }
+
+    summary = summarize(results)
+    run_stats = [
+        {"run": run, **summarize([item for item in results if item["run"] == run])}
+        for run in range(1, repeat + 1)
+    ]
     return {
-        "rows": len(results),
-        "done_rows": sum(1 for item in ok_results if item["controller"].get("done") is True),
-        "unresolved_rows": sum(1 for item in ok_results if item["controller"].get("done") is False),
-        "retry_rows": sum(1 for item in ok_results if item["controller"].get("attempts", 1) > 1),
-        "proposed_queries": sum(len(item["controller"].get("queries", [])) for item in ok_results),
-        "controller_failures": len(results) - len(ok_results),
-        "validation_error_counts": dict(sorted(validation_error_counts.items())),
+        "rows": len(rows),
+        "repeat": repeat,
+        "samples": len(results),
+        **summary,
+        "run_stats": run_stats,
         "results": results,
     }
 
@@ -429,11 +448,14 @@ def main() -> None:
         help="Optional maximum captured chunks supplied to M3 per query; default preserves all captured chunks.",
     )
     parser.add_argument("--max-queries", type=int, default=3, help="Maximum M3 follow-up queries per row.")
+    parser.add_argument("--repeat", type=int, default=1, help="Replay the same capture set N times sequentially.")
     args = parser.parse_args()
     if args.limit <= 0:
         raise ValueError("limit must be greater than 0")
     rows = load_capture_rows(args.against)[: args.limit]
-    report = asyncio.run(run_replay(rows, chunk_limit=args.chunk_limit, max_queries=args.max_queries))
+    report = asyncio.run(
+        run_replay(rows, chunk_limit=args.chunk_limit, max_queries=args.max_queries, repeat=args.repeat)
+    )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["controller_failures"] == 0 else 1)
 

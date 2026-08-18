@@ -258,6 +258,102 @@ def test_validation_error_counts_group_dynamic_messages_by_invariant(monkeypatch
     ]
 
 
+
+def test_run_replay_repeat_reports_serving_window_stats(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_read(row, *, chunk_limit):
+        return [{
+            "id": row["retrieved_chunk_ids"][0],
+            "source_id": "pydantic-ai",
+            "slug": "s",
+            "page_updated_at": "2026-08-16T15:00:00+00:00",
+            "effective_date": None,
+            "effective_date_source": None,
+            "chunk_text": "fact",
+        }]
+
+    async def fake_m3(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return {
+                "ok": True,
+                "done": False,
+                "known": ["fact [E1]"],
+                "missing": ["detail"],
+                "conflicts": [],
+                "queries": ["find detail"],
+                "attempts": 2,
+                "validation_errors": ["known item must cite an evidence label: 'fact'"],
+            }
+        return {
+            "ok": True,
+            "done": True,
+            "known": ["fact [E1]"],
+            "missing": [],
+            "conflicts": [],
+            "queries": [],
+            "attempts": 1,
+            "validation_errors": [],
+        }
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    row = {
+        "schema_version": 1,
+        "id": 7,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["s"],
+        "retrieved_chunk_ids": [31],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
+
+    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+
+    assert report["rows"] == 1
+    assert report["repeat"] == 3
+    assert report["samples"] == 3
+    assert report["done_rows"] == 2
+    assert report["unresolved_rows"] == 1
+    assert report["retry_rows"] == 1
+    assert report["validation_error_counts"] == {"known item must cite an evidence label": 1}
+    assert [item["run"] for item in report["results"]] == [1, 2, 3]
+    assert report["run_stats"] == [
+        {
+            "run": 1,
+            "done_rows": 1,
+            "unresolved_rows": 0,
+            "retry_rows": 0,
+            "proposed_queries": 0,
+            "controller_failures": 0,
+            "validation_error_counts": {},
+        },
+        {
+            "run": 2,
+            "done_rows": 0,
+            "unresolved_rows": 1,
+            "retry_rows": 1,
+            "proposed_queries": 1,
+            "controller_failures": 0,
+            "validation_error_counts": {"known item must cite an evidence label": 1},
+        },
+        {
+            "run": 3,
+            "done_rows": 1,
+            "unresolved_rows": 0,
+            "retry_rows": 0,
+            "proposed_queries": 0,
+            "controller_failures": 0,
+            "validation_error_counts": {},
+        },
+    ]
+
+
 def test_run_replay_preserves_all_captured_chunks_by_default(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
         assert chunk_limit is None
