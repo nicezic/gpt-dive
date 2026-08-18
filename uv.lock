@@ -354,7 +354,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.0.0" },
     { name = "playwright", specifier = ">=1.62.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pydantic-ai-harness", specifier = "==0.21.0" },
+    { name = "pydantic-ai-harness", specifier = "==0.22.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "openai"] },
     { name = "pydantic-monty", specifier = ">=0.0.19" },
     { name = "redis", specifier = ">=6.0.0" },
@@ -731,16 +731,16 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai-harness"
-version = "0.21.0"
+version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "genai-prices" },
     { name = "httpx" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/91/637f34cfb65b9b1a627dc3e4500dff0740c3bd1d369259d40fa11d87e157/pydantic_ai_harness-0.21.0.tar.gz", hash = "sha256:5eb429d47977913ccec3e74e48479a6207863efebff9fa9afc4b20e52b01e44a", size = 2189073, upload-time = "2026-08-15T03:12:54.135Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/22/fb5b1dfd61a869ff1db99a608059723c13213f8802e00792e553a97bd8e9/pydantic_ai_harness-0.22.0.tar.gz", hash = "sha256:4b31eecfb6d33cb04bf3a01097b8e5f726311f999fc3eac64359976264eb33b4", size = 2223581, upload-time = "2026-08-18T03:39:51.357Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/c1/dd669f17415da4d233581cbac8809ea1c2c3078d113289b96103362cdadc/pydantic_ai_harness-0.21.0-py3-none-any.whl", hash = "sha256:61c1facec51849adc2680569b5abe337e98836ad0e2adc8f79954d01aaa706e6", size = 632221, upload-time = "2026-08-15T03:12:52.466Z" },
+    { url = "https://files.pythonhosted.org/packages/28/e1/009693edaf36aa26e26427bf271b66dd6d45273b4ae8c2dd43cbffb0fdb8/pydantic_ai_harness-0.22.0-py3-none-any.whl", hash = "sha256:f51e54f04ecd58b0df981c6961c542a2d30e97ada20064c92d6662d51c021596", size = 640630, upload-time = "2026-08-18T03:39:49.935Z" },
 ]
 
 [[package]]
