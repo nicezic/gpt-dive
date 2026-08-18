@@ -17,6 +17,19 @@ from .runtime_env import build_runtime_path
 
 _PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness"}
 _CURRENT_QUERY_RE = re.compile(r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE)
+_DYNAMIC_VALIDATION_ERROR_PATTERNS = (
+    (re.compile(r"^(known|conflicts) item must cite an evidence label:.*$"), r"\1 item must cite an evidence label"),
+    (re.compile(r"^(known|conflicts) item cites unknown evidence label\(s\):.*$"), r"\1 item cites unknown evidence label(s)"),
+    (re.compile(r"^queries returned \d+ items, exceeding max_queries=\d+$"), "queries exceed max_queries"),
+)
+
+
+def validation_error_invariant(error: str) -> str:
+    """Collapse dynamic validation payloads into stable batch-level invariant keys."""
+    for pattern, replacement in _DYNAMIC_VALIDATION_ERROR_PATTERNS:
+        if pattern.search(error):
+            return pattern.sub(replacement, error)
+    return error
 
 
 def _validated_timestamp(value: object, *, field: str) -> str:
@@ -389,7 +402,8 @@ async def run_replay(
         if isinstance(errors, list):
             for error in errors:
                 if isinstance(error, str) and error:
-                    validation_error_counts[error] = validation_error_counts.get(error, 0) + 1
+                    invariant = validation_error_invariant(error)
+                    validation_error_counts[invariant] = validation_error_counts.get(invariant, 0) + 1
     return {
         "rows": len(results),
         "done_rows": sum(1 for item in ok_results if item["controller"].get("done") is True),

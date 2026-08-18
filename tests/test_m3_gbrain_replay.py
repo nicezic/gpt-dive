@@ -211,6 +211,53 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["results"][0]["chunk_hashes_checked"] is True
 
 
+def test_validation_error_counts_group_dynamic_messages_by_invariant(monkeypatch) -> None:
+    async def fake_read(row, *, chunk_limit):
+        return [{
+            "id": row["retrieved_chunk_ids"][0],
+            "source_id": "pydantic-ai",
+            "slug": "s",
+            "page_updated_at": "2026-08-16T15:00:00+00:00",
+            "effective_date": None,
+            "effective_date_source": None,
+            "chunk_text": "fact",
+        }]
+
+    outputs = iter([
+        {
+            "ok": True, "done": True, "known": ["a [E1]"], "missing": [],
+            "conflicts": [], "queries": [], "attempts": 2,
+            "validation_errors": ["known item must cite an evidence label: 'first fact'"],
+        },
+        {
+            "ok": True, "done": True, "known": ["b [E1]"], "missing": [],
+            "conflicts": [], "queries": [], "attempts": 2,
+            "validation_errors": ["known item must cite an evidence label: 'different fact'"],
+        },
+    ])
+
+    async def fake_m3(**kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    rows = [
+        {
+            "schema_version": 1, "id": i, "tool_name": "query", "query": f"q{i}",
+            "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"],
+            "retrieved_chunk_ids": [i], "retrieved_chunk_hashes": [],
+            "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None,
+        }
+        for i in (1, 2)
+    ]
+    report = asyncio.run(replay_module.run_replay(rows))
+
+    assert report["validation_error_counts"] == {"known item must cite an evidence label": 2}
+    assert report["results"][0]["controller"]["validation_errors"] == [
+        "known item must cite an evidence label: 'first fact'"
+    ]
+
+
 def test_run_replay_preserves_all_captured_chunks_by_default(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
         assert chunk_limit is None
