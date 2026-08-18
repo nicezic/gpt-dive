@@ -66,6 +66,38 @@ def _parse_stream_json(stdout_text: str) -> dict[str, Any]:
     return terminal
 
 
+def _extract_stream_metadata(
+    stdout_text: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Best-effort metadata extraction from a possibly incomplete AGY stream."""
+    conversation_id: str | None = None
+    terminal: dict[str, Any] | None = None
+
+    for raw_line in stdout_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        candidates = [event, event.get("step_update"), event.get("result")]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            value = candidate.get("conversation_id")
+            if isinstance(value, str) and value.strip():
+                conversation_id = value
+
+        if event.get("event") == "result" and isinstance(event.get("result"), dict):
+            terminal = event["result"]
+
+    return conversation_id, terminal
+
+
 async def invoke_agy_worker(
     *,
     task: str,
@@ -109,20 +141,38 @@ async def invoke_agy_worker(
             "error": f"failed to launch agy: {exc}",
         }
 
+    communicate_task = asyncio.create_task(proc.communicate())
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2.0)
+        stdout, stderr = await asyncio.wait_for(
+            asyncio.shield(communicate_task), timeout=timeout + 2.0
+        )
     except TimeoutError:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        await proc.wait()
-        return {
+        stdout, stderr = await communicate_task
+        stdout_text = stdout.decode(errors="replace").strip()
+        stderr_text = stderr.decode(errors="replace").strip()
+        conversation_id, terminal = _extract_stream_metadata(stdout_text)
+        payload: dict[str, Any] = {
             "ok": False,
             "provider": _PROVIDER,
             "model_name": model,
+            "timed_out": True,
             "error": f"agy worker timed out after {timeout} seconds",
         }
+        if conversation_id is not None:
+            payload["conversation_id"] = conversation_id
+        if terminal is not None:
+            response = terminal.get("response")
+            if isinstance(response, str) and response:
+                payload["partial_output"] = response.rstrip("\n")
+        if stdout_text:
+            payload["stdout"] = stdout_text[-4000:]
+        if stderr_text:
+            payload["stderr"] = stderr_text[-2000:]
+        return payload
 
     stdout_text = stdout.decode(errors="replace").strip()
     stderr_text = stderr.decode(errors="replace").strip()
