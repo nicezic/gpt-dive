@@ -588,4 +588,29 @@ def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) 
         "missing_count": 0,
         "query_count": 0,
         "decision_shape": 1,
+        "controller_failure": 0,
     }
+
+
+def test_stability_drift_separates_controller_failure_from_completion_flip(monkeypatch) -> None:
+    async def fake_read(row, *, chunk_limit):
+        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact"}]
+
+    outputs = iter([
+        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
+        {"ok": False, "error": "invalid m3 evidence JSON", "attempts": 2, "validation_errors": ["invalid m3 evidence JSON"]},
+        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
+    ])
+
+    async def fake_m3(**kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
+    monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
+    row = {"schema_version": 1, "id": 20, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+
+    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+
+    assert report["capture_stability"][0]["completion_stable"] is False
+    assert report["stability_drift_counts"]["completion"] == 0
+    assert report["stability_drift_counts"]["controller_failure"] == 1
