@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from mcp_types import CallToolResult, TextContent
@@ -91,7 +92,7 @@ async def _call_periodic_reminder_middleware(
     async def call_next(_ctx):
         return _middleware_tool_result()
 
-    result = await app._periodic_reminder_middleware(ctx, call_next)
+    result = await app._periodic_reminder_middleware(cast(Any, ctx), call_next)
     assert isinstance(result, CallToolResult)
     return result
 

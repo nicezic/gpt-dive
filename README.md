@@ -74,6 +74,14 @@ uv run --python 3.14 python -m gpt_dive
 
 For live MCP operations, see [`docs/runtime/operations.md`](docs/runtime/operations.md) — **how to restart**, reload safely, and handle durable jobs.
 
+Standard MCP restart handoff:
+
+```bash
+nohup bash -lc 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tmp/gpt-dive-mcp-restart.log 2>&1 &
+```
+
+After dispatching this restart, **do not automatically verify or probe the restarted MCP from the same turn/session**. Return control to the user and wait for an explicit follow-up before checking PID, bootstrap, schema, or runtime state.
+
 ## Source layout
 
 ```text

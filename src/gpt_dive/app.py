@@ -153,27 +153,38 @@ def _wiki_path() -> Path:
 
 
 def _parse_preload_files(preload_text: str) -> list[str]:
-    """Extract numbered Markdown paths from the preload map's Preload files section."""
-    match = re.search(
-        r"^## Preload files\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
-        preload_text,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if not match:
-        raise ValueError("bootstrap preload map has no '## Preload files' section")
+    """Extract preload file paths from JSON configuration."""
+    try:
+        data = json.loads(preload_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"malformed bootstrap preload JSON: {exc}") from exc
 
-    paths = re.findall(r"^\s*\d+\.\s+`([^`]+)`\s*$", match.group("body"), re.MULTILINE)
+    if not isinstance(data, dict):
+        raise TypeError("bootstrap preload JSON must be an object")
+
+    paths = data.get("preload_files")
+    if paths is None:
+        raise ValueError("bootstrap preload JSON missing 'preload_files' field")
+    if not isinstance(paths, list):
+        raise TypeError("bootstrap preload JSON 'preload_files' field must be a list")
     if not paths:
         raise ValueError(
-            "bootstrap preload map Preload files section contains no document paths"
+            "bootstrap preload JSON 'preload_files' list must not be empty"
         )
+
+    for path in paths:
+        if not isinstance(path, str):
+            raise TypeError("preload_files entries must be strings")
+        if not path.strip():
+            raise ValueError("preload_files entries must not be empty strings")
+
     return paths
 
 
 def _read_bootstrap_packet() -> dict[str, Any]:
     """Assemble compact fresh-session orientation from the trusted Wiki preload map."""
     wiki = _wiki_path()
-    preload = wiki / "bootstrap" / "preload.md"
+    preload = wiki / "bootstrap" / "preload.json"
     if not preload.is_file():
         raise FileNotFoundError(f"bootstrap preload map not found: {preload}")
 
@@ -208,11 +219,6 @@ def _read_bootstrap_packet() -> dict[str, Any]:
 
     chunks = [
         f"# BOOTSTRAP PACKET\nWiki: {wiki}\nPreload: {preload}\n",
-        (
-            "\n\n===== BEGIN bootstrap/preload.md =====\n"
-            f"{preload_text.rstrip()}\n"
-            "===== END bootstrap/preload.md ====="
-        ),
     ]
     for doc in documents:
         chunks.append(

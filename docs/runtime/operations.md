@@ -21,13 +21,12 @@ Validate source changes locally first. Use a fresh ChatGPT Web session for live 
 Use a detached delayed restart so the current MCP response can finish before the service exits:
 
 ```bash
-nohup bash -c 'sleep 2; systemctl --user restart chatgpt-wsl2-mcp.service' \
-  >/tmp/chatgpt-wsl2-mcp-restart.log 2>&1 &
+nohup bash -lc 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tmp/gpt-dive-mcp-restart.log 2>&1 &
 ```
 
-- `sleep 2` gives the initiating MCP response time to clear the transport.
+- `sleep 3` gives the initiating MCP response time to clear the transport.
 - Do not wrap this handoff in `wsl2_async`; its transient systemd job may clean up the detached child before the restart runs.
-- Return immediately and verify only from a later or reconnected call.
+- **Do not automatically verify after dispatch.** Return control to the user and wait for an explicit follow-up before checking PID, bootstrap, schema, or runtime state.
 
 ## Durable Jobs
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -12,19 +13,16 @@ def _write_test_wiki(tmp_path: Path) -> Path:
     wiki = tmp_path / "wiki"
     (wiki / "bootstrap").mkdir(parents=True)
     (wiki / "user").mkdir()
-    (wiki / "bootstrap" / "preload.md").write_text(
-        """# Preload Map
-
-## Preload files
-
-1. `bootstrap/intro.md`
-2. `user/profile.md`
-3. `ERROR_CASE.md`
-
-## On demand
-
-- `log.md`
-"""
+    (wiki / "bootstrap" / "preload.json").write_text(
+        json.dumps(
+            {
+                "preload_files": [
+                    "bootstrap/intro.md",
+                    "user/profile.md",
+                    "ERROR_CASE.md",
+                ]
+            }
+        )
     )
     (wiki / "bootstrap" / "intro.md").write_text(
         "INTRO\n\n## Code Mode capability index\nINDEX\n\n"
@@ -39,17 +37,32 @@ def _write_test_wiki(tmp_path: Path) -> Path:
     return wiki
 
 
-def test_parse_preload_files_reads_only_preload_section() -> None:
-    text = """## Preload files
-
-1. `a.md`
-2. `b.md`
-
-## On demand
-
-1. `c.md`
-"""
+def test_parse_preload_files_valid() -> None:
+    text = '{"preload_files": ["a.md", "b.md"]}'
     assert app_module._parse_preload_files(text) == ["a.md", "b.md"]
+
+
+def test_parse_preload_files_validation_errors() -> None:
+    with pytest.raises(ValueError, match="malformed bootstrap preload JSON"):
+        app_module._parse_preload_files("invalid json")
+
+    with pytest.raises(TypeError, match="must be an object"):
+        app_module._parse_preload_files('["a.md"]')
+
+    with pytest.raises(ValueError, match="missing 'preload_files' field"):
+        app_module._parse_preload_files('{}')
+
+    with pytest.raises(TypeError, match="must be a list"):
+        app_module._parse_preload_files('{"preload_files": "a.md"}')
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        app_module._parse_preload_files('{"preload_files": []}')
+
+    with pytest.raises(TypeError, match="entries must be strings"):
+        app_module._parse_preload_files('{"preload_files": [123]}')
+
+    with pytest.raises(ValueError, match="must not be empty strings"):
+        app_module._parse_preload_files('{"preload_files": [""]}')
 
 
 def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
@@ -61,13 +74,13 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     result = app_module._read_bootstrap_packet()
 
     assert result["warnings"] == []
-    assert result["preload_path"] == str(wiki / "bootstrap" / "preload.md")
+    assert result["preload_path"] == str(wiki / "bootstrap" / "preload.json")
     assert result["preloaded_files"] == [
         "bootstrap/intro.md",
         "user/profile.md",
         "ERROR_CASE.md",
     ]
-    assert "===== BEGIN bootstrap/preload.md =====" in result["stdout"]
+    assert "===== BEGIN bootstrap/preload" not in result["stdout"]
     assert "INTRO" in result["stdout"]
     assert "PROFILE" in result["stdout"]
     assert "- sample | 1 | 260817-000000" in result["stdout"]
