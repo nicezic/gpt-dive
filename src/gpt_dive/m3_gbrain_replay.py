@@ -459,6 +459,14 @@ async def run_replay(
         samples = [item for item in results if item["capture_id"] == capture_id]
         ok_samples = [item for item in samples if item["controller"].get("ok")]
         done_values = [item["controller"].get("done") for item in ok_samples]
+        known_counts = [len(item["controller"].get("known", [])) for item in ok_samples]
+        missing_counts = [len(item["controller"].get("missing", [])) for item in ok_samples]
+        query_counts = [len(item["controller"].get("queries", [])) for item in ok_samples]
+        count_ranges = {
+            "known_count_range": [min(known_counts), max(known_counts)] if known_counts else [0, 0],
+            "missing_count_range": [min(missing_counts), max(missing_counts)] if missing_counts else [0, 0],
+            "query_count_range": [min(query_counts), max(query_counts)] if query_counts else [0, 0],
+        }
         capture_stability.append(
             {
                 "capture_id": capture_id,
@@ -467,6 +475,11 @@ async def run_replay(
                 "done_true": sum(value is True for value in done_values),
                 "done_false": sum(value is False for value in done_values),
                 "completion_stable": len(set(done_values)) <= 1 and len(ok_samples) == len(samples),
+                **count_ranges,
+                "decision_shape_stable": (
+                    len(ok_samples) == len(samples)
+                    and all(low == high for low, high in count_ranges.values())
+                ),
             }
         )
     return {
