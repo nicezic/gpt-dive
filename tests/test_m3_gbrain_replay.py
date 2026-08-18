@@ -582,3 +582,10 @@ def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) 
     assert stability["missing_count_range"] == [1, 1]
     assert stability["query_count_range"] == [1, 1]
     assert stability["decision_shape_stable"] is False
+    assert report["stability_drift_counts"] == {
+        "completion": 0,
+        "known_count": 1,
+        "missing_count": 0,
+        "query_count": 0,
+        "decision_shape": 1,
+    }

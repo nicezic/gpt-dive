@@ -482,6 +482,13 @@ async def run_replay(
                 ),
             }
         )
+    stability_drift_counts = {
+        "completion": sum(not item["completion_stable"] for item in capture_stability),
+        "known_count": sum(item["known_count_range"][0] != item["known_count_range"][1] for item in capture_stability),
+        "missing_count": sum(item["missing_count_range"][0] != item["missing_count_range"][1] for item in capture_stability),
+        "query_count": sum(item["query_count_range"][0] != item["query_count_range"][1] for item in capture_stability),
+        "decision_shape": sum(not item["decision_shape_stable"] for item in capture_stability),
+    }
     return {
         "rows": len(rows),
         "repeat": repeat,
@@ -489,6 +496,7 @@ async def run_replay(
         **summary,
         "run_stats": run_stats,
         "capture_stability": capture_stability,
+        "stability_drift_counts": stability_drift_counts,
         "results": results,
     }
 
