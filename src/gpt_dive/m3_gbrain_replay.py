@@ -524,6 +524,7 @@ async def run_replay(
                     len(known_evidence_label_sets) <= 1 and len(ok_samples) == len(samples)
                 ),
                 "critical_evidence_labels": critical_labels,
+                "critical_evidence_scored_runs": len(critical_recalls),
                 "critical_evidence_recall_range": (
                     [min(critical_recalls), max(critical_recalls)] if critical_recalls else None
                 ),
