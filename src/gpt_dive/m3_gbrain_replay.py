@@ -390,12 +390,43 @@ async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) 
     return chunks
 
 
+def load_critical_evidence_qrels(path: Path) -> dict[int, frozenset[str]]:
+    """Load human-reviewed per-capture evidence labels used only for replay scoring."""
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("captures"), list):
+        raise ValueError("critical evidence qrels must be a schema_version=1 object with captures[]")
+    qrels: dict[int, frozenset[str]] = {}
+    for item in value["captures"]:
+        if not isinstance(item, dict):
+            raise TypeError("critical evidence qrels captures must be objects")
+        capture_id = item.get("capture_id")
+        labels = item.get("critical_labels")
+        if not isinstance(capture_id, int) or capture_id in qrels:
+            raise ValueError("critical evidence qrels capture_id must be a unique integer")
+        if not isinstance(labels, list) or not labels or any(
+            not isinstance(label, str) or _EVIDENCE_LABEL_RE.fullmatch(label) is None for label in labels
+        ):
+            raise ValueError("critical evidence qrels critical_labels must be non-empty [E#] labels")
+        qrels[capture_id] = frozenset(labels)
+    return qrels
+
+
+def _known_evidence_labels(controller: dict[str, Any]) -> frozenset[str]:
+    return frozenset(
+        label
+        for known in controller.get("known", [])
+        if isinstance(known, str)
+        for label in _EVIDENCE_LABEL_RE.findall(known)
+    )
+
+
 async def run_replay(
     rows: list[dict[str, Any]],
     *,
     chunk_limit: int | None = None,
     max_queries: int = 3,
     repeat: int = 1,
+    critical_evidence_qrels: dict[int, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """Run captured Pydantic queries through their exact captured chunks and M3 analysis."""
     if repeat <= 0:
@@ -464,20 +495,17 @@ async def run_replay(
         missing_counts = [len(item["controller"].get("missing", [])) for item in ok_samples]
         query_counts = [len(item["controller"].get("queries", [])) for item in ok_samples]
         known_evidence_label_sets = sorted(
-            {
-                tuple(
-                    sorted(
-                        {
-                            label
-                            for known in item["controller"].get("known", [])
-                            if isinstance(known, str)
-                            for label in _EVIDENCE_LABEL_RE.findall(known)
-                        }
-                    )
-                )
-                for item in ok_samples
-            }
+            {tuple(sorted(_known_evidence_labels(item["controller"]))) for item in ok_samples}
         )
+        critical_labels = (
+            sorted((critical_evidence_qrels or {}).get(capture_id, frozenset()))
+            if isinstance(capture_id, int)
+            else []
+        )
+        critical_recalls = [
+            len(set(critical_labels) & _known_evidence_labels(item["controller"])) / len(critical_labels)
+            for item in ok_samples
+        ] if critical_labels else []
         count_ranges = {
             "known_count_range": [min(known_counts), max(known_counts)] if known_counts else [0, 0],
             "missing_count_range": [min(missing_counts), max(missing_counts)] if missing_counts else [0, 0],
@@ -495,6 +523,11 @@ async def run_replay(
                 "known_evidence_coverage_stable": (
                     len(known_evidence_label_sets) <= 1 and len(ok_samples) == len(samples)
                 ),
+                "critical_evidence_labels": critical_labels,
+                "critical_evidence_recall_range": (
+                    [min(critical_recalls), max(critical_recalls)] if critical_recalls else None
+                ),
+                "critical_evidence_omission_runs": sum(value < 1.0 for value in critical_recalls),
                 **count_ranges,
                 "decision_shape_stable": (
                     len(ok_samples) == len(samples)
@@ -515,6 +548,10 @@ async def run_replay(
         "decision_shape": sum(not item["decision_shape_stable"] for item in capture_stability),
         "controller_failure": sum(
             item["successful_samples"] != item["samples"] for item in capture_stability
+        ),
+        "critical_evidence_omission": sum(
+            bool(item["critical_evidence_labels"]) and item["critical_evidence_omission_runs"] > 0
+            for item in capture_stability
         ),
     }
     return {
@@ -543,12 +580,25 @@ def main() -> None:
     )
     parser.add_argument("--max-queries", type=int, default=3, help="Maximum M3 follow-up queries per row.")
     parser.add_argument("--repeat", type=int, default=1, help="Replay the same capture set N times sequentially.")
+    parser.add_argument(
+        "--critical-qrels",
+        type=Path,
+        default=None,
+        help="Optional human-reviewed capture->[E#] relevance labels used only for post-hoc scoring.",
+    )
     args = parser.parse_args()
     if args.limit <= 0:
         raise ValueError("limit must be greater than 0")
     rows = load_capture_rows(args.against)[: args.limit]
+    critical_evidence_qrels = load_critical_evidence_qrels(args.critical_qrels) if args.critical_qrels else None
     report = asyncio.run(
-        run_replay(rows, chunk_limit=args.chunk_limit, max_queries=args.max_queries, repeat=args.repeat)
+        run_replay(
+            rows,
+            chunk_limit=args.chunk_limit,
+            max_queries=args.max_queries,
+            repeat=args.repeat,
+            critical_evidence_qrels=critical_evidence_qrels,
+        )
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["controller_failures"] == 0 else 1)
