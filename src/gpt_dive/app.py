@@ -47,8 +47,8 @@ mcp = MCPServer(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
         "default for normal local work, including one-shot file/shell operations; use "
         "wsl2_async for durable jobs and wsl2_sync only for transport/smoke checks or when "
-        "explicitly required. Every MCP code_mode call requires string input; use input='' "
-        "when there is no payload. Never guess capability names, arguments, or return shapes: "
+        "explicitly required. Every MCP code_mode call requires string payload; use payload='' "
+        "when there is no data. Never guess capability names, arguments, or return shapes: "
         "inspect the live contract first. On error/mistake, report immediately and Web Search "
         "current primary sources before retrying or theorizing."
     ),
@@ -58,8 +58,8 @@ mcp = MCPServer(
         "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
         "session, call bootstrap first. After bootstrap, use code_mode as the default execution "
         "root for normal local work, including short one-shot file and shell operations. Every Web "
-        "MCP code_mode call must explicitly provide input as a string; use input='' when there is no "
-        "payload or for lifecycle calls. Never pass an object/list as input; serialize structured "
+        "MCP code_mode call must explicitly provide payload as a string; use payload='' when there is no "
+        "payload or for lifecycle calls. Never pass an object/list as payload; serialize structured "
         "payloads to text and parse them inside Code Mode if needed. Never invent capability names, "
         "parameter names, optional arguments, or return shapes from memory. Inspect the live MCP "
         "schema/CAPABILITIES contract first whenever uncertain. On any tool error or assistant "
@@ -652,28 +652,28 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     return registry
 
 
-CODE_MODE_WORKER_PROTOCOL = 1
+CODE_MODE_WORKER_PROTOCOL = 2
 
 
-def _code_mode_payload_dir() -> Path:
+def _code_mode_request_dir() -> Path:
     path = jobs.root.parent / "code-mode-inputs"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _code_mode_payload_ref(job_id: str) -> Path:
+def _code_mode_request_ref(job_id: str) -> Path:
     return jobs.root / job_id / "code_mode_payload.ref"
 
 
-def _cleanup_code_mode_payload(job_id: str) -> None:
-    ref = _code_mode_payload_ref(job_id)
+def _cleanup_code_mode_request(job_id: str) -> None:
+    ref = _code_mode_request_ref(job_id)
     if not ref.is_file():
         return
     try:
         raw = ref.read_text().strip()
-        payload = Path(raw).resolve()
-        payload.relative_to(_code_mode_payload_dir().resolve())
-        payload.unlink(missing_ok=True)
+        request_path = Path(raw).resolve()
+        request_path.relative_to(_code_mode_request_dir().resolve())
+        request_path.unlink(missing_ok=True)
     except OSError, ValueError:
         pass
     finally:
@@ -683,44 +683,44 @@ def _cleanup_code_mode_payload(job_id: str) -> None:
 def _start_background_code_mode(
     code: str,
     cwd: str | None,
-    input: str | None,
+    payload: str | None,
 ) -> dict[str, Any]:
-    payload = {
+    request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
         "code": code,
         "cwd": cwd,
-        "input": input,
+        "payload": payload,
     }
-    payload_path: Path | None = None
+    request_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
             suffix=".json",
             prefix="code-mode-",
-            dir=_code_mode_payload_dir(),
+            dir=_code_mode_request_dir(),
             delete=False,
         ) as fh:
-            json.dump(payload, fh, ensure_ascii=False, allow_nan=False)
+            json.dump(request, fh, ensure_ascii=False, allow_nan=False)
             fh.write("\n")
-            payload_path = Path(fh.name)
+            request_path = Path(fh.name)
 
-        payload_arg = shlex.quote(str(payload_path))
+        request_arg = shlex.quote(str(request_path))
         command = (
-            f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {payload_arg}"
+            f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {request_arg}"
         )
         started = jobs.start(command, cwd, 600.0)
         job_id = str(started["job_id"])
         try:
-            _code_mode_payload_ref(job_id).write_text(str(payload_path) + "\n")
+            _code_mode_request_ref(job_id).write_text(str(request_path) + "\n")
         except OSError:
             jobs.cancel(job_id)
-            payload_path.unlink(missing_ok=True)
+            request_path.unlink(missing_ok=True)
             raise
         return started
     except Exception:
-        if payload_path is not None:
-            payload_path.unlink(missing_ok=True)
+        if request_path is not None:
+            request_path.unlink(missing_ok=True)
         raise
 
 
@@ -746,7 +746,7 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
     raw = jobs.result(job_id)
     if not raw.get("ready"):
         raise RuntimeError(f"code_mode background job {job_id!r} is still running")
-    _cleanup_code_mode_payload(job_id)
+    _cleanup_code_mode_request(job_id)
     if raw.get("status") == "cancelled":
         return _background_error(
             raw,
@@ -778,14 +778,14 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
 
     exit_code = raw.get("exit_code")
     if envelope.get("ok") is True and exit_code == 0:
-        payload = envelope.get("payload")
-        if not isinstance(payload, dict):
+        worker_result = envelope.get("result")
+        if not isinstance(worker_result, dict):
             return _background_error(
                 raw,
                 code="worker_protocol_error",
-                message="Background Code Mode success envelope has no object payload.",
+                message="Background Code Mode success envelope has no object result.",
             )
-        return {"job_id": job_id, **payload}
+        return {"job_id": job_id, **worker_result}
 
     error = envelope.get("error")
     if isinstance(error, dict):
@@ -810,13 +810,13 @@ async def code_mode(
         Field(
             description=(
                 "Monty Python executable logic. Keep code simple; do not embed complex payload "
-                "strings here. Use the input parameter and read it as INPUT for multiline text, code, shell "
+                "strings here. Use the payload parameter and read it as PAYLOAD for multiline text, code, shell "
                 "snippets, JSON, Markdown, or payloads containing quotes/backticks/$(). Process large "
                 "results inside the sandbox and make the final expression a compact result. CWD is a "
                 "path string, not process chdir; prefer registered FileSystem capabilities for workspace file access instead of assuming CPython path helpers exist inside Monty. Capability "
-                "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set input to "
+                "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set payload to "
                 'a quoted/multiline payload, then code=\'r = await local_exec(command="cat", '
-                'stdin=INPUT); r["stdout"]\'.'
+                'stdin=PAYLOAD); r["stdout"]\'.'
             )
         ),
     ] = None,
@@ -831,14 +831,14 @@ async def code_mode(
             )
         ),
     ] = None,
-    input: Annotated[
+    payload: Annotated[
         str | None,
         Field(
             description=(
-                "Optional opaque payload/data exposed to Monty code as INPUT. Prefer input for "
+                "Optional opaque payload/data exposed to Monty code as PAYLOAD. Prefer payload for "
                 "multiline or quoted payloads, including code, shell snippets, JSON, Markdown, "
                 "quotes/backticks/$(), instead of embedding them in code. Keep code as executable "
-                "logic and INPUT as data to avoid parser/escaping failures."
+                "logic and PAYLOAD as data to avoid parser/escaping failures."
             )
         ),
     ] = None,
@@ -870,10 +870,10 @@ async def code_mode(
             raise ValueError("job_id is only valid with a lifecycle action")
         if background:
             return await asyncio.to_thread(
-                _start_background_code_mode, str(code), cwd, input
+                _start_background_code_mode, str(code), cwd, payload
             )
         return await code_runtime.run(
-            str(code), _build_code_registry(cwd), cwd=cwd, input=input
+            str(code), _build_code_registry(cwd), cwd=cwd, payload=payload
         )
 
     if has_code:
@@ -882,20 +882,20 @@ async def code_mode(
         raise ValueError("background is only valid when launching code")
     if cwd is not None:
         raise ValueError("cwd is only valid when launching code")
-    if input is not None:
-        raise ValueError("input is only valid when launching code")
+    if payload is not None:
+        raise ValueError("payload is only valid when launching code")
     if job_id is None or not job_id.strip():
         raise ValueError(f"code_mode action={normalized_action!r} requires job_id")
     if normalized_action == "status":
         state = await asyncio.to_thread(jobs.status, job_id)
         if state.get("status") != "running":
-            await asyncio.to_thread(_cleanup_code_mode_payload, job_id)
+            await asyncio.to_thread(_cleanup_code_mode_request, job_id)
         return state
     if normalized_action == "result":
         return await asyncio.to_thread(_background_code_mode_result, job_id)
     if normalized_action == "cancel":
         state = await asyncio.to_thread(jobs.cancel, job_id)
-        await asyncio.to_thread(_cleanup_code_mode_payload, job_id)
+        await asyncio.to_thread(_cleanup_code_mode_request, job_id)
         return state
     raise ValueError("unsupported code_mode action; choose status, result, or cancel")
 
@@ -906,26 +906,26 @@ async def code_mode(
     description=(
         "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
         "- Default to code_mode for normal local work, including one-shot file/shell operations.\n"
-        "- Every MCP call requires input as a string; use input='' when there is no payload.\n"
+        "- Every MCP call requires payload as a string; use payload='' when there is no data.\n"
         "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
         "- Call registered capabilities directly with await name(...).\n"
         "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
         "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
-        "- Use INPUT for payload data and CWD as the capability workspace.\n"
+        "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
         "- Use background=True only for detached Code Mode jobs."
     ),
 )
 async def _mcp_code_mode(
-    input: Annotated[
+    payload: Annotated[
         str,
         Field(
             description=(
-                "Required opaque string payload exposed to Monty code as INPUT. Always provide this "
-                "field: use input='' when no payload is needed or for lifecycle actions. Never pass "
+                "Required opaque string payload exposed to Monty code as PAYLOAD. Always provide this "
+                "field: use payload='' when no data is needed or for lifecycle actions. Never pass "
                 "an object/list directly. For structured data, serialize it to text first and parse "
-                "inside Code Mode. Safe shell example: input='set -e\\npwd\\n' with "
-                "code='r = await local_exec(command=\"bash\", stdin=INPUT, cwd=CWD); r'."
+                "inside Code Mode. Safe shell example: payload='set -e\\npwd\\n' with "
+                "code='r = await local_exec(command=\"bash\", stdin=PAYLOAD, cwd=CWD); r'."
             )
         ),
     ],
@@ -933,7 +933,7 @@ async def _mcp_code_mode(
         str | None,
         Field(
             description=(
-                "Monty Python executable logic. Keep code simple and keep payload/data in INPUT. "
+                "Monty Python executable logic. Keep code simple and keep payload/data in PAYLOAD. "
                 "Do not guess capability contracts: inspect CAPABILITIES/live schema when uncertain. "
                 "Capability results are dicts, e.g. r['stdout']."
             )
@@ -961,15 +961,15 @@ async def _mcp_code_mode(
         Field(description="Background Code Mode job ID for lifecycle actions."),
     ] = None,
 ) -> dict[str, Any]:
-    """Model-facing Code Mode wrapper with an explicit INPUT contract."""
-    if action is not None and input != "":
+    """Model-facing Code Mode wrapper with an explicit payload/PAYLOAD contract."""
+    if action is not None and payload != "":
         raise ValueError(
-            "code_mode lifecycle calls require input='' because lifecycle actions have no payload"
+            "code_mode lifecycle calls require payload='' because lifecycle actions have no payload"
         )
     return await code_mode(
         code=code,
         cwd=cwd,
-        input=input if action is None else None,
+        payload=payload if action is None else None,
         background=background,
         action=action,
         job_id=job_id,

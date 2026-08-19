@@ -42,12 +42,13 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert description is not None
     assert "Primary programmable execution root for GPT Dive" in description
     assert "Default to code_mode for normal local work" in description
-    assert "Every MCP call requires input as a string" in description
+    assert "Every MCP call requires payload as a string" in description
     assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
     assert "Never invent capability names, arguments, optional fields, or return shapes" in description
     assert "Prefer Harness FileSystem/Shell capabilities" in description
-    assert "input" in tool.input_schema["required"]
-    assert tool.input_schema["properties"]["input"]["type"] == "string"
+    assert "payload" in tool.input_schema["required"]
+    assert tool.input_schema["properties"]["payload"]["type"] == "string"
+    assert "input" not in tool.input_schema["properties"]
 
 
 def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> None:

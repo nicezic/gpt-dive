@@ -101,7 +101,7 @@ This boundary matters because the outer MCP input schema cannot validate arbitra
 
 ### Static type-check boundary
 
-Direct Code Mode statically checks each generated Monty program before capability dispatch. `CallableRegistry` renders type-check stubs mechanically from the same live Python callables used to populate `CAPABILITIES`, so discovery and enforcement share one signature source rather than a second hand-maintained contract. Runtime globals (`CWD`, `CAPABILITIES`, and `INPUT` when present) are declared in the same checker environment.
+Direct Code Mode statically checks each generated Monty program before capability dispatch. `CallableRegistry` renders type-check stubs mechanically from the same live Python callables used to populate `CAPABILITIES`, so discovery and enforcement share one signature source rather than a second hand-maintained contract. Runtime globals (`CWD`, `CAPABILITIES`, and `PAYLOAD` when present) are declared in the same checker environment.
 
 This layer exists because model-side contract adherence is probabilistic even when the correct signature is already visible. For example, if the live contract is `search_files(pattern=...)`, generated `search_files(query=...)` code is rejected by Monty with a typing error before the host capability executes. There is deliberately no argument aliasing, automatic repair, or unchecked fallback; runtime/Harness validation remains the backstop for errors that cannot be proven statically.
 
@@ -115,7 +115,7 @@ The concurrency prelude is part of the model-facing Code Mode contract and is al
 
 ## Payload boundary
 
-Outer `input=` is exposed to Monty as `INPUT`. It is the preferred transport for multiline/quoted payloads so `code=` stays small executable logic and does not accumulate shell/JSON/Markdown quoting hazards.
+Outer `payload=` is exposed to Monty as `PAYLOAD`. It is the preferred transport for multiline/quoted payloads so `code=` stays small executable logic and does not accumulate shell/JSON/Markdown quoting hazards.
 
 ## Subagent workspace bundle
 

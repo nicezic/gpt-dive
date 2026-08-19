@@ -17,7 +17,7 @@ ChatGPT Web
   -> local WSL2
 ```
 
-`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `input` (`input=""` when no payload is needed). `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the durable process-lifecycle path.
+`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the durable process-lifecycle path.
 
 ## Stable Web MCP Surface
 

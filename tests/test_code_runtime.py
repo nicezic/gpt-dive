@@ -42,17 +42,25 @@ old_python = await local_exec(command="python3.10 --version")
     assert "Old Python" in result["old_python"]["stderr"]
 
 
-def test_code_mode_input_can_feed_local_exec_stdin() -> None:
+def test_code_mode_payload_can_feed_local_exec_stdin() -> None:
     payload = """# Markdown
 
 quotes: 'single' "double" `backticks`
 shell-ish: $HOME $(printf nope) <<'EOF'
 """
     code = """\
-r = await local_exec(command="cat", stdin=INPUT)
+r = await local_exec(command="cat", stdin=PAYLOAD)
 r["stdout"]
 """
-    assert asyncio.run(code_mode(code, input=payload)) == {"result": payload}
+    assert asyncio.run(code_mode(code, payload=payload)) == {"result": payload}
+
+
+def test_code_mode_payload_type_stub_has_no_input_alias() -> None:
+    from gpt_dive.code_runtime import CallableRegistry
+
+    stubs = CallableRegistry().type_check_stubs(include_payload=True)
+    assert "PAYLOAD: str" in stubs
+    assert "INPUT: str" not in stubs
 
 
 def test_local_exec_calls_can_overlap() -> None:
@@ -354,7 +362,7 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
         gpt_dive.jobs._systemd_available = original_systemd
 
 
-def test_code_mode_background_preserves_input(tmp_path: Path) -> None:
+def test_code_mode_background_preserves_payload(tmp_path: Path) -> None:
     import gpt_dive
 
     original_root = gpt_dive.jobs.root
@@ -364,11 +372,11 @@ def test_code_mode_background_preserves_input(tmp_path: Path) -> None:
         gpt_dive.jobs.root.mkdir()
         gpt_dive.jobs._systemd_available = False
 
-        payload = "BG_INPUT ' \" ` $() <<EOF\n"
+        payload = "BG_PAYLOAD ' \" ` $() <<EOF\n"
         started = asyncio.run(
             gpt_dive.code_mode(
-                'r = await local_exec(command="cat", stdin=INPUT)\nr["stdout"]',
-                input=payload,
+                'r = await local_exec(command="cat", stdin=PAYLOAD)\nr["stdout"]',
+                payload=payload,
                 background=True,
             )
         )
@@ -388,7 +396,7 @@ def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> Non
     import gpt_dive.app as app_module
 
     failure = {"ok": False, "model": "luna", "error": "SUBAGENT_FAILED"}
-    envelope = {"v": 1, "ok": True, "payload": {"result": failure}}
+    envelope = {"v": app_module.CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": {"result": failure}}
     monkeypatch.setattr(
         app_module.jobs,
         "result",
@@ -401,7 +409,7 @@ def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> Non
             "stderr": "",
         },
     )
-    monkeypatch.setattr(app_module, "_cleanup_code_mode_payload", lambda _job_id: None)
+    monkeypatch.setattr(app_module, "_cleanup_code_mode_request", lambda _job_id: None)
 
     assert app_module._background_code_mode_result("job")["result"] == failure
 
@@ -527,8 +535,8 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
         asyncio.run(gpt_dive.code_mode(action="status"))
     with pytest.raises(ValueError, match="unsupported code_mode action"):
         asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))
-    with pytest.raises(ValueError, match="input is only valid"):
-        asyncio.run(gpt_dive.code_mode(action="status", job_id="x", input="payload"))
+    with pytest.raises(ValueError, match="payload is only valid"):
+        asyncio.run(gpt_dive.code_mode(action="status", job_id="x", payload="payload"))
 
 
 def test_harness_filesystem_capabilities_work_at_code_mode_seam() -> None:
@@ -735,8 +743,8 @@ started
 def test_harness_shell_direct_registry_preserves_output_cap() -> None:
     result = asyncio.run(
         code_mode(
-            'r = await run_command(INPUT)\n{"length": len(r), "prefix": r[:80]}',
-            input="python -c \"print('x'*60000)\"",
+            'r = await run_command(PAYLOAD)\n{"length": len(r), "prefix": r[:80]}',
+            payload="python -c \"print('x'*60000)\"",
         )
     )["result"]
     assert result["length"] == 50_000

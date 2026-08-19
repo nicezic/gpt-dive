@@ -7,7 +7,7 @@ ChatGPT Web
   -> Secure MCP Tunnel
   -> GPT Dive
        -> bootstrap
-       -> code_mode      # default local execution, input string required on MCP calls
+       -> code_mode      # default local execution, payload string required on MCP calls
        -> wsl2_sync      # transport/smoke or explicit exception
        -> wsl2_async     # durable job lifecycle
 ```

@@ -79,15 +79,15 @@ class CallableRegistry:
             for name, fn in self._callables.items()
         }
 
-    def type_check_stubs(self, *, include_input: bool = False) -> str:
+    def type_check_stubs(self, *, include_payload: bool = False) -> str:
         """Render runtime globals and live callables as Monty type-check stubs."""
         parts = [
             "from typing import Any",
             "CWD: str",
             "CAPABILITIES: dict[str, dict[str, str]]",
         ]
-        if include_input:
-            parts.append("INPUT: str")
+        if include_payload:
+            parts.append("PAYLOAD: str")
         for name, fn in self._callables.items():
             prefix = "async def" if inspect.iscoroutinefunction(fn) else "def"
             parts.append(
@@ -104,7 +104,7 @@ class MontyCodeRuntime:
         code: str,
         registry: CallableRegistry,
         cwd: str | None = None,
-        input: str | None = None,
+        payload: str | None = None,
     ) -> dict[str, Any]:
         if not code.strip():
             raise ValueError("code must not be empty")
@@ -117,8 +117,8 @@ class MontyCodeRuntime:
             "CWD": run_cwd,
             "CAPABILITIES": registry.describe(),
         }
-        if input is not None:
-            inputs["INPUT"] = input
+        if payload is not None:
+            inputs["PAYLOAD"] = payload
 
         try:
             async with (
@@ -126,7 +126,7 @@ class MontyCodeRuntime:
                 monty.checkout(
                     type_check=True,
                     type_check_stubs=registry.type_check_stubs(
-                        include_input=input is not None
+                        include_payload=payload is not None
                     ),
                 ) as session,
             ):

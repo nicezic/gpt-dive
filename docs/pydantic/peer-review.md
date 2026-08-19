@@ -208,13 +208,13 @@ Inside GPT Dive Code Mode:
 ```python
 result = await bare(
     model="opus5",
-    prompt=INPUT,
+    prompt=PAYLOAD,
     cwd=CWD,
     output_tokens_limit=4096,
 )
 ```
 
-Use `INPUT` for the multiline review packet. Set `CWD`/`cwd` to the narrowest common root containing the referenced evidence.
+Use `PAYLOAD` for the multiline review packet. Set `CWD`/`cwd` to the narrowest common root containing the referenced evidence.
 
 `output_tokens_limit` is a Pydantic usage budget, not the provider's `max_tokens` request setting.
 
