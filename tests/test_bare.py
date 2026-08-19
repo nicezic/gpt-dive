@@ -54,6 +54,29 @@ def test_bare_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> 
     assert result["mode"] == "bare"
 
 
+def test_bare_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
+    sentinel_model = object()
+    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(bare_module, "build_model", lambda alias: sentinel_model)
+
+    result = asyncio.run(
+        bare_module._run_worker(
+            {
+                "model": "m3",
+                "prompt": "return JSON",
+                "output_tokens_limit": 123,
+                "anthropic_thinking": "disabled",
+            }
+        )
+    )
+
+    assert _FakeAgent.init_args == (sentinel_model,)
+    assert _FakeAgent.init_kwargs["model_settings"] == {
+        "anthropic_thinking": {"type": "disabled"}
+    }
+    assert result["ok"] is True
+
+
 def test_bare_worker_peer_review_uses_read_only_code_mode(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
     monkeypatch.setattr(bare_module, "Agent", _FakeAgent)

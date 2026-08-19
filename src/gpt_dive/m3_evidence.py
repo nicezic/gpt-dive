@@ -181,6 +181,7 @@ async def invoke_m3_evidence(
             prompt=prompt,
             timeout=timeout,
             output_tokens_limit=output_tokens_limit,
+            anthropic_thinking="disabled",
         )
         last_bare = bare
         if not bare.get("ok"):

@@ -37,6 +37,7 @@ def test_invoke_m3_evidence_uses_bare_m3_and_validates_contract(monkeypatch) -> 
     assert result["done"] is False
     assert result["usage"] == {"requests": 1}
     assert calls[0]["model"] == "m3"
+    assert calls[0]["anthropic_thinking"] == "disabled"
     assert calls[0]["timeout"] == 17
     assert calls[0]["output_tokens_limit"] == 321
     prompt = str(calls[0]["prompt"])

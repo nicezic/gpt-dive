@@ -96,6 +96,12 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
 
     peer_review = bool(payload.get("peer_review", False))
     workspace_dir = payload.get("workspace_dir")
+    anthropic_thinking = payload.get("anthropic_thinking")
+    if anthropic_thinking is not None:
+        if anthropic_thinking not in {"adaptive", "disabled"}:
+            raise ValueError("anthropic_thinking must be 'adaptive', 'disabled', or None")
+        if alias.transport != "anthropic-compatible":
+            raise ValueError("anthropic_thinking requires an Anthropic-compatible model")
     if peer_review:
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
@@ -112,7 +118,16 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         )
     else:
         # Preserve the true tool-less primitive for m3_evidence and direct low-level use.
-        agent = Agent(build_model(alias))
+        model_settings = (
+            AnthropicModelSettings(anthropic_thinking={"type": anthropic_thinking})
+            if anthropic_thinking is not None
+            else None
+        )
+        agent = (
+            Agent(build_model(alias), model_settings=model_settings)
+            if model_settings
+            else Agent(build_model(alias))
+        )
     run_prompt: str | list[Any] = prompt
     if peer_review and alias is ModelAlias.KUNAVO_OPUS5 and _PEER_CACHE_BREAK in prompt:
         stable_base, round_delta = prompt.split(_PEER_CACHE_BREAK, 1)
@@ -152,6 +167,7 @@ async def invoke_bare(
     output_tokens_limit: int = 4096,
     peer_review: bool = False,
     workspace_dir: str | None = None,
+    anthropic_thinking: str | None = None,
 ) -> dict[str, Any]:
     """Run a model call through the registry, optionally with peer-review inspection tools."""
     alias = _validate(model, prompt, timeout, output_tokens_limit)
@@ -162,6 +178,7 @@ async def invoke_bare(
             "output_tokens_limit": output_tokens_limit,
             "peer_review": peer_review,
             "workspace_dir": workspace_dir,
+            "anthropic_thinking": anthropic_thinking,
         },
         ensure_ascii=False,
     ).encode()
