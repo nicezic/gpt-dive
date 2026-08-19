@@ -12,27 +12,39 @@ from gpt_dive import app as app_module
 def _write_test_wiki(tmp_path: Path) -> Path:
     wiki = tmp_path / "wiki"
     (wiki / "bootstrap").mkdir(parents=True)
-    (wiki / "user").mkdir()
+    (wiki / "workflow" / "pydantic-ai").mkdir(parents=True)
+    (wiki / "skills").mkdir()
     (wiki / "bootstrap" / "preload.json").write_text(
         json.dumps(
             {
                 "preload_files": [
                     "bootstrap/intro.md",
-                    "user/profile.md",
-                    "ERROR_CASE.md",
+                    "USER_RULES.md",
+                    "workflow/pydantic-ai/README.md",
+                    "workflow/pydantic-ai/code-mode.md",
+                    "skills/INDEX.md",
                 ]
             }
         )
     )
-    (wiki / "bootstrap" / "intro.md").write_text(
-        "INTRO\n\n## Code Mode capability index\nINDEX\n\n"
-        "## AI Reminder\nREMINDER\n\n## Dive call preview\nPREVIEW\n"
+    (wiki / "bootstrap" / "reminder.json").write_text(
+        json.dumps(
+            {
+                "interval": 3,
+                "reminder_files": [
+                    {"path": "USER_RULES.md", "section": "Reminder"}
+                ],
+            }
+        )
     )
-    (wiki / "user" / "profile.md").write_text("PROFILE")
-    (wiki / "ERROR_CASE.md").write_text(
-        "# ERROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
-        "\n## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록.\n"
+    (wiki / "bootstrap" / "intro.md").write_text("INTRO\nPREVIEW\n")
+    (wiki / "USER_RULES.md").write_text(
+        "# USER_RULES\n\n## Work\nFULL RULES\n\n## Reminder\nROUTE\nPREVIEW FIRST\n"
     )
+    (wiki / "workflow" / "pydantic-ai" / "README.md").write_text("PYDANTIC")
+    (wiki / "workflow" / "pydantic-ai" / "code-mode.md").write_text("CODE MODE")
+    (wiki / "skills" / "INDEX.md").write_text("SKILLS")
+    (wiki / "ERROR_CASE.md").write_text("# ERROR_CASE\nSHOULD NOT BE PRELOADED\n")
     (wiki / "log.md").write_text("RECENT LOG MUST NOT BE PRELOADED")
     return wiki
 
@@ -65,6 +77,30 @@ def test_parse_preload_files_validation_errors() -> None:
         app_module._parse_preload_files('{"preload_files": [""]}')
 
 
+def test_parse_reminder_config_valid() -> None:
+    text = json.dumps(
+        {
+            "interval": 3,
+            "reminder_files": [{"path": "USER_RULES.md", "section": "Reminder"}],
+        }
+    )
+    assert app_module._parse_reminder_config(text) == (
+        3,
+        [("USER_RULES.md", "Reminder")],
+    )
+
+
+def test_parse_reminder_config_validation_errors() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        app_module._parse_reminder_config('{"interval": 0, "reminder_files": [{}]}')
+    with pytest.raises(ValueError, match="non-empty list"):
+        app_module._parse_reminder_config('{"interval": 3, "reminder_files": []}')
+    with pytest.raises(ValueError, match="file path"):
+        app_module._parse_reminder_config(
+            '{"interval": 3, "reminder_files": [{"path": "", "section": "Reminder"}]}'
+        )
+
+
 def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -77,18 +113,23 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert result["preload_path"] == str(wiki / "bootstrap" / "preload.json")
     assert result["preloaded_files"] == [
         "bootstrap/intro.md",
-        "user/profile.md",
-        "ERROR_CASE.md",
+        "USER_RULES.md",
+        "workflow/pydantic-ai/README.md",
+        "workflow/pydantic-ai/code-mode.md",
+        "skills/INDEX.md",
     ]
     assert "===== BEGIN bootstrap/preload" not in result["stdout"]
     assert "INTRO" in result["stdout"]
-    assert "PROFILE" in result["stdout"]
-    assert "- sample | 1 | 260817-000000" in result["stdout"]
+    assert "FULL RULES" in result["stdout"]
+    assert "PYDANTIC" in result["stdout"]
+    assert "CODE MODE" in result["stdout"]
+    assert "SKILLS" in result["stdout"]
+    assert "SHOULD NOT BE PRELOADED" not in result["stdout"]
     assert "RECENT LOG MUST NOT BE PRELOADED" not in result["stdout"]
     assert "LIVE CODE MODE CAPABILITIES" not in result["stdout"]
 
 
-def test_periodic_reminder_reads_compact_intro_sections_and_error_cases(
+def test_periodic_reminder_reads_only_user_rules_reminder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wiki = _write_test_wiki(tmp_path)
@@ -96,14 +137,9 @@ def test_periodic_reminder_reads_compact_intro_sections_and_error_cases(
 
     reminder = app_module._read_periodic_reminder()
 
-    assert reminder == (
-        "## Code Mode capability index\nINDEX\n\n"
-        "## AI Reminder\nREMINDER\n\n"
-        "# ERROR_CASE\n\n## Tool / command mistakes\n"
-        "- sample | 1 | 260817-000000\n\n"
-        "## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록."
-    )
-    assert "PREVIEW" not in reminder
+    assert reminder == "## Reminder\nROUTE\nPREVIEW FIRST"
+    assert "FULL RULES" not in reminder
+    assert "ERROR_CASE" not in reminder
     assert "INTRO" not in reminder
 
 

@@ -237,31 +237,66 @@ def _read_bootstrap_packet() -> dict[str, Any]:
     }
 
 
-_PERIODIC_REMINDER_INTERVAL = 3
 _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
-_PERIODIC_REMINDER_SECTIONS = ("Code Mode capability index", "AI Reminder")
-_ERROR_CASE_FILE = "ERROR_CASE.md"
+_PERIODIC_REMINDER_CONFIG = "bootstrap/reminder.json"
 
 
-def _error_case_path() -> Path:
-    return _wiki_path() / _ERROR_CASE_FILE
+def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str]]]:
+    """Parse reminder cadence plus ordered Markdown section sources."""
+    try:
+        data = json.loads(reminder_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"malformed reminder JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TypeError("reminder JSON must be an object")
+
+    interval = data.get("interval")
+    if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
+        raise ValueError("reminder interval must be a positive integer")
+
+    raw_files = data.get("reminder_files")
+    if not isinstance(raw_files, list) or not raw_files:
+        raise ValueError("reminder_files must be a non-empty list")
+
+    files: list[tuple[str, str]] = []
+    for item in raw_files:
+        if not isinstance(item, dict):
+            raise TypeError("reminder_files entries must be objects")
+        path = item.get("path")
+        section = item.get("section")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("reminder file path must be a non-empty string")
+        if not isinstance(section, str) or not section.strip():
+            raise ValueError("reminder section must be a non-empty string")
+        files.append((path, section))
+    return interval, files
+
+
+def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str]]]:
+    path = _wiki_path() / _PERIODIC_REMINDER_CONFIG
+    return _parse_reminder_config(path.read_text(errors="replace"))
 
 
 def _read_periodic_reminder() -> str:
-    """Read the compact reminder sections plus the current mistake ledger."""
-    intro = _wiki_path() / "bootstrap" / "intro.md"
-    text = intro.read_text(errors="replace")
+    """Read only the Markdown sections listed by the reminder map."""
+    wiki = _wiki_path()
+    _, files = _read_periodic_reminder_config()
     sections: list[str] = []
-    for heading in _PERIODIC_REMINDER_SECTIONS:
+    for relative, heading in files:
+        candidate = (wiki / relative).resolve()
+        try:
+            candidate.relative_to(wiki)
+        except ValueError as exc:
+            raise ValueError(f"reminder path escapes trusted wiki: {relative}") from exc
+        text = candidate.read_text(errors="replace")
         match = re.search(
             rf"^## {re.escape(heading)}\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
             text,
             flags=re.MULTILINE | re.DOTALL,
         )
         if not match:
-            raise ValueError(f"bootstrap intro missing periodic reminder section: {heading}")
+            raise ValueError(f"{relative} missing reminder section: {heading}")
         sections.append(f"## {heading}\n{match.group('body').rstrip()}")
-    sections.append(_error_case_path().read_text(errors="replace").rstrip())
     return "\n\n".join(sections)
 
 
@@ -277,14 +312,15 @@ def _reset_periodic_reminder_counter(ctx: ServerRequestContext[Any, Any]) -> Non
     _periodic_reminder_state(ctx)[_PERIODIC_REMINDER_STATE_KEY] = 0
 
 
-def _periodic_reminder_due(ctx: ServerRequestContext[Any, Any]) -> bool:
+def _periodic_reminder_due(ctx: ServerRequestContext[Any, Any]) -> int | None:
+    interval, _ = _read_periodic_reminder_config()
     state = _periodic_reminder_state(ctx)
     calls = int(state.get(_PERIODIC_REMINDER_STATE_KEY, 0)) + 1
-    if calls < _PERIODIC_REMINDER_INTERVAL:
+    if calls < interval:
         state[_PERIODIC_REMINDER_STATE_KEY] = calls
-        return False
+        return None
     state[_PERIODIC_REMINDER_STATE_KEY] = 0
-    return True
+    return interval
 
 
 def _tool_name_from_request(params: Any) -> str | None:
@@ -309,13 +345,16 @@ async def _periodic_reminder_middleware(
             _reset_periodic_reminder_counter(ctx)
         return result
 
-    if not isinstance(result, CallToolResult) or not _periodic_reminder_due(ctx):
+    if not isinstance(result, CallToolResult):
+        return result
+    reminder_interval = _periodic_reminder_due(ctx)
+    if reminder_interval is None:
         return result
 
     refresh = TextContent(
         type="text",
         text=(
-            "\n\n===== PERIODIC DIVE REMINDER: 3 tool calls =====\n"
+            f"\n\n===== PERIODIC DIVE REMINDER: {reminder_interval} tool calls =====\n"
             f"{_read_periodic_reminder()}\n"
             "===== END PERIODIC DIVE REMINDER =====\n"
         ),

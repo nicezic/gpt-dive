@@ -98,11 +98,12 @@ async def _call_periodic_reminder_middleware(
     return result
 
 
-def test_periodic_reminder_appends_compact_sections_on_third_tool_call(monkeypatch) -> None:
+def test_periodic_reminder_appends_user_rules_section_on_third_tool_call(monkeypatch) -> None:
+    monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "## Reminder\nREMINDER")
     monkeypatch.setattr(
         app,
-        "_read_periodic_reminder",
-        lambda: "## Code Mode capability index\nINDEX\n\n## AI Reminder\nREMINDER",
+        "_read_periodic_reminder_config",
+        lambda: (3, [("USER_RULES.md", "Reminder")]),
     )
     state: dict[str, object] = {}
 
@@ -115,32 +116,53 @@ def test_periodic_reminder_appends_compact_sections_on_third_tool_call(monkeypat
     assert isinstance(third.content[-1], TextContent)
     text = third.content[-1].text
     assert "PERIODIC DIVE REMINDER: 3 tool calls" in text
-    assert "## Code Mode capability index" in text
-    assert "## AI Reminder" in text
+    assert "## Reminder" in text
     assert "BOOTSTRAP PACKET" not in text
-    assert "LIVE CODE MODE CAPABILITIES" not in text
+    assert "ERROR_CASE" not in text
 
 
-def test_periodic_reminder_includes_error_case_ledger(monkeypatch, tmp_path) -> None:
+def test_periodic_reminder_interval_comes_from_config(monkeypatch) -> None:
+    monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "## Reminder\nREMINDER")
+    monkeypatch.setattr(
+        app,
+        "_read_periodic_reminder_config",
+        lambda: (2, [("USER_RULES.md", "Reminder")]),
+    )
+    state: dict[str, object] = {}
+
+    first = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
+    assert len(first.content) == 1
+
+    second = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
+    assert len(second.content) == 2
+    assert isinstance(second.content[-1], TextContent)
+    assert "PERIODIC DIVE REMINDER: 2 tool calls" in second.content[-1].text
+
+
+def test_periodic_reminder_reads_only_user_rules_reminder(monkeypatch, tmp_path) -> None:
     (tmp_path / "bootstrap").mkdir()
-    (tmp_path / "bootstrap" / "intro.md").write_text(
-        "## Code Mode capability index\nINDEX\n\n## AI Reminder\nREMINDER\n"
+    (tmp_path / "bootstrap" / "reminder.json").write_text(
+        '{"interval": 3, "reminder_files": [{"path": "USER_RULES.md", "section": "Reminder"}]}'
     )
-    (tmp_path / "ERROR_CASE.md").write_text(
-        "# ERROR_CASE\n\n## Tool / command mistakes\n- sample | 1 | 260817-000000\n"
-        "\n## 기타 지시사항 이행 오류\n사용자가 추가 요청한 항목만 기록.\n"
+    (tmp_path / "USER_RULES.md").write_text(
+        "# USER_RULES\n\n## Work\nFULL RULES\n\n## Reminder\nROUTE\nPREVIEW\n"
     )
+    (tmp_path / "ERROR_CASE.md").write_text("# ERROR_CASE\nSHOULD NOT APPEAR\n")
     monkeypatch.setattr(app, "_wiki_path", lambda: tmp_path)
 
     text = app._read_periodic_reminder()
-    assert "## Code Mode capability index" in text
-    assert "## AI Reminder" in text
-    assert "# ERROR_CASE" in text
-    assert "- sample | 1 | 260817-000000" in text
+    assert text == "## Reminder\nROUTE\nPREVIEW"
+    assert "FULL RULES" not in text
+    assert "ERROR_CASE" not in text
 
 
 def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> None:
     monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "REMINDER")
+    monkeypatch.setattr(
+        app,
+        "_read_periodic_reminder_config",
+        lambda: (3, [("USER_RULES.md", "Reminder")]),
+    )
     state: dict[str, object] = {}
 
     for _ in range(2):

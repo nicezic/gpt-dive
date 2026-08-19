@@ -12,7 +12,7 @@ ChatGPT Web
        -> wsl2_async     # durable job lifecycle
 ```
 
-Fresh sessions begin with `bootstrap`. After every 3 non-bootstrap `@dive` tool calls on the same MCP connection, the 3rd tool result automatically appends the compact periodic Dive reminder (Code Mode capability index, AI Reminder, and the current error-case ledger); an explicit `bootstrap` resets that connection's counter. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
+Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map emits only `USER_RULES.md` → `## Reminder` every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
 
 ## OpenAI Codex subscription compatibility
 
@@ -33,7 +33,7 @@ Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `
 - **Codex compatibility maintenance:** `README.patch.openai.provider.md`
 - **Current handoff:** `CONTINUATION.md`
 
-Registered Code Mode capability signatures and callable docstrings are model-visible live contracts: `bootstrap` injects them into every fresh session. When capability behavior changes, keep its signature and docstring concise and accurate; detailed AI usage/routing policy belongs in the Wiki rather than being duplicated here.
+Registered Code Mode capability signatures and callable docstrings are model-visible live contracts exposed through `CAPABILITIES` inside `code_mode`; the public MCP schema owns the outer tool contract. `bootstrap` loads the configured Wiki preload packet, not capability signatures. When capability behavior changes, keep its signature and docstring concise and accurate; detailed AI usage/routing policy belongs in the Wiki rather than being duplicated here.
 
 ## Evolution
 
