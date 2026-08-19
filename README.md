@@ -25,6 +25,7 @@ Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `
 
 - **AI-facing usage / capability lifecycle:** `~/wiki/workflow/pydantic-ai/README.md`
 - **Runtime architecture / operations:** `docs/runtime/architecture.md`, `docs/runtime/operations.md`
+- **MCP stdio diagnostics / journald:** `docs/runtime/mcp-stdio-lifecycle.md`
 - **GPT Dive Pydantic implementation:** `docs/pydantic/README.md`
 - **Code Mode implementation contract:** `docs/pydantic/code-mode.md`
 - **Provider integration:** `docs/pydantic/providers.md`

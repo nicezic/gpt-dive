@@ -31,6 +31,7 @@ from .filesystem_policy import harness_denied_patterns
 from .job_manager import JobManager
 from .m3_evidence import invoke_m3_evidence
 from .repo_search import search_repo
+from .runtime_diagnostics import request_lifecycle_middleware
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
 from .tasks_extension import TasksExtension
@@ -322,6 +323,7 @@ async def _periodic_reminder_middleware(
     return result.model_copy(update={"content": [*result.content, refresh]})
 
 
+mcp.middleware.append(request_lifecycle_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
 
 

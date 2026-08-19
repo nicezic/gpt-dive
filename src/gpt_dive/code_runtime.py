@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import inspect
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -16,6 +18,7 @@ class CallableRegistry:
     def __init__(self) -> None:
         self._callables: dict[str, Callable[..., Any]] = {}
         self._async_cleanups: list[Callable[[], Awaitable[None]]] = []
+        self._active_async_tasks: set[asyncio.Task[Any]] = set()
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         if not name.isidentifier():
@@ -28,12 +31,43 @@ class CallableRegistry:
         self._async_cleanups.append(cleanup)
 
     async def aclose(self) -> None:
+        current = asyncio.current_task()
+        active = [
+            task
+            for task in self._active_async_tasks
+            if task is not current and not task.done()
+        ]
+        for task in active:
+            task.cancel()
+        if active:
+            await asyncio.gather(*active, return_exceptions=True)
+        self._active_async_tasks.clear()
+
         for cleanup in reversed(self._async_cleanups):
             await cleanup()
         self._async_cleanups.clear()
 
+    def _track_async_callable(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(fn)
+        async def tracked(*args: Any, **kwargs: Any) -> Any:
+            task = asyncio.current_task()
+            if task is not None:
+                self._active_async_tasks.add(task)
+            try:
+                return await fn(*args, **kwargs)
+            finally:
+                if task is not None:
+                    self._active_async_tasks.discard(task)
+
+        return tracked
+
     def as_external_lookup(self) -> dict[str, Callable[..., Any]]:
-        return dict(self._callables)
+        return {
+            name: self._track_async_callable(fn)
+            if inspect.iscoroutinefunction(fn)
+            else fn
+            for name, fn in self._callables.items()
+        }
 
     def describe(self) -> dict[str, dict[str, str]]:
         """Return compact runtime metadata for capabilities available to Monty code."""

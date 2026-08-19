@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 from pathlib import Path
 
 import pytest
@@ -152,3 +153,57 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
     assert result["conversation_id"] == "c-timeout"
     assert "c-timeout" in result["stdout"]
     assert result["stderr"] == "partial stderr"
+
+
+
+def test_invoke_agy_worker_cancellation_terminates_and_reaps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("fake")
+    monkeypatch.setattr(agy_worker_module, "AGY", fake_agy)
+
+    class FakeProcess:
+        pid = 5150
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.started = agy_worker_module.asyncio.Event()
+            self.done = agy_worker_module.asyncio.Event()
+            self.reaped = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            self.started.set()
+            await self.done.wait()
+            self.reaped = True
+            self.returncode = -signal.SIGTERM
+            return b"", b""
+
+    proc = FakeProcess()
+    killed: list[tuple[int, int]] = []
+
+    async def fake_create_subprocess_exec(*args: object, **kwargs: object) -> FakeProcess:
+        return proc
+
+    def fake_killpg(pid: int, sig: int) -> None:
+        killed.append((pid, sig))
+        proc.done.set()
+
+    monkeypatch.setattr(
+        agy_worker_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setattr(agy_worker_module.os, "killpg", fake_killpg)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(invoke_agy_worker(task="research", timeout=120.0))
+        await proc.started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert killed == [(5150, signal.SIGTERM)]
+    assert proc.reaped is True
