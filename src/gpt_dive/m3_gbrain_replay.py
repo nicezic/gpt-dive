@@ -15,7 +15,7 @@ from typing import Any
 from .m3_evidence import invoke_m3_evidence
 from .runtime_env import build_runtime_path
 
-_PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness"}
+_PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness", "pydantic-ai-monty"}
 _CURRENT_QUERY_RE = re.compile(r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE)
 _EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 _DYNAMIC_VALIDATION_ERROR_PATTERNS = (

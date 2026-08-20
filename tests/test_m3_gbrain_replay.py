@@ -12,7 +12,7 @@ def test_load_capture_rows_reads_ndjson(tmp_path: Path) -> None:
     path = tmp_path / "capture.ndjson"
     path.write_text(
         '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11],"created_at":"2026-08-16T16:10:20.070Z","as_of_ts":null}\n'
-        '{"schema_version":1,"id":2,"tool_name":"query","query":"q2","source_ids":["pydantic-ai","pydantic-ai-harness"],"retrieved_slugs":["docs/b"],"retrieved_chunk_ids":[22],"created_at":"2026-08-16T16:10:29.252Z","as_of_ts":null}\n'
+        '{"schema_version":1,"id":2,"tool_name":"query","query":"q2","source_ids":["pydantic-ai","pydantic-ai-harness","pydantic-ai-monty"],"retrieved_slugs":["docs/b"],"retrieved_chunk_ids":[22],"created_at":"2026-08-16T16:10:29.252Z","as_of_ts":null}\n'
     )
     rows = replay_module.load_capture_rows(path)
     assert [row["id"] for row in rows] == [1, 2]
