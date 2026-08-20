@@ -1,0 +1,385 @@
+From b98cf93118919ebbc5a7ccbf5cf8a0dabee2c5dd Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Sun, 16 Aug 2026 10:40:44 +0900
+Subject: [PATCH] fix: track Voyage free usage locally
+
+---
+ src/core/ai/gateway.ts                 |  30 +++++
+ src/core/voyage-free-usage.ts          | 156 +++++++++++++++++++++++++
+ test/voyage-free-usage-gateway.test.ts |  67 +++++++++++
+ test/voyage-free-usage.test.ts         |  71 +++++++++++
+ 4 files changed, 324 insertions(+)
+ create mode 100644 src/core/voyage-free-usage.ts
+ create mode 100644 test/voyage-free-usage-gateway.test.ts
+ create mode 100644 test/voyage-free-usage.test.ts
+
+diff --git a/src/core/ai/gateway.ts b/src/core/ai/gateway.ts
+index 2989f94f..2dfc4f6c 100644
+--- a/src/core/ai/gateway.ts
++++ b/src/core/ai/gateway.ts
+@@ -62,6 +62,11 @@ import { loadConfig } from '../config.ts';
+ import type { GBrainConfig } from '../config.ts';
+ import { mergedProviderEnv } from './provider-env.ts';
+ import { buildGatewayConfig } from './build-gateway-config.ts';
++import {
++  VOYAGE_FREE_MODEL,
++  getVoyageUsageStatus,
++  recordVoyageFreeEmbeddingUsage,
++} from '../voyage-free-usage.ts';
+ 
+ // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
+ //
+@@ -1759,6 +1764,21 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
+   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
+   const tracker = __budgetStore.getStore() ?? null;
+   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
++  if (recipe.id === 'voyage' && modelId === VOYAGE_FREE_MODEL && opts?.inputType !== 'query') {
++    const usageStatus = await getVoyageUsageStatus();
++    if (!usageStatus) {
++      throw new AIConfigError(
++        `Voyage ${VOYAGE_FREE_MODEL} local usage snapshot is missing or invalid.`,
++        `Run ~/.local/bin/voyage-dashboard-session-enroll --session msedge (preferred) or bootstrap a temporary known-used baseline.`,
++      );
++    }
++    if (usageStatus.reauthRequired) {
++      throw new AIConfigError(
++        `Voyage ${VOYAGE_FREE_MODEL} usage snapshot is past its reauthentication deadline (${usageStatus.snapshot.reauthDueAt}).`,
++        `Run ~/.local/bin/voyage-dashboard-session-enroll --session msedge to refresh authoritative Voyage usage.`,
++      );
++    }
++  }
+   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+ 
+   // Reserve up front for the worst-case batch token count. Embeddings have
+@@ -2015,6 +2035,16 @@ async function embedSubBatch(
+     }
+ 
+     recordSubBatchSuccess(recipe);
++    const usageCharsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
++    const estimatedTokens = Math.ceil(
++      texts.reduce((sum, text) => sum + (text ?? '').length, 0) / Math.max(usageCharsPerToken, 1),
++    );
++    await recordVoyageFreeEmbeddingUsage({
++      recipeId: recipe.id,
++      modelId,
++      estimatedTokens,
++      inputType: threadedInputType === 'query' ? 'query' : 'document',
++    });
+     return result.embeddings.map((e: number[]) => new Float32Array(e));
+   } catch (err) {
+     // On token-limit error, tighten the recipe's effective safety factor
+diff --git a/src/core/voyage-free-usage.ts b/src/core/voyage-free-usage.ts
+new file mode 100644
+index 00000000..484a9efc
+--- /dev/null
++++ b/src/core/voyage-free-usage.ts
+@@ -0,0 +1,156 @@
++import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
++import { homedir } from 'node:os';
++import { dirname, join } from 'node:path';
++
++export const VOYAGE_FREE_MODEL = 'voyage-code-3';
++export const VOYAGE_FREE_TOTAL_TOKENS = 200_000_000;
++export const VOYAGE_FREE_WARNING_PERCENT = 80;
++export const VOYAGE_REAUTH_MAX_AGE_DAYS = 30;
++
++export interface VoyageUsageSnapshot {
++  version: 1;
++  model: string;
++  source: 'dashboard' | 'local-bootstrap';
++  totalFreeToken: number;
++  usedTokenAtBaseline: number;
++  baselineAt: string;
++  verifiedAt: string | null;
++  reauthDueAt: string;
++}
++
++export interface VoyageUsageStatus {
++  snapshot: VoyageUsageSnapshot;
++  localEstimatedToken: number;
++  usedToken: number;
++  remainingToken: number;
++  usedPercent: number;
++  warning: boolean;
++  reauthRequired: boolean;
++}
++
++let _snapshotPathOverride: string | null = null;
++let _ledgerPathOverride: string | null = null;
++let _warnedThisProcess = false;
++
++function stateRoot(): string {
++  const xdg = process.env.XDG_STATE_HOME?.trim();
++  return xdg || join(homedir(), '.local', 'state');
++}
++
++export function voyageUsageSnapshotPath(): string {
++  return _snapshotPathOverride ?? join(stateRoot(), 'gbrain', 'voyage', 'free-usage-snapshot.json');
++}
++
++export function voyageUsageLedgerPath(): string {
++  return _ledgerPathOverride ?? join(stateRoot(), 'gbrain', 'voyage', 'free-usage.jsonl');
++}
++
++/** @internal test seam */
++export function __setVoyageUsagePathsForTests(snapshot: string | null, ledger: string | null): void {
++  _snapshotPathOverride = snapshot;
++  _ledgerPathOverride = ledger;
++  _warnedThisProcess = false;
++}
++
++export async function readVoyageUsageSnapshot(): Promise<VoyageUsageSnapshot | null> {
++  try {
++    const raw = JSON.parse(await readFile(voyageUsageSnapshotPath(), 'utf-8')) as VoyageUsageSnapshot;
++    if (
++      raw?.version !== 1 || raw.model !== VOYAGE_FREE_MODEL ||
++      !Number.isInteger(raw.totalFreeToken) || raw.totalFreeToken <= 0 ||
++      !Number.isInteger(raw.usedTokenAtBaseline) || raw.usedTokenAtBaseline < 0 ||
++      typeof raw.baselineAt !== 'string' || typeof raw.reauthDueAt !== 'string'
++    ) return null;
++    return raw;
++  } catch {
++    return null;
++  }
++}
++
++async function readLedgerTokensAfter(baselineAt: string): Promise<number> {
++  let text: string;
++  try {
++    text = await readFile(voyageUsageLedgerPath(), 'utf-8');
++  } catch {
++    return 0;
++  }
++  const cutoff = Date.parse(baselineAt);
++  let total = 0;
++  for (const line of text.split('\n')) {
++    if (!line.trim()) continue;
++    try {
++      const row = JSON.parse(line) as { ts?: unknown; model?: unknown; estimatedTokens?: unknown };
++      if (row.model !== VOYAGE_FREE_MODEL || typeof row.ts !== 'string') continue;
++      const ts = Date.parse(row.ts);
++      if (!Number.isFinite(ts) || ts <= cutoff) continue;
++      if (!Number.isInteger(row.estimatedTokens) || (row.estimatedTokens as number) <= 0) continue;
++      total += row.estimatedTokens as number;
++    } catch {
++      // Torn/malformed observability row: ignore it rather than breaking embedding.
++    }
++  }
++  return total;
++}
++
++export async function getVoyageUsageStatus(now: Date = new Date()): Promise<VoyageUsageStatus | null> {
++  const snapshot = await readVoyageUsageSnapshot();
++  if (!snapshot) return null;
++  const localEstimatedToken = await readLedgerTokensAfter(snapshot.baselineAt);
++  const usedToken = Math.max(0, snapshot.usedTokenAtBaseline + localEstimatedToken);
++  const remainingToken = Math.max(0, snapshot.totalFreeToken - usedToken);
++  const usedPercent = (usedToken / snapshot.totalFreeToken) * 100;
++  const due = Date.parse(snapshot.reauthDueAt);
++  return {
++    snapshot,
++    localEstimatedToken,
++    usedToken,
++    remainingToken,
++    usedPercent,
++    warning: usedPercent >= VOYAGE_FREE_WARNING_PERCENT,
++    reauthRequired: !Number.isFinite(due) || now.getTime() >= due,
++  };
++}
++
++/**
++ * Record one SUCCESSFUL Voyage voyage-code-3 HTTP sub-batch.
++ * The recipe deliberately uses 1 char ~= 1 token for mixed code/JSON/CJK, so
++ * this is conservative between monthly authoritative dashboard refreshes.
++ * Never throws: accounting must not turn a successful provider call into a failure.
++ */
++export async function recordVoyageFreeEmbeddingUsage(args: {
++  recipeId: string;
++  modelId: string;
++  estimatedTokens: number;
++  inputType: 'query' | 'document';
++}): Promise<void> {
++  if (args.recipeId !== 'voyage' || args.modelId !== VOYAGE_FREE_MODEL) return;
++  if (!Number.isInteger(args.estimatedTokens) || args.estimatedTokens <= 0) return;
++  try {
++    const path = voyageUsageLedgerPath();
++    await mkdir(dirname(path), { recursive: true });
++    await appendFile(path, JSON.stringify({
++      ts: new Date().toISOString(),
++      model: args.modelId,
++      estimatedTokens: args.estimatedTokens,
++      inputType: args.inputType,
++    }) + '\n', 'utf-8');
++
++    const status = await getVoyageUsageStatus();
++    if (status?.warning && !_warnedThisProcess) {
++      _warnedThisProcess = true;
++      console.error(
++        `[voyage-usage] WARNING: estimated ${status.usedPercent.toFixed(1)}% of ${status.snapshot.totalFreeToken.toLocaleString()} free ${VOYAGE_FREE_MODEL} tokens used; ` +
++        `reauth by ${status.snapshot.reauthDueAt} to reset from fresh Voyage usage.`,
++      );
++    }
++  } catch {
++    // Local accounting is observability/safety guidance; provider success wins.
++  }
++}
++
++/** Write/replace the authoritative or migration baseline atomically enough for a tiny local state file. */
++export async function writeVoyageUsageSnapshot(snapshot: VoyageUsageSnapshot): Promise<void> {
++  const path = voyageUsageSnapshotPath();
++  await mkdir(dirname(path), { recursive: true });
++  await writeFile(path, JSON.stringify(snapshot, null, 2) + '\n', 'utf-8');
++}
+diff --git a/test/voyage-free-usage-gateway.test.ts b/test/voyage-free-usage-gateway.test.ts
+new file mode 100644
+index 00000000..7197a8b7
+--- /dev/null
++++ b/test/voyage-free-usage-gateway.test.ts
+@@ -0,0 +1,67 @@
++import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
++import { mkdtemp, writeFile } from 'node:fs/promises';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import {
++  __setEmbedTransportForTests,
++  configureGateway,
++  embed,
++  embedQuery,
++  resetGateway,
++} from '../src/core/ai/gateway.ts';
++import { __setVoyageUsagePathsForTests } from '../src/core/voyage-free-usage.ts';
++
++let transportCalls = 0;
++
++beforeEach(async () => {
++  transportCalls = 0;
++  resetGateway();
++  const dir = await mkdtemp(join(tmpdir(), 'gbrain-voyage-gateway-'));
++  const snapshotPath = join(dir, 'snapshot.json');
++  const ledgerPath = join(dir, 'usage.jsonl');
++  await writeFile(snapshotPath, JSON.stringify({
++    version: 1,
++    model: 'voyage-code-3',
++    source: 'dashboard',
++    totalFreeToken: 200_000_000,
++    usedTokenAtBaseline: 10_000_000,
++    baselineAt: '2026-06-01T00:00:00Z',
++    verifiedAt: '2026-06-01T00:00:00Z',
++    reauthDueAt: '2026-07-01T00:00:00Z',
++  }), 'utf-8');
++  __setVoyageUsagePathsForTests(snapshotPath, ledgerPath);
++  configureGateway({
++    embedding_model: 'voyage:voyage-code-3',
++    embedding_dimensions: 1024,
++    env: { VOYAGE_API_KEY: 'voy-test' },
++  });
++  __setEmbedTransportForTests(async ({ values }: any) => {
++    transportCalls++;
++    return { embeddings: values.map(() => new Array(1024).fill(0)), usage: { tokens: 0 } } as any;
++  });
++});
++
++afterEach(() => {
++  __setEmbedTransportForTests(null);
++  __setVoyageUsagePathsForTests(null, null);
++  resetGateway();
++});
++
++describe('voyage monthly reauthentication gateway fence', () => {
++  test('expired snapshot blocks document embedding before provider transport', async () => {
++    let error: Error | null = null;
++    try {
++      await embed(['document payload']);
++    } catch (e) {
++      error = e as Error;
++    }
++    expect(error?.message).toContain('reauthentication deadline');
++    expect(transportCalls).toBe(0);
++  });
++
++  test('expired snapshot still allows query embedding and records usage', async () => {
++    const vector = await embedQuery('query payload');
++    expect(vector.length).toBe(1024);
++    expect(transportCalls).toBe(1);
++  });
++});
+diff --git a/test/voyage-free-usage.test.ts b/test/voyage-free-usage.test.ts
+new file mode 100644
+index 00000000..0f292f12
+--- /dev/null
++++ b/test/voyage-free-usage.test.ts
+@@ -0,0 +1,71 @@
++import { afterEach, describe, expect, test } from 'bun:test';
++import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import {
++  __setVoyageUsagePathsForTests,
++  getVoyageUsageStatus,
++  recordVoyageFreeEmbeddingUsage,
++  type VoyageUsageSnapshot,
++} from '../src/core/voyage-free-usage.ts';
++
++async function fixture(snapshot: VoyageUsageSnapshot) {
++  const dir = await mkdtemp(join(tmpdir(), 'gbrain-voyage-usage-'));
++  const snapshotPath = join(dir, 'snapshot.json');
++  const ledgerPath = join(dir, 'usage.jsonl');
++  await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf-8');
++  __setVoyageUsagePathsForTests(snapshotPath, ledgerPath);
++  return { snapshotPath, ledgerPath };
++}
++
++const base: VoyageUsageSnapshot = {
++  version: 1,
++  model: 'voyage-code-3',
++  source: 'dashboard',
++  totalFreeToken: 200_000_000,
++  usedTokenAtBaseline: 100_000_000,
++  baselineAt: '2026-08-15T00:00:00Z',
++  verifiedAt: '2026-08-15T00:00:00Z',
++  reauthDueAt: '2026-09-14T00:00:00Z',
++};
++
++afterEach(() => __setVoyageUsagePathsForTests(null, null));
++
++describe('voyage free usage ledger', () => {
++  test('adds only post-baseline voyage-code-3 usage', async () => {
++    const { ledgerPath } = await fixture(base);
++    await writeFile(ledgerPath,
++      JSON.stringify({ ts: '2026-08-14T00:00:00Z', model: 'voyage-code-3', estimatedTokens: 999 }) + '\n' +
++      JSON.stringify({ ts: '2026-08-16T00:00:00Z', model: 'voyage-code-3', estimatedTokens: 1234 }) + '\n',
++      'utf-8');
++    const status = await getVoyageUsageStatus(new Date('2026-08-16T01:00:00Z'));
++    expect(status?.localEstimatedToken).toBe(1234);
++    expect(status?.usedToken).toBe(100_001_234);
++  });
++
++  test('80 percent is warning only', async () => {
++    await fixture({ ...base, usedTokenAtBaseline: 160_000_000 });
++    const status = await getVoyageUsageStatus(new Date('2026-08-16T00:00:00Z'));
++    expect(status?.warning).toBe(true);
++    expect(status?.reauthRequired).toBe(false);
++  });
++
++  test('30 days requires reauthentication', async () => {
++    await fixture(base);
++    const status = await getVoyageUsageStatus(new Date('2026-09-14T00:00:00Z'));
++    expect(status?.reauthRequired).toBe(true);
++  });
++
++  test('records successful voyage-code-3 calls but ignores other models', async () => {
++    const { ledgerPath } = await fixture(base);
++    await recordVoyageFreeEmbeddingUsage({
++      recipeId: 'voyage', modelId: 'voyage-code-3', estimatedTokens: 321, inputType: 'query',
++    });
++    await recordVoyageFreeEmbeddingUsage({
++      recipeId: 'voyage', modelId: 'voyage-4', estimatedTokens: 999, inputType: 'document',
++    });
++    const raw = await readFile(ledgerPath, 'utf-8');
++    expect(raw).toContain('"estimatedTokens":321');
++    expect(raw).not.toContain('"estimatedTokens":999');
++  });
++});
+-- 
+2.34.1
+

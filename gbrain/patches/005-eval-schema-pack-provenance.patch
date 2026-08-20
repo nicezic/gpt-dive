@@ -1,0 +1,272 @@
+From 6831c0288ba1a4cb17b2f5642cec7b10c495f182 Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Mon, 17 Aug 2026 08:33:29 +0900
+Subject: [PATCH] fix: capture schema-pack eval provenance
+
+---
+ src/core/eval-capture.ts     | 61 ++++++++++++++++++++++++++++++++++++
+ src/core/ops/context.ts      |  1 +
+ src/core/ops/search.ts       |  1 +
+ src/core/pglite-engine.ts    |  5 +--
+ src/core/postgres-engine.ts  |  5 +--
+ src/core/types.ts            | 13 ++++++++
+ test/eval-candidates.test.ts | 15 +++++++++
+ test/eval-capture.test.ts    | 33 +++++++++++++++++++
+ 8 files changed, 130 insertions(+), 4 deletions(-)
+
+diff --git a/src/core/eval-capture.ts b/src/core/eval-capture.ts
+index 2326119f..fccc6739 100644
+--- a/src/core/eval-capture.ts
++++ b/src/core/eval-capture.ts
+@@ -64,6 +64,8 @@ export interface CaptureContext {
+   latency_ms: number;
+   /** OperationContext.remote — true for MCP callers, false for local CLI. */
+   remote: boolean;
++  /** File/env config already resolved by the operation context. */
++  config?: GBrainConfig | null;
+   /** The `expand` flag as requested by the caller (query-only; null for search). */
+   expand_enabled: boolean | null;
+   /** The `detail` flag as requested (query-only). */
+@@ -131,6 +133,59 @@ export function buildEvalCandidateInput(
+  * Narrow by Postgres SQLSTATE where we can (postgres-js + PGLite both
+  * surface `.code`), fall back to 'other'.
+  */
++export async function buildSchemaPackPerSourceSnapshot(
++  engine: BrainEngine,
++  sourceIds: string[],
++  remote: boolean,
++  config: GBrainConfig | null,
++): Promise<NonNullable<EvalCandidateInput['schema_pack_per_source']> | null> {
++  const ids = [...new Set(sourceIds)].sort();
++  if (ids.length === 0) return null;
++
++  const { loadActivePack } = await import('./schema-pack/load-active.ts');
++  const { expandClosure } = await import('./schema-pack/closure.ts');
++
++  let dbConfig: string | undefined;
++  try {
++    dbConfig = (await engine.getConfig('schema_pack'))?.trim() || undefined;
++  } catch {
++    dbConfig = undefined;
++  }
++
++  const perSourceDb = new Map<string, string>();
++  for (const sourceId of ids) {
++    try {
++      const value = (await engine.getConfig(`schema_pack.source.${sourceId}`))?.trim();
++      if (value) perSourceDb.set(sourceId, value);
++    } catch {
++      // Missing config rows are normal; pack resolution falls through to the
++      // remaining canonical precedence tiers.
++    }
++  }
++
++  const snapshot: NonNullable<EvalCandidateInput['schema_pack_per_source']> = {};
++  for (const sourceId of ids) {
++    const pack = await loadActivePack({
++      cfg: config,
++      remote,
++      sourceId,
++      perSourceDb,
++      dbConfig,
++    });
++    const aliasClosureResolved: Record<string, string[]> = {};
++    for (const typeName of pack.manifest.page_types.map((t) => t.name).sort()) {
++      aliasClosureResolved[typeName] = expandClosure(typeName, pack.alias_graph);
++    }
++    snapshot[sourceId] = {
++      pack_name: pack.manifest.name,
++      pack_version: pack.manifest.version,
++      manifest_sha8: pack.manifest_sha8,
++      alias_closure_resolved: aliasClosureResolved,
++    };
++  }
++  return snapshot;
++}
++
+ export function classifyCaptureFailure(err: unknown): EvalCaptureFailureReason {
+   if (err && typeof err === 'object') {
+     const code = (err as { code?: string }).code;
+@@ -176,6 +231,12 @@ async function doCaptureEvalCandidate(
+ ): Promise<void> {
+   try {
+     const input = buildEvalCandidateInput(ctx, opts);
++    input.schema_pack_per_source = await buildSchemaPackPerSourceSnapshot(
++      engine,
++      input.source_ids,
++      ctx.remote,
++      ctx.config ?? null,
++    );
+     await engine.logEvalCandidate(input);
+   } catch (err) {
+     const reason = classifyCaptureFailure(err);
+diff --git a/src/core/ops/context.ts b/src/core/ops/context.ts
+index 8dcb68b1..cd753bfb 100644
+--- a/src/core/ops/context.ts
++++ b/src/core/ops/context.ts
+@@ -668,6 +668,7 @@ export function maybeCaptureSearch(
+       meta: meta ?? { vector_enabled: vectorEnabled, detail_resolved: null, expansion_applied: false },
+       latency_ms,
+       remote: ctx.remote ?? false,
++      config: ctx.config,
+       expand_enabled: false,
+       detail: null,
+       job_id: ctx.jobId ?? null,
+diff --git a/src/core/ops/search.ts b/src/core/ops/search.ts
+index 1ab67df9..046922d6 100644
+--- a/src/core/ops/search.ts
++++ b/src/core/ops/search.ts
+@@ -359,6 +359,7 @@ const query: Operation = {
+           meta,
+           latency_ms,
+           remote: ctx.remote ?? false,
++          config: ctx.config,
+           expand_enabled: expand,
+           detail: detail ?? null,
+           job_id: ctx.jobId ?? null,
+diff --git a/src/core/pglite-engine.ts b/src/core/pglite-engine.ts
+index a2c9a9b5..31c981e3 100644
+--- a/src/core/pglite-engine.ts
++++ b/src/core/pglite-engine.ts
+@@ -5775,8 +5775,8 @@ export class PGLiteEngine implements BrainEngine {
+       `INSERT INTO eval_candidates (
+          tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+          expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+-         latency_ms, remote, job_id, subagent_id, embedding_column
+-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
++         latency_ms, remote, job_id, subagent_id, embedding_column, schema_pack_per_source
++       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb)
+        RETURNING id`,
+       [
+         input.tool_name,
+@@ -5794,6 +5794,7 @@ export class PGLiteEngine implements BrainEngine {
+         input.job_id,
+         input.subagent_id,
+         input.embedding_column ?? null,
++        input.schema_pack_per_source == null ? null : JSON.stringify(input.schema_pack_per_source),
+       ]
+     );
+     return rows[0]!.id;
+diff --git a/src/core/postgres-engine.ts b/src/core/postgres-engine.ts
+index 4dc7a411..0b353499 100644
+--- a/src/core/postgres-engine.ts
++++ b/src/core/postgres-engine.ts
+@@ -5741,11 +5741,12 @@ export class PostgresEngine implements BrainEngine {
+       INSERT INTO eval_candidates (
+         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+-        latency_ms, remote, job_id, subagent_id, embedding_column
++        latency_ms, remote, job_id, subagent_id, embedding_column, schema_pack_per_source
+       ) VALUES (
+         ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
+         ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
+-        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null}
++        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null},
++        ${input.schema_pack_per_source == null ? null : this.sql.json(input.schema_pack_per_source)}
+       )
+       RETURNING id
+     `;
+diff --git a/src/core/types.ts b/src/core/types.ts
+index 3564e9ac..9d9a7115 100644
+--- a/src/core/types.ts
++++ b/src/core/types.ts
+@@ -1676,6 +1676,19 @@ export interface EvalCandidateInput {
+    * so capture and replay run in the same embedding space.
+    */
+   embedding_column?: string | null;
++  /**
++   * v0.39 schema-pack replay provenance. Inline per-source snapshot of the
++   * exact pack identity + resolved alias closure used at capture time.
++   */
++  schema_pack_per_source?: Record<
++    string,
++    {
++      pack_name: string;
++      pack_version: string;
++      manifest_sha8: string;
++      alias_closure_resolved: Record<string, string[]>;
++    }
++  > | null;
+ }
+ 
+ export interface EvalCandidate extends EvalCandidateInput {
+diff --git a/test/eval-candidates.test.ts b/test/eval-candidates.test.ts
+index b5065dfc..305a1ab9 100644
+--- a/test/eval-candidates.test.ts
++++ b/test/eval-candidates.test.ts
+@@ -88,6 +88,21 @@ describe('logEvalCandidate', () => {
+     expect(row.remote).toBe(false);
+   });
+ 
++  test('preserves schema_pack_per_source provenance through round-trip', async () => {
++    const snapshot = {
++      'pydantic-ai': {
++        pack_name: 'gbrain-base',
++        pack_version: '1.0.0',
++        manifest_sha8: 'deadbeef',
++        alias_closure_resolved: { person: ['person'] },
++      },
++    };
++    await engine.logEvalCandidate(makeInput({ schema_pack_per_source: snapshot }));
++    const rows = await engine.listEvalCandidates();
++    expect(rows).toHaveLength(1);
++    expect(rows[0]!.schema_pack_per_source).toEqual(snapshot);
++  });
++
+   test('rejects oversize queries via CHECK constraint (50KB cap)', async () => {
+     const bigQuery = 'x'.repeat(51201);
+     await expect(engine.logEvalCandidate(makeInput({ query: bigQuery }))).rejects.toThrow();
+diff --git a/test/eval-capture.test.ts b/test/eval-capture.test.ts
+index ad60bcea..d9919dee 100644
+--- a/test/eval-capture.test.ts
++++ b/test/eval-capture.test.ts
+@@ -11,6 +11,7 @@
+ import { describe, expect, mock, test } from 'bun:test';
+ import {
+   buildEvalCandidateInput,
++  buildSchemaPackPerSourceSnapshot,
+   captureEvalCandidate,
+   classifyCaptureFailure,
+   isEvalCaptureEnabled,
+@@ -137,6 +138,38 @@ describe('buildEvalCandidateInput', () => {
+   });
+ });
+ 
++describe('schema-pack capture provenance', () => {
++  test('captures canonical per-source pack identity and resolved alias closure', async () => {
++    const prior = process.env.GBRAIN_SCHEMA_PACK;
++    delete process.env.GBRAIN_SCHEMA_PACK;
++    const engine = {
++      getConfig: async () => null,
++    } as unknown as BrainEngine;
++    try {
++      const snapshot = await buildSchemaPackPerSourceSnapshot(
++        engine,
++        ['pydantic-ai'],
++        false,
++        { engine: 'pglite', schema_pack: 'gbrain-base' },
++      );
++      expect(snapshot).not.toBeNull();
++      const entry = snapshot!['pydantic-ai'];
++      expect(entry).toBeDefined();
++      expect(entry!.pack_name).toBe('gbrain-base');
++      expect(entry!.pack_version.length).toBeGreaterThan(0);
++      expect(entry!.manifest_sha8).toMatch(/^[0-9a-f]{8}$/);
++      expect(Object.keys(entry!.alias_closure_resolved).length).toBeGreaterThan(0);
++      for (const [typeName, closure] of Object.entries(entry!.alias_closure_resolved)) {
++        expect(closure).toContain(typeName);
++        expect(closure).toEqual([...closure].sort());
++      }
++    } finally {
++      if (prior === undefined) delete process.env.GBRAIN_SCHEMA_PACK;
++      else process.env.GBRAIN_SCHEMA_PACK = prior;
++    }
++  });
++});
++
+ describe('classifyCaptureFailure', () => {
+   test('maps Postgres 23514 to check_violation', () => {
+     expect(classifyCaptureFailure({ code: '23514' })).toBe('check_violation');
+-- 
+2.34.1
+

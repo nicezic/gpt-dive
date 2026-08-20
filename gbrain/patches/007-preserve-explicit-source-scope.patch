@@ -1,0 +1,30 @@
+From b26d695558ff56cb8080e6f3f7799d3312310c11 Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Mon, 17 Aug 2026 12:49:19 +0900
+Subject: [PATCH] fix: preserve explicit source scope after 0.46 rebase
+
+---
+ src/core/ops/search.ts | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/core/ops/search.ts b/src/core/ops/search.ts
+index 046922d6..ce46d17d 100644
+--- a/src/core/ops/search.ts
++++ b/src/core/ops/search.ts
+@@ -74,8 +74,11 @@ const search: Operation = {
+     const queryText = p.query as string;
+     const limit = (p.limit as number) || 20;
+     const offset = (p.offset as number) || 0;
+-    // A named group wins for unqualified trusted-local calls; explicit CLI source selection still wins via ctx.localSourceExplicit.
+-    const namedGroupScope = await resolveNamedSearchGroupScope(ctx, p.source_group, false);
++    // A named group wins only for unqualified trusted-local calls. An explicit
++    // source param (direct op callers) or ctx.localSourceExplicit (CLI/env/dotfile)
++    // keeps the narrower source authoritative.
++    const explicitSource = typeof p.source === 'string' && p.source.length > 0;
++    const namedGroupScope = await resolveNamedSearchGroupScope(ctx, p.source_group, explicitSource);
+     const scope = namedGroupScope ?? federatedSearchScope(ctx);
+ 
+     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
+-- 
+2.34.1
+

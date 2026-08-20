@@ -1,0 +1,68 @@
+From 04bfdac99a41640b69bcc8be333c005f2028beaf Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Fri, 14 Aug 2026 02:56:26 +0900
+Subject: [PATCH] local: guard Voyage free quota before embedding
+
+---
+ src/commands/embed.ts | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/src/commands/embed.ts b/src/commands/embed.ts
+index 71371972..aec6e9ff 100644
+--- a/src/commands/embed.ts
++++ b/src/commands/embed.ts
+@@ -1,3 +1,6 @@
++import { spawnSync } from 'node:child_process';
++import { homedir } from 'node:os';
++import { join } from 'node:path';
+ import type { BrainEngine } from '../core/engine.ts';
+ import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
+ import type { ChunkInput } from '../core/types.ts';
+@@ -318,6 +321,36 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
+   throw new EmbeddingDimMismatchError(recipe);
+ }
+ 
++
++function assertVoyageFreeQuotaGuard(): void {
++  const cfg = loadConfig();
++  const model = cfg?.embedding_model ?? '';
++  if (!model.startsWith('voyage:')) return;
++
++  const guard = process.env.VOYAGE_GUARD_BIN ?? join(homedir(), '.local', 'bin', 'voyage-free-guard');
++  const r = spawnSync(guard, ['--json'], {
++    encoding: 'utf8',
++    timeout: 20_000,
++    stdio: ['ignore', 'pipe', 'pipe'],
++  });
++
++  if (r.error) throw new Error(`VOYAGE_GUARD_ERROR: ${r.error.message}`);
++  if (r.status !== 0) {
++    const detail = (r.stderr || r.stdout || '').trim();
++    throw new Error(detail || `VOYAGE_GUARD_ERROR: quota guard exited ${r.status}`);
++  }
++
++  let payload: unknown;
++  try {
++    payload = JSON.parse((r.stdout || '').trim());
++  } catch {
++    throw new Error('VOYAGE_GUARD_ERROR: quota guard returned invalid JSON');
++  }
++  if (!payload || typeof payload !== 'object' || (payload as { guard?: unknown }).guard !== 'PASS') {
++    throw new Error('VOYAGE_GUARD_ERROR: quota guard did not return PASS');
++  }
++}
++
+ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
+   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
+@@ -336,6 +369,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
+   if (!opts.dryRun) {
+     const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+     validateEmbeddingCreds();
++    assertVoyageFreeQuotaGuard();
+   }
+ 
+   // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
+-- 
+2.34.1
+

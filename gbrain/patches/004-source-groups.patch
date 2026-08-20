@@ -1,0 +1,538 @@
+From 8aebb20d4f074a6631b3743c080cc17077dcdfe4 Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Sun, 16 Aug 2026 11:23:15 +0900
+Subject: [PATCH] feat: add named source groups for retrieval
+
+---
+ src/cli.ts                 |   6 +-
+ src/commands/sources.ts    |  85 ++++++++++++++++++++
+ src/core/config.ts         |   1 +
+ src/core/ops/context.ts    |  24 ++++++
+ src/core/ops/contract.ts   |   2 +
+ src/core/ops/search.ts     |  17 ++--
+ src/core/source-groups.ts  |  70 +++++++++++++++++
+ test/source-groups.test.ts | 157 +++++++++++++++++++++++++++++++++++++
+ 8 files changed, 356 insertions(+), 6 deletions(-)
+ create mode 100644 src/core/source-groups.ts
+ create mode 100644 test/source-groups.test.ts
+
+diff --git a/src/cli.ts b/src/cli.ts
+index e800cdeb..b1743fc7 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1351,6 +1351,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
+   // trusted local boundary) and consumed by federatedSearchScope in
+   // operations.ts, which additionally gates on ctx.remote === false.
+   let localFederated: string[] | undefined;
++  let localSourceExplicit = false;
+   // params.source is set when a CLI flag was parsed for the op (rare; most
+   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+   const explicit = (params.source as string | undefined) ?? null;
+@@ -1358,6 +1359,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
+     const { resolveSourceWithTier, localFederatedSourceIds } = await import('./core/source-resolver.ts');
+     const resolved = await resolveSourceWithTier(engine, explicit);
+     sourceId = resolved.source_id;
++    localSourceExplicit = resolved.tier === 'flag' || resolved.tier === 'env' || resolved.tier === 'dotfile';
+     localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+   } catch (err) {
+     // #1712: an EXPLICIT --source that fails to resolve (invalid id, or a
+@@ -1389,6 +1391,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
+     // brain (that would be an untrusted-caller cross-brain hole over MCP).
+     brainId: activeBrainId,
+     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
++    ...(localSourceExplicit ? { localSourceExplicit: true } : {}),
+     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
+     // render (the local-engine twin of the MCP _meta.retrieval channel).
+     emitResponseMeta: captureRetrievalMeta,
+@@ -3398,7 +3401,8 @@ SOURCES (multi-repo / multi-brain)
+   sources archived                   List soft-deleted sources and their purge expiry
+   sources purge [<id>]               Permanently delete archived sources
+   sources status                     Per-source dashboard (sync lag, embed coverage)
+-  sources --help                     Full subcommand list (rename, default, attach,
++  sources group <set|show|list|remove>  Manage named logical source groups
++  sources --help                     Full subcommand list (rename, default, group, attach,
+                                      current, federate, set-cr-mode, webhook, harden, ...)
+   sync --all                         Sync all sources with a local_path
+   sync --source <id>                 Sync one specific source
+diff --git a/src/commands/sources.ts b/src/commands/sources.ts
+index 87065bcd..8c470607 100644
+--- a/src/commands/sources.ts
++++ b/src/commands/sources.ts
+@@ -66,6 +66,12 @@ import {
+ } from '../core/sources-load.ts';
+ import { sqlQueryForEngine } from '../core/sql-query.ts';
+ import { preflightOauthClientColumns } from './auth.ts';
++import {
++  getSourceGroup,
++  listSourceGroups,
++  removeSourceGroup,
++  setSourceGroup,
++} from '../core/source-groups.ts';
+ 
+ // ── Validation ──────────────────────────────────────────────
+ 
+@@ -955,6 +961,80 @@ async function runDefault(engine: BrainEngine, args: string[]): Promise<void> {
+   console.log(`Default source set to "${id}".`);
+ }
+ 
++// ── Subcommand: group ───────────────────────────────────────
++
++async function runGroup(engine: BrainEngine, args: string[]): Promise<void> {
++  const action = args[0];
++  const rest = args.slice(1);
++  const json = rest.includes('--json');
++  const clean = rest.filter((a) => a !== '--json');
++
++  if (!action || action === '--help' || action === '-h') {
++    console.log(`Usage: gbrain sources group <set|show|list|remove> ...
++
++  set <name> <source...>   Create or replace a named source group.
++  show <name> [--json]     Show one group.
++  list [--json]            List all groups.
++  remove <name>            Delete a group definition only; sources/data stay intact.`);
++    return;
++  }
++
++  if (action === 'set') {
++    const [name, ...sourceIds] = clean;
++    if (!name || sourceIds.length === 0) {
++      console.error('Usage: gbrain sources group set <name> <source...>');
++      process.exit(2);
++    }
++    const stored = await setSourceGroup(engine, name, sourceIds);
++    console.log(`Source group "${name}" = [${stored.join(', ')}]`);
++    return;
++  }
++
++  if (action === 'show') {
++    const name = clean[0];
++    if (!name) {
++      console.error('Usage: gbrain sources group show <name> [--json]');
++      process.exit(2);
++    }
++    const sourceIds = await getSourceGroup(engine, name);
++    if (json) console.log(JSON.stringify({ name, source_ids: sourceIds }, null, 2));
++    else console.log(`${name}: ${sourceIds.join(', ')}`);
++    return;
++  }
++
++  if (action === 'list') {
++    const groups = await listSourceGroups(engine);
++    if (json) {
++      console.log(JSON.stringify({ groups: groups.map((g) => ({ name: g.name, source_ids: g.sourceIds })) }, null, 2));
++      return;
++    }
++    if (groups.length === 0) {
++      console.log('No source groups configured.');
++      return;
++    }
++    for (const g of groups) console.log(`${g.name}: ${g.sourceIds.join(', ')}`);
++    return;
++  }
++
++  if (action === 'remove') {
++    const name = clean[0];
++    if (!name) {
++      console.error('Usage: gbrain sources group remove <name>');
++      process.exit(2);
++    }
++    const n = await removeSourceGroup(engine, name);
++    if (n === 0) {
++      console.error(`Source group "${name}" not found.`);
++      process.exit(4);
++    }
++    console.log(`Removed source group "${name}". Sources and embeddings were not changed.`);
++    return;
++  }
++
++  console.error(`Unknown sources group action: ${action}`);
++  process.exit(2);
++}
++
+ // ── Subcommand: attach / detach (CWD dotfile) ──────────────
+ 
+ function runAttach(args: string[]): void {
+@@ -1664,6 +1744,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
+     case 'remove':     return runRemove(engine, rest);
+     case 'rename':     return runRename(engine, rest);
+     case 'default':    return runDefault(engine, rest);
++    case 'group':      return runGroup(engine, rest);
+     case 'attach':     runAttach(rest); return;
+     case 'detach':     runDetach(); return;
+     case 'federate':   return runFederate(engine, rest, true);
+@@ -1728,6 +1809,10 @@ Subcommands:
+                                     With <id>: force-purge (requires --confirm-destructive).
+   rename <id> <new-name>            Rename display name (id is immutable).
+   default <id>                      Set the brain-level default source.
++  group set <name> <source...>      Create/replace a named logical source group.
++  group show <name> [--json]        Show one group.
++  group list [--json]               List named groups.
++  group remove <name>               Remove only the group definition.
+   attach <id>                       Write .gbrain-source in CWD (like kubectl context).
+   detach                            Remove .gbrain-source from CWD.
+   current [--source <id>] [--json]  Echo the resolved source id + which tier
+diff --git a/src/core/config.ts b/src/core/config.ts
+index 7ba1cd9f..a4d73f46 100644
+--- a/src/core/config.ts
++++ b/src/core/config.ts
+@@ -1233,6 +1233,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
+ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
+   'search.',           // search.* (mode, cache.*, etc.)
+   'models.',           // models.* (tier, aliases, per-task)
++  'sources.groups.',   // named logical source groups
+   'dream.',            // dream.synthesize.*, dream.patterns.*
+   'cycle.',            // cycle.<phase>.*
+   'embedding_columns.', // per-column overrides
+diff --git a/src/core/ops/context.ts b/src/core/ops/context.ts
+index 193fe75c..8dcb68b1 100644
+--- a/src/core/ops/context.ts
++++ b/src/core/ops/context.ts
+@@ -16,6 +16,7 @@ import { OperationError } from './contract.ts';
+ import type { AuthInfo, Operation, OperationContext } from './contract.ts';
+ import { CJK_SLUG_CHARS, PAGE_SLUG_SEG } from '../cjk.ts';
+ import { ALL_SOURCES } from '../source-id.ts';
++import { getSourceGroup } from '../source-groups.ts';
+ import { isSearchMode } from '../search/mode.ts';
+ import { stampEvidence } from '../search/evidence.ts';
+ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
+@@ -560,6 +561,29 @@ export function federatedSearchScope(
+   return scope;
+ }
+ 
++/** Resolve an explicit/default named source group for trusted local search/query calls. */
++export async function resolveNamedSearchGroupScope(
++  ctx: OperationContext,
++  rawGroup: unknown,
++  hasExplicitSourceScope: boolean,
++): Promise<{ sourceIds: string[] } | null> {
++  const explicitGroup = typeof rawGroup === 'string' && rawGroup.length > 0 ? rawGroup : undefined;
++  if (explicitGroup) {
++    if (ctx.remote !== false) {
++      throw new OperationError('invalid_params', 'source_group is available only to trusted local callers.');
++    }
++    if (hasExplicitSourceScope) {
++      throw new OperationError('invalid_params', 'Pass source_group or an explicit source scope, not both.');
++    }
++    return { sourceIds: await getSourceGroup(ctx.engine, explicitGroup) };
++  }
++
++  if (hasExplicitSourceScope || ctx.remote !== false || ctx.localSourceExplicit === true) return null;
++  const configured = (await ctx.engine.getConfig('search.source_group'))?.trim();
++  if (!configured) return null;
++  return { sourceIds: await getSourceGroup(ctx.engine, configured) };
++}
++
+ /**
+  * Code-intel adapter for `resolveRequestedScope`. Graph traversal
+  * (code_callers/code_callees/code_blast/code_flow) is single-source by design —
+diff --git a/src/core/ops/contract.ts b/src/core/ops/contract.ts
+index e4b63627..cc86802b 100644
+--- a/src/core/ops/contract.ts
++++ b/src/core/ops/contract.ts
+@@ -436,6 +436,8 @@ export interface OperationContext {
+    * wins, and a context without this field never widens.
+    */
+   localFederatedSourceIds?: string[];
++  /** Trusted local CLI had an explicit owner-controlled source selector (--source, GBRAIN_SOURCE, or .gbrain-source). */
++  localSourceExplicit?: boolean;
+ }
+ 
+ export interface Operation {
+diff --git a/src/core/ops/search.ts b/src/core/ops/search.ts
+index 973ba7ba..1ab67df9 100644
+--- a/src/core/ops/search.ts
++++ b/src/core/ops/search.ts
+@@ -18,6 +18,7 @@ import { OperationError } from './contract.ts';
+ import type { Operation } from './contract.ts';
+ import {
+   federatedSearchScope,
++  resolveNamedSearchGroupScope,
+   resolvePerCallMode,
+   stampEvidenceSafe,
+   maybeCaptureSearch,
+@@ -65,6 +66,7 @@ const search: Operation = {
+     query: { type: 'string', required: true, description: "Search text. Exact tokens, names, and structured-field values work best here (e.g. 'acme-example series A'), since this op does no LLM expansion. This is the search text param — there is no `text` or `q` param." },
+     limit: { type: 'number', description: 'Max results (default 20)' },
+     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
++    source_group: { type: 'string', description: 'Named local source group (for example pydantic). Resolves to an explicit sourceIds[] scope; local trusted callers only.' },
+     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+   },
+   handler: async (ctx, p) => {
+@@ -72,8 +74,9 @@ const search: Operation = {
+     const queryText = p.query as string;
+     const limit = (p.limit as number) || 20;
+     const offset = (p.offset as number) || 0;
+-    // #2561: unqualified trusted-local search spans federated sources.
+-    const scope = federatedSearchScope(ctx);
++    // A named group wins for unqualified trusted-local calls; explicit CLI source selection still wins via ctx.localSourceExplicit.
++    const namedGroupScope = await resolveNamedSearchGroupScope(ctx, p.source_group, false);
++    const scope = namedGroupScope ?? federatedSearchScope(ctx);
+ 
+     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
+     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
+@@ -186,6 +189,10 @@ const query: Operation = {
+       description:
+         "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+     },
++    source_group: {
++      type: 'string',
++      description: 'Named local source group (for example pydantic). Resolves to an explicit sourceIds[] scope; local trusted callers only.',
++    },
+     cross_modal: {
+       type: 'string',
+       enum: ['text', 'image', 'both', 'auto'],
+@@ -241,9 +248,9 @@ const query: Operation = {
+     // is spread into BOTH the image-similarity searchVector path and the text
+     // hybridSearch path below, so both honor the same grant.
+     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+-    // #2561: unqualified trusted-local query spans federated sources (per-call
+-    // source_id / remote grants still resolve through resolveRequestedScope).
+-    const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
++    // Named groups resolve to the engine's existing sourceIds[] scope; no corpus or embedding rewrite occurs.
++    const namedGroupScope = await resolveNamedSearchGroupScope(ctx, p.source_group, sourceIdParam !== undefined);
++    const querySourceScope = namedGroupScope ?? federatedSearchScope(ctx, sourceIdParam);
+ 
+     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
+     // text-only); embeds the image via embedMultimodal and runs a direct
+diff --git a/src/core/source-groups.ts b/src/core/source-groups.ts
+new file mode 100644
+index 00000000..14bfb55d
+--- /dev/null
++++ b/src/core/source-groups.ts
+@@ -0,0 +1,70 @@
++import type { BrainEngine } from './engine.ts';
++import { SOURCE_ID_RE, assertValidSourceId } from './source-id.ts';
++
++const GROUP_PREFIX = 'sources.groups.';
++
++function assertValidGroupName(name: unknown): asserts name is string {
++  if (typeof name !== 'string' || !SOURCE_ID_RE.test(name)) {
++    throw new Error(
++      `Invalid source group name: ${JSON.stringify(name)}. ` +
++      'Must be 1-32 lowercase alnum chars with optional interior hyphens.',
++    );
++  }
++}
++
++export function sourceGroupConfigKey(name: string): string {
++  assertValidGroupName(name);
++  return `${GROUP_PREFIX}${name}`;
++}
++
++async function validateGroupSources(engine: BrainEngine, sourceIds: string[]): Promise<string[]> {
++  if (sourceIds.length === 0) throw new Error('A source group must contain at least one source.');
++  const deduped = [...new Set(sourceIds)];
++  for (const id of deduped) assertValidSourceId(id);
++
++  const rows = await engine.executeRaw<{ id: string; archived: boolean }>(
++    `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
++    [deduped],
++  );
++  const byId = new Map(rows.map((r) => [r.id, r]));
++  const missing = deduped.filter((id) => !byId.has(id));
++  if (missing.length > 0) throw new Error(`Unknown source(s) in group: ${missing.join(', ')}`);
++  const archived = deduped.filter((id) => byId.get(id)?.archived === true);
++  if (archived.length > 0) throw new Error(`Archived source(s) cannot be used in a group: ${archived.join(', ')}`);
++  return deduped;
++}
++
++export async function setSourceGroup(engine: BrainEngine, name: string, sourceIds: string[]): Promise<string[]> {
++  const key = sourceGroupConfigKey(name);
++  const validated = await validateGroupSources(engine, sourceIds);
++  await engine.setConfig(key, JSON.stringify(validated));
++  return validated;
++}
++
++export async function getSourceGroup(engine: BrainEngine, name: string): Promise<string[]> {
++  const key = sourceGroupConfigKey(name);
++  const raw = await engine.getConfig(key);
++  if (!raw) throw new Error(`Source group "${name}" not found.`);
++  let parsed: unknown;
++  try { parsed = JSON.parse(raw); } catch {
++    throw new Error(`Source group "${name}" has invalid JSON config.`);
++  }
++  if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== 'string')) {
++    throw new Error(`Source group "${name}" must be a JSON array of source IDs.`);
++  }
++  return validateGroupSources(engine, parsed as string[]);
++}
++
++export async function listSourceGroups(engine: BrainEngine): Promise<Array<{ name: string; sourceIds: string[] }>> {
++  const keys = (await engine.listConfigKeys(GROUP_PREFIX)).sort();
++  const out: Array<{ name: string; sourceIds: string[] }> = [];
++  for (const key of keys) {
++    const name = key.slice(GROUP_PREFIX.length);
++    out.push({ name, sourceIds: await getSourceGroup(engine, name) });
++  }
++  return out;
++}
++
++export async function removeSourceGroup(engine: BrainEngine, name: string): Promise<number> {
++  return engine.unsetConfig(sourceGroupConfigKey(name));
++}
+diff --git a/test/source-groups.test.ts b/test/source-groups.test.ts
+new file mode 100644
+index 00000000..28d64822
+--- /dev/null
++++ b/test/source-groups.test.ts
+@@ -0,0 +1,157 @@
++import { describe, expect, test } from 'bun:test';
++import type { BrainEngine } from '../src/core/engine.ts';
++import {
++  getSourceGroup,
++  listSourceGroups,
++  removeSourceGroup,
++  setSourceGroup,
++} from '../src/core/source-groups.ts';
++import { operationsByName } from '../src/core/operations.ts';
++
++function fakeEngine(opts: { archived?: string[] } = {}) {
++  const config = new Map<string, string>();
++  const sources = new Map([
++    ['pydantic-ai', { id: 'pydantic-ai', archived: false }],
++    ['pydantic-ai-harness', { id: 'pydantic-ai-harness', archived: false }],
++    ['old-source', { id: 'old-source', archived: true }],
++  ]);
++  for (const id of opts.archived ?? []) {
++    const row = sources.get(id);
++    if (row) row.archived = true;
++  }
++  const searchScopes: Array<{ sourceId?: string; sourceIds?: string[]; limit?: number; offset?: number }> = [];
++  const engine = {
++    getConfig: async (key: string) => config.get(key) ?? null,
++    setConfig: async (key: string, value: string) => { config.set(key, value); },
++    unsetConfig: async (key: string) => config.delete(key) ? 1 : 0,
++    listConfigKeys: async (prefix: string) => [...config.keys()].filter((k) => k.startsWith(prefix)),
++    executeRaw: async <T>(_sql: string, params?: unknown[]): Promise<T[]> => {
++      const ids = (params?.[0] as string[] | undefined) ?? [];
++      return ids.map((id) => sources.get(id)).filter(Boolean) as T[];
++    },
++    searchKeyword: async (_q: string, scope: { sourceId?: string; sourceIds?: string[]; limit?: number; offset?: number }) => {
++      searchScopes.push(scope);
++      return [];
++    },
++  } as unknown as BrainEngine;
++  return { engine, config, searchScopes };
++}
++
++describe('named source groups', () => {
++  test('set/get/list/remove preserves an ordered deduplicated source list', async () => {
++    const { engine } = fakeEngine();
++    expect(await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness', 'pydantic-ai'])).toEqual([
++      'pydantic-ai',
++      'pydantic-ai-harness',
++    ]);
++    expect(await getSourceGroup(engine, 'pydantic')).toEqual(['pydantic-ai', 'pydantic-ai-harness']);
++    expect(await listSourceGroups(engine)).toEqual([{
++      name: 'pydantic',
++      sourceIds: ['pydantic-ai', 'pydantic-ai-harness'],
++    }]);
++    expect(await removeSourceGroup(engine, 'pydantic')).toBe(1);
++    expect(await removeSourceGroup(engine, 'pydantic')).toBe(0);
++  });
++
++  test('rejects unknown and archived members', async () => {
++    const { engine } = fakeEngine();
++    await expect(setSourceGroup(engine, 'pydantic', ['missing'])).rejects.toThrow('Unknown source');
++    await expect(setSourceGroup(engine, 'pydantic', ['old-source'])).rejects.toThrow('Archived source');
++  });
++
++  test('search resolves --source-group to sourceIds[] without rewriting sources', async () => {
++    const { engine, searchScopes } = fakeEngine();
++    await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness']);
++    await engine.setConfig('search.mcp_keyword_only', 'true');
++    const op = operationsByName.search;
++    await op.handler({
++      engine,
++      config: { engine: 'pglite' },
++      logger: { info: () => {}, warn: () => {}, error: () => {} },
++      dryRun: false,
++      remote: false,
++      sourceId: 'default',
++      brainId: 'host',
++    }, { query: 'ToolOutputLimits', source_group: 'pydantic' });
++    expect(searchScopes).toEqual([{
++      limit: 20,
++      offset: 0,
++      sourceIds: ['pydantic-ai', 'pydantic-ai-harness'],
++    }]);
++  });
++
++  test('configured search.source_group applies to unqualified local search', async () => {
++    const { engine, searchScopes } = fakeEngine();
++    await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness']);
++    await engine.setConfig('search.source_group', 'pydantic');
++    await engine.setConfig('search.mcp_keyword_only', 'true');
++    await operationsByName.search.handler({
++      engine,
++      config: { engine: 'pglite' },
++      logger: { info: () => {}, warn: () => {}, error: () => {} },
++      dryRun: false,
++      remote: false,
++      sourceId: 'default',
++      brainId: 'host',
++    }, { query: 'ToolOutputLimits' });
++    expect(searchScopes).toEqual([{
++      limit: 20,
++      offset: 0,
++      sourceIds: ['pydantic-ai', 'pydantic-ai-harness'],
++    }]);
++  });
++
++  test('explicit source scope overrides configured default group', async () => {
++    const { engine, searchScopes } = fakeEngine();
++    await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness']);
++    await engine.setConfig('search.source_group', 'pydantic');
++    await engine.setConfig('search.mcp_keyword_only', 'true');
++    await operationsByName.search.handler({
++      engine,
++      config: { engine: 'pglite' },
++      logger: { info: () => {}, warn: () => {}, error: () => {} },
++      dryRun: false,
++      remote: false,
++      sourceId: 'pydantic-ai',
++      brainId: 'host',
++    }, { query: 'Agent.run', source: 'pydantic-ai' });
++    expect(searchScopes).toEqual([{
++      limit: 20,
++      offset: 0,
++      sourceId: 'pydantic-ai',
++    }]);
++  });
++
++  test('ambient explicit source marker overrides configured default group', async () => {
++    const { engine, searchScopes } = fakeEngine();
++    await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness']);
++    await engine.setConfig('search.source_group', 'pydantic');
++    await engine.setConfig('search.mcp_keyword_only', 'true');
++    await operationsByName.search.handler({
++      engine,
++      config: { engine: 'pglite' },
++      logger: { info: () => {}, warn: () => {}, error: () => {} },
++      dryRun: false,
++      remote: false,
++      sourceId: 'pydantic-ai-harness',
++      brainId: 'host',
++      localSourceExplicit: true,
++    }, { query: 'ToolOutputLimits' });
++    expect(searchScopes).toEqual([{
++      limit: 20,
++      offset: 0,
++      sourceId: 'pydantic-ai-harness',
++    }]);
++  });
++
++  test('source_group is local-only and mutually exclusive with explicit source scope', async () => {
++    const { engine } = fakeEngine();
++    await setSourceGroup(engine, 'pydantic', ['pydantic-ai', 'pydantic-ai-harness']);
++    await expect(operationsByName.search.handler({
++      engine, config: { engine: 'pglite' }, logger: console, dryRun: false, remote: true, sourceId: 'default', brainId: 'host',
++    }, { query: 'x', source_group: 'pydantic' })).rejects.toThrow('trusted local');
++    await expect(operationsByName.query.handler({
++      engine, config: { engine: 'pglite' }, logger: console, dryRun: false, remote: false, sourceId: 'default', brainId: 'host',
++    }, { query: 'x', source_group: 'pydantic', source_id: 'pydantic-ai' })).rejects.toThrow('explicit source scope');
++  });
++});
+-- 
+2.34.1
+

@@ -204,7 +204,7 @@ This bootstrap preserves causal context. For current detailed truth, follow the 
 | User model subscriptions, economics, routing | `~/wiki/user/models-and-providers.md` |
 | Pydantic AI / Harness operating baseline | `~/wiki/workflow/pydantic-ai/README.md` |
 | GBrain retrieval/current corpus policy | `~/wiki/infra/gbrain.md` |
-| GBrain installation/maintenance/reconstruction | `~/gbrain/local-docs/reconstruction.md` |
+| GBrain installation/maintenance/reconstruction | `~/gpt-dive/gbrain/docs/reconstruction.md` |
 | Logged-in Edge / Playwright operating contract | `~/wiki/skills/web/edge-playwright.md` |
 | Google Antigravity / `agy` worker contract | `~/wiki/reference/google/agy.md` |
 | Credentials and secret handling | `~/wiki/reference/security/credentials.md` |

@@ -1,0 +1,8 @@
+001-voyage-embed-guard.patch
+002-frontmatter-backtick-title.patch
+003-voyage-free-usage.patch
+004-source-groups.patch
+005-eval-schema-pack-provenance.patch
+006-eval-exact-chunk-hashes.patch
+007-preserve-explicit-source-scope.patch
+008-source-revision-provenance.patch

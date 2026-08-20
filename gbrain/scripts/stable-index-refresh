@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+
+STABLE_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+
+@dataclass(frozen=True)
+class SourcePolicy:
+    source_id: str
+    repo: Path
+    remote: str
+    roots: tuple[str, ...]
+    allowed_extensions: frozenset[str]
+    excluded_prefixes: tuple[str, ...] = ()
+
+
+HOME = Path.home()
+SOURCES: dict[str, SourcePolicy] = {
+    "pydantic-ai": SourcePolicy(
+        source_id="pydantic-ai",
+        repo=HOME / "ref" / "pydantic-ai",
+        remote="https://github.com/pydantic/pydantic-ai.git",
+        roots=(
+            "pydantic_ai_slim/",
+            "pydantic_graph/",
+            "pydantic_evals/",
+            "examples/pydantic_ai_examples/",
+            "docs/",
+            "tests/",
+            "agent_docs/",
+        ),
+        allowed_extensions=frozenset({".py", ".md", ".mdx"}),
+    ),
+    "pydantic-ai-harness": SourcePolicy(
+        source_id="pydantic-ai-harness",
+        repo=HOME / "ref" / "pydantic-ai-harness",
+        remote="https://github.com/pydantic/pydantic-ai-harness.git",
+        roots=(
+            "pydantic_ai_harness/",
+            "docs/",
+            "tests/",
+            "integration_tests/",
+            "agent_docs/",
+        ),
+        allowed_extensions=frozenset({".py", ".md", ".mdx"}),
+    ),
+    "pydantic-ai-monty": SourcePolicy(
+        source_id="pydantic-ai-monty",
+        repo=HOME / "ref" / "pydantic-ai-monty",
+        remote="https://github.com/pydantic/monty.git",
+        roots=(
+            "README.md",
+            "crates/monty/src/",
+            "crates/monty/README.md",
+            "crates/monty-alloc/",
+            "crates/monty-fs/",
+            "crates/monty-js/",
+            "crates/monty-macros/",
+            "crates/monty-pool/",
+            "crates/monty-proto/",
+            "crates/monty-python/",
+            "crates/monty-runtime/",
+            "crates/monty-type-checking/",
+            "crates/monty-types/",
+            "crates/monty-wasm-runtime/",
+            "limitations/",
+            "examples/",
+            "packages/pydantic-monty/",
+        ),
+        allowed_extensions=frozenset({".rs", ".py", ".md", ".mdx"}),
+        excluded_prefixes=("crates/monty-proto/src/generated/",),
+    ),
+}
+
+
+def fail(message: str, code: int = 2) -> "NoReturn":
+    print(f"STABLE_INDEX_ERROR: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def run(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    check: bool = True,
+    capture: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            check=check,
+            text=True,
+            capture_output=capture,
+        )
+    except FileNotFoundError as exc:
+        fail(f"command not found: {args[0]} ({exc})", 127)
+    except subprocess.CalledProcessError as exc:
+        if capture:
+            if exc.stdout:
+                print(exc.stdout, end="", file=sys.stdout)
+            if exc.stderr:
+                print(exc.stderr, end="", file=sys.stderr)
+        fail(f"command failed ({exc.returncode}): {' '.join(args[:6])}", exc.returncode or 1)
+
+
+def stable_key(tag: str) -> tuple[int, int, int]:
+    match = STABLE_TAG_RE.fullmatch(tag)
+    if not match:
+        raise ValueError(tag)
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def latest_stable_tag(policy: SourcePolicy) -> str:
+    result = run(["git", "ls-remote", "--tags", "--refs", policy.remote, "v*"])
+    tags: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        ref = line.split("\t", 1)[-1]
+        tag = ref.removeprefix("refs/tags/")
+        if STABLE_TAG_RE.fullmatch(tag):
+            tags.append(tag)
+    if not tags:
+        fail(f"no stable release tags found for {policy.source_id}")
+    return max(tags, key=stable_key)
+
+
+def ensure_repo(policy: SourcePolicy) -> None:
+    if not policy.repo.is_dir():
+        fail(f"missing checkout for {policy.source_id}: {policy.repo}")
+    probe = run(["git", "rev-parse", "--is-inside-work-tree"], cwd=policy.repo)
+    if probe.stdout.strip() != "true":
+        fail(f"not a git worktree: {policy.repo}")
+
+
+def ensure_tag(policy: SourcePolicy, tag: str) -> None:
+    local = run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"],
+        cwd=policy.repo,
+        check=False,
+    )
+    if local.returncode == 0:
+        return
+    run(
+        ["git", "fetch", "--no-tags", policy.remote, f"refs/tags/{tag}:refs/tags/{tag}"],
+        cwd=policy.repo,
+        capture=False,
+    )
+
+
+def current_identity(policy: SourcePolicy) -> str:
+    result = run(["git", "describe", "--tags", "--always", "--dirty"], cwd=policy.repo)
+    return result.stdout.strip()
+
+
+def dirty_paths(policy: SourcePolicy) -> list[str]:
+    result = run(["git", "status", "--porcelain"], cwd=policy.repo)
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def tree_files(policy: SourcePolicy, tag: str) -> list[str]:
+    result = run(["git", "ls-tree", "-r", "--name-only", tag], cwd=policy.repo)
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def worktree_files(policy: SourcePolicy) -> list[str]:
+    result = run(["git", "ls-files"], cwd=policy.repo)
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def is_allowed(policy: SourcePolicy, rel: str) -> bool:
+    if any(rel.startswith(prefix) for prefix in policy.excluded_prefixes):
+        return False
+    if not any(rel.startswith(root) for root in policy.roots):
+        return False
+    return Path(rel).suffix.lower() in policy.allowed_extensions
+
+
+def classify(policy: SourcePolicy, files: list[str]) -> tuple[list[str], list[str]]:
+    allowed: list[str] = []
+    excluded: list[str] = []
+    for rel in files:
+        (allowed if is_allowed(policy, rel) else excluded).append(rel)
+    return allowed, excluded
+
+
+def summarize_extensions(paths: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for rel in paths:
+        suffix = Path(rel).suffix.lower() or "[none]"
+        counts[suffix] = counts.get(suffix, 0) + 1
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return ", ".join(f"{ext}={count}" for ext, count in items) or "none"
+
+
+def print_preview(policy: SourcePolicy, tag: str, files: list[str]) -> None:
+    allowed, excluded = classify(policy, files)
+    print(f"[{policy.source_id}]")
+    print(f"  checkout: {policy.repo}")
+    print(f"  current:  {current_identity(policy)}")
+    print(f"  target:   {tag}")
+    print(f"  tracked:  {len(files)}")
+    print(f"  include:  {len(allowed)} ({summarize_extensions(allowed)})")
+    print(f"  exclude:  {len(excluded)}")
+
+
+def checkout_tag(policy: SourcePolicy, tag: str) -> None:
+    dirty = dirty_paths(policy)
+    if dirty:
+        sample = "\n".join(f"  {line}" for line in dirty[:20])
+        extra = "" if len(dirty) <= 20 else f"\n  ... +{len(dirty) - 20} more"
+        fail(f"dirty checkout blocks {policy.source_id} update:\n{sample}{extra}")
+    run(["git", "checkout", "--detach", tag], cwd=policy.repo, capture=False)
+    head = run(["git", "rev-parse", "HEAD"], cwd=policy.repo).stdout.strip()
+    tagged = run(["git", "rev-list", "-n", "1", tag], cwd=policy.repo).stdout.strip()
+    if head != tagged:
+        fail(f"checkout verification failed for {policy.source_id}: HEAD != {tag}")
+
+
+def gbrain_sync(policy: SourcePolicy, *, full: bool) -> None:
+    files = worktree_files(policy)
+    allowed, excluded = classify(policy, files)
+    if not allowed:
+        fail(f"filter produced zero allowed files for {policy.source_id}")
+
+    base = [
+        "gbrain",
+        "sync",
+        "--source",
+        policy.source_id,
+        "--strategy",
+        "auto",
+        "--no-embed",
+        "--no-pull",
+    ]
+    if full:
+        base.append("--full")
+    for rel in excluded:
+        base.extend(["--exclude", rel])
+
+    print(
+        f"[{policy.source_id}] filter: include={len(allowed)} exclude={len(excluded)} "
+        f"extensions=({summarize_extensions(allowed)})"
+    )
+    print(f"[{policy.source_id}] validating filtered sync with --dry-run")
+    dry = run([*base, "--dry-run"], capture=True)
+    if dry.stdout:
+        print(dry.stdout, end="")
+    if dry.stderr:
+        print(dry.stderr, end="", file=sys.stderr)
+
+    print(f"[{policy.source_id}] applying filtered sync --no-embed")
+    applied = run(base, capture=True)
+    if applied.stdout:
+        print(applied.stdout, end="")
+    if applied.stderr:
+        print(applied.stderr, end="", file=sys.stderr)
+    if "Sync BLOCKED" in applied.stdout or "Full sync blocked:" in applied.stderr:
+        fail(
+            f"{policy.source_id} sync reported a blocked state despite process exit 0; "
+            "inspect the sync output before continuing"
+        )
+
+
+def run_self_test() -> None:
+    pass_cases = {
+        "pydantic-ai": [
+            "pydantic_ai_slim/pydantic_ai/agent.py",
+            "pydantic_graph/pydantic_graph/graph.py",
+            "pydantic_evals/pydantic_evals/dataset.py",
+            "examples/pydantic_ai_examples/pydantic_ai_examples/weather_agent.py",
+            "docs/agents.md",
+            "tests/test_agent.py",
+            "agent_docs/documentation.md",
+        ],
+        "pydantic-ai-harness": [
+            "pydantic_ai_harness/code_mode/_capability.py",
+            "docs/index.md",
+            "tests/test_code_mode.py",
+            "integration_tests/redis/test_live_redis.py",
+            "agent_docs/overview.md",
+        ],
+        "pydantic-ai-monty": [
+            "crates/monty/src/lib.rs",
+            "crates/monty-runtime/src/lib.rs",
+            "crates/monty-python/src/lib.rs",
+            "README.md",
+            "limitations/resource_limits.md",
+            "examples/web_scraper/main.py",
+            "packages/pydantic-monty/README.md",
+        ],
+    }
+    fail_cases = {
+        "pydantic-ai": [
+            "tests/models/cassettes/example.yaml",
+            "docs/nav.json",
+            "pyproject.toml",
+            "scripts/release.py",
+            "unrelated_new_root/new_feature.py",
+        ],
+        "pydantic-ai-harness": [
+            "docs/nav.json",
+            "pyproject.toml",
+            "scripts/maintenance.py",
+            "unrelated_new_root/feature.py",
+        ],
+        "pydantic-ai-monty": [
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/monty/test_cases/async__sequential.py",
+            "crates/fuzz/fuzz_targets/parser.rs",
+            "crates/monty-bench/src/main.rs",
+            "crates/monty-proto/src/generated/monty.v1.rs",
+            "scripts/bench_json.py",
+            "unrelated_new_root/feature.rs",
+        ],
+    }
+
+    errors: list[str] = []
+    for source_id, paths in pass_cases.items():
+        policy = SOURCES[source_id]
+        for rel in paths:
+            if not is_allowed(policy, rel):
+                errors.append(f"expected PASS: {source_id}:{rel}")
+    for source_id, paths in fail_cases.items():
+        policy = SOURCES[source_id]
+        for rel in paths:
+            if is_allowed(policy, rel):
+                errors.append(f"expected FAIL: {source_id}:{rel}")
+
+    if errors:
+        for error in errors:
+            print(f"SELF_TEST_FAIL: {error}", file=sys.stderr)
+        raise SystemExit(1)
+    total_pass = sum(len(paths) for paths in pass_cases.values())
+    total_fail = sum(len(paths) for paths in fail_cases.values())
+    print(f"SELF_TEST_PASS: {total_pass} include fixtures + {total_fail} exclude fixtures")
+
+
+def selected_sources(name: str) -> list[SourcePolicy]:
+    if name == "all":
+        return [
+            SOURCES["pydantic-ai"],
+            SOURCES["pydantic-ai-harness"],
+            SOURCES["pydantic-ai-monty"],
+        ]
+    return [SOURCES[name]]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Preview or apply the stable Pydantic GBrain Index Filter v2. "
+            "This helper never runs embedding."
+        )
+    )
+    parser.add_argument(
+        "--source",
+        choices=("all", "pydantic-ai", "pydantic-ai-harness", "pydantic-ai-monty"),
+        default="all",
+        help="source to refresh (default: all)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="checkout latest stable tag and run filtered gbrain sync --no-embed",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="force full sync; requires an explicit non-default GBRAIN_HOME candidate",
+    )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run pure Index Filter v1 include/exclude fixtures and exit",
+    )
+    args = parser.parse_args()
+
+    if args.self_test:
+        run_self_test()
+        return
+
+    if args.full and not args.apply:
+        fail("--full requires --apply", 64)
+    if args.full:
+        gbrain_home = os.environ.get("GBRAIN_HOME", "").strip()
+        if not gbrain_home:
+            fail("--full is blocked on the default brain; set GBRAIN_HOME to a candidate parent directory", 64)
+        candidate_parent = Path(gbrain_home).expanduser().resolve()
+        if candidate_parent == HOME.resolve():
+            fail("--full candidate GBRAIN_HOME resolves to HOME/default brain; choose a separate parent directory", 64)
+
+    policies = selected_sources(args.source)
+    targets: dict[str, str] = {}
+
+    for policy in policies:
+        ensure_repo(policy)
+        tag = latest_stable_tag(policy)
+        ensure_tag(policy, tag)
+        targets[policy.source_id] = tag
+        files = tree_files(policy, tag)
+        print_preview(policy, tag, files)
+
+    if not args.apply:
+        print("PREVIEW_ONLY: no worktree checkout or GBrain database changes were made; missing stable tag refs may be fetched locally for inspection.")
+        print("EMBEDDING: not supported by this helper; use the separate guarded operator step after review.")
+        return
+
+    for policy in policies:
+        checkout_tag(policy, targets[policy.source_id])
+        gbrain_sync(policy, full=args.full)
+
+    print("REFRESH_COMPLETE: filtered sync finished with --no-embed.")
+    print("EMBEDDING_REQUIRED: review stale counts, then use the separate Voyage guard + explicit operator authorization.")
+
+
+if __name__ == "__main__":
+    main()

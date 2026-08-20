@@ -1,0 +1,238 @@
+From 12fba9bef8b5f386b4aadfee0ff977e7c59e18c9 Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Mon, 17 Aug 2026 10:18:14 +0900
+Subject: [PATCH] fix: capture exact eval chunk hashes
+
+---
+ src/core/eval-capture.ts     |  9 +++++++++
+ src/core/pglite-engine.ts    |  5 +++--
+ src/core/pglite-schema.ts    |  1 +
+ src/core/postgres-engine.ts  |  4 ++--
+ src/core/schema-embedded.ts  |  1 +
+ src/core/types.ts            |  6 ++++++
+ src/schema.sql               |  1 +
+ test/eval-candidates.test.ts |  2 ++
+ test/eval-capture.test.ts    | 19 +++++++++++++++++++
+ test/eval-export.test.ts     |  9 +++++++++
+ 10 files changed, 53 insertions(+), 4 deletions(-)
+
+diff --git a/src/core/eval-capture.ts b/src/core/eval-capture.ts
+index fccc6739..66996a87 100644
+--- a/src/core/eval-capture.ts
++++ b/src/core/eval-capture.ts
+@@ -34,6 +34,8 @@
+  * `logEvalCaptureFailure(reason)` with the right reason tag.
+  */
+ 
++import { createHash } from 'node:crypto';
++
+ import type { BrainEngine } from './engine.ts';
+ import type {
+   EvalCandidateInput,
+@@ -98,10 +100,16 @@ export function buildEvalCandidateInput(
+   const slugsSet = new Set<string>();
+   const sourceSet = new Set<string>();
+   const chunkIds: number[] = [];
++  const chunkHashes: string[] = [];
+   for (const r of ctx.results) {
+     slugsSet.add(r.slug);
+     if (r.source_id) sourceSet.add(r.source_id);
+     chunkIds.push(r.chunk_id);
++    // Exact evidence fingerprint for historical replay. Keep this aligned
++    // 1:1 with retrieved_chunk_ids so a later consumer can prove that the
++    // materialized chunk text is byte-identical without relying on page-wide
++    // updated_at watermarks.
++    chunkHashes.push(createHash('sha256').update(r.chunk_text, 'utf8').digest('hex'));
+   }
+ 
+   return {
+@@ -109,6 +117,7 @@ export function buildEvalCandidateInput(
+     query,
+     retrieved_slugs: [...slugsSet],
+     retrieved_chunk_ids: chunkIds,
++    retrieved_chunk_hashes: chunkHashes,
+     source_ids: [...sourceSet],
+     expand_enabled: ctx.expand_enabled,
+     detail: ctx.detail,
+diff --git a/src/core/pglite-engine.ts b/src/core/pglite-engine.ts
+index 31c981e3..9f88bf5b 100644
+--- a/src/core/pglite-engine.ts
++++ b/src/core/pglite-engine.ts
+@@ -5773,16 +5773,17 @@ export class PGLiteEngine implements BrainEngine {
+   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
+     const { rows } = await this.db.query<{ id: number }>(
+       `INSERT INTO eval_candidates (
+-         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
++         tool_name, query, retrieved_slugs, retrieved_chunk_ids, retrieved_chunk_hashes, source_ids,
+          expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+          latency_ms, remote, job_id, subagent_id, embedding_column, schema_pack_per_source
+-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb)
++       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::text::jsonb)
+        RETURNING id`,
+       [
+         input.tool_name,
+         input.query,
+         input.retrieved_slugs,
+         input.retrieved_chunk_ids,
++        input.retrieved_chunk_hashes ?? [],
+         input.source_ids,
+         input.expand_enabled,
+         input.detail,
+diff --git a/src/core/pglite-schema.ts b/src/core/pglite-schema.ts
+index f4be0615..c3322156 100644
+--- a/src/core/pglite-schema.ts
++++ b/src/core/pglite-schema.ts
+@@ -627,6 +627,7 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
+   query                 TEXT         NOT NULL CHECK (length(query) <= 51200),
+   retrieved_slugs       TEXT[]       NOT NULL DEFAULT '{}',
+   retrieved_chunk_ids   INTEGER[]    NOT NULL DEFAULT '{}',
++  retrieved_chunk_hashes TEXT[]       NOT NULL DEFAULT '{}',
+   source_ids            TEXT[]       NOT NULL DEFAULT '{}',
+   expand_enabled        BOOLEAN,
+   detail                TEXT         CHECK (detail IS NULL OR detail IN ('low', 'medium', 'high')),
+diff --git a/src/core/postgres-engine.ts b/src/core/postgres-engine.ts
+index 0b353499..0f3b6894 100644
+--- a/src/core/postgres-engine.ts
++++ b/src/core/postgres-engine.ts
+@@ -5739,11 +5739,11 @@ export class PostgresEngine implements BrainEngine {
+     const sql = this.sql;
+     const rows = await sql`
+       INSERT INTO eval_candidates (
+-        tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
++        tool_name, query, retrieved_slugs, retrieved_chunk_ids, retrieved_chunk_hashes, source_ids,
+         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+         latency_ms, remote, job_id, subagent_id, embedding_column, schema_pack_per_source
+       ) VALUES (
+-        ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
++        ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.retrieved_chunk_hashes ?? []}, ${input.source_ids},
+         ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
+         ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null},
+         ${input.schema_pack_per_source == null ? null : this.sql.json(input.schema_pack_per_source)}
+diff --git a/src/core/schema-embedded.ts b/src/core/schema-embedded.ts
+index 7760653e..57fefaae 100644
+--- a/src/core/schema-embedded.ts
++++ b/src/core/schema-embedded.ts
+@@ -1178,6 +1178,7 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
+   query                 TEXT         NOT NULL CHECK (length(query) <= 51200),
+   retrieved_slugs       TEXT[]       NOT NULL DEFAULT '{}',
+   retrieved_chunk_ids   INTEGER[]    NOT NULL DEFAULT '{}',
++  retrieved_chunk_hashes TEXT[]       NOT NULL DEFAULT '{}',
+   source_ids            TEXT[]       NOT NULL DEFAULT '{}',
+   expand_enabled        BOOLEAN,
+   detail                TEXT         CHECK (detail IS NULL OR detail IN ('low', 'medium', 'high')),
+diff --git a/src/core/types.ts b/src/core/types.ts
+index 9d9a7115..84c43ca2 100644
+--- a/src/core/types.ts
++++ b/src/core/types.ts
+@@ -1647,6 +1647,12 @@ export interface EvalCandidateInput {
+   query: string;
+   retrieved_slugs: string[];
+   retrieved_chunk_ids: number[];
++  /**
++   * SHA-256 of each captured chunk_text, aligned 1:1 with retrieved_chunk_ids.
++   * Optional for backward compatibility with capture/export rows produced
++   * before exact evidence fingerprints were added.
++   */
++  retrieved_chunk_hashes?: string[];
+   source_ids: string[];
+   /** Whether multi-query Haiku expansion was enabled on the call. Null for 'search'. */
+   expand_enabled: boolean | null;
+diff --git a/src/schema.sql b/src/schema.sql
+index b3c09ba4..1056652e 100644
+--- a/src/schema.sql
++++ b/src/schema.sql
+@@ -1174,6 +1174,7 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
+   query                 TEXT         NOT NULL CHECK (length(query) <= 51200),
+   retrieved_slugs       TEXT[]       NOT NULL DEFAULT '{}',
+   retrieved_chunk_ids   INTEGER[]    NOT NULL DEFAULT '{}',
++  retrieved_chunk_hashes TEXT[]       NOT NULL DEFAULT '{}',
+   source_ids            TEXT[]       NOT NULL DEFAULT '{}',
+   expand_enabled        BOOLEAN,
+   detail                TEXT         CHECK (detail IS NULL OR detail IN ('low', 'medium', 'high')),
+diff --git a/test/eval-candidates.test.ts b/test/eval-candidates.test.ts
+index 305a1ab9..5d4b0fe7 100644
+--- a/test/eval-candidates.test.ts
++++ b/test/eval-candidates.test.ts
+@@ -37,6 +37,7 @@ function makeInput(overrides: Partial<EvalCandidateInput> = {}): EvalCandidateIn
+     query: 'who is alice-example',
+     retrieved_slugs: ['people/alice-example', 'companies/acme-example'],
+     retrieved_chunk_ids: [42, 43],
++    retrieved_chunk_hashes: ['hash-42', 'hash-43'],
+     source_ids: ['default'],
+     expand_enabled: true,
+     detail: null,
+@@ -78,6 +79,7 @@ describe('logEvalCandidate', () => {
+     expect(row.tool_name).toBe('search');
+     expect(row.retrieved_slugs).toEqual(['people/alice-example', 'companies/acme-example']);
+     expect(row.retrieved_chunk_ids).toEqual([42, 43]);
++    expect(row.retrieved_chunk_hashes).toEqual(['hash-42', 'hash-43']);
+     expect(row.source_ids).toEqual(['default']);
+     expect(row.expand_enabled).toBeNull();
+     expect(row.detail).toBe('high');
+diff --git a/test/eval-capture.test.ts b/test/eval-capture.test.ts
+index d9919dee..3415b338 100644
+--- a/test/eval-capture.test.ts
++++ b/test/eval-capture.test.ts
+@@ -61,6 +61,9 @@ describe('buildEvalCandidateInput', () => {
+     expect(input.query).toBe('who is alice');
+     expect(input.retrieved_slugs).toEqual(['people/alice-example']);
+     expect(input.retrieved_chunk_ids).toEqual([42]);
++    expect(input.retrieved_chunk_hashes).toEqual([
++      'b4935894c8ce16bde67bbffc672428b1533c4f1e1e8b1ce21a2933183db6bfa5',
++    ]);
+     expect(input.source_ids).toEqual(['default']);
+     expect(input.latency_ms).toBe(123);
+     expect(input.remote).toBe(true);
+@@ -81,6 +84,22 @@ describe('buildEvalCandidateInput', () => {
+     expect(input.retrieved_chunk_ids).toEqual([1, 2, 3]);
+   });
+ 
++  test('keeps chunk hashes aligned with result order', () => {
++    const input = buildEvalCandidateInput(
++      makeCtx({
++        results: [
++          makeResult({ chunk_id: 1, chunk_text: 'alpha' }),
++          makeResult({ chunk_id: 2, chunk_text: 'beta' }),
++        ],
++      }),
++    );
++    expect(input.retrieved_chunk_ids).toEqual([1, 2]);
++    expect(input.retrieved_chunk_hashes).toEqual([
++      '8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8',
++      'f44e64e75f3948e9f73f8dfa94721c4ce8cbb4f265c4790c702b2d41cfbf2753',
++    ]);
++  });
++
+   test('dedupes source_ids', () => {
+     const input = buildEvalCandidateInput(
+       makeCtx({
+diff --git a/test/eval-export.test.ts b/test/eval-export.test.ts
+index 966da281..4bc4e86a 100644
+--- a/test/eval-export.test.ts
++++ b/test/eval-export.test.ts
+@@ -33,6 +33,7 @@ function baseInput(overrides: Partial<EvalCandidateInput> = {}): EvalCandidateIn
+     query: 'alice',
+     retrieved_slugs: ['people/alice-example'],
+     retrieved_chunk_ids: [1],
++    retrieved_chunk_hashes: ['chunk-hash-1'],
+     source_ids: ['default'],
+     expand_enabled: true,
+     detail: null,
+@@ -93,6 +94,14 @@ describe('gbrain eval export — NDJSON shape', () => {
+     }
+   });
+ 
++  test('exports exact chunk-text hash provenance', async () => {
++    await engine.logEvalCandidate(baseInput());
++    const out = await captureExport([]);
++    const parsed = JSON.parse(out.trim());
++    expect(parsed.retrieved_chunk_ids).toEqual([1]);
++    expect(parsed.retrieved_chunk_hashes).toEqual(['chunk-hash-1']);
++  });
++
+   test('every row starts with "schema_version":1 (F5 contract)', async () => {
+     await engine.logEvalCandidate(baseInput());
+     const out = await captureExport([]);
+-- 
+2.34.1
+

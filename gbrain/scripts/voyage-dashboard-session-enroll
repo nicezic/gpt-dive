@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Mapping
+from pathlib import Path
+from typing import NoReturn
+
+CREDS_ID = "voyage.dashboard-session"
+CREDS_LABEL = "Voyage Dashboard session"
+CREDS_BINDING = "ai:VOYAGE_DASHBOARD_SESSION"
+DASHBOARD_URL = "https://dashboard.voyageai.com"
+DEFAULT_SESSION = "msedge"
+EDGE_EXECUTABLE = "/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+DEFAULT_GUARD = str(Path.home() / ".local" / "bin" / "voyage-free-guard")
+
+
+def _find_playwright_cli() -> str | None:
+    found = shutil.which("playwright-cli")
+    if found:
+        return found
+    candidate = Path.home() / ".local" / "share" / "pnpm" / "bin" / "playwright-cli"
+    if candidate.is_file():
+        return str(candidate)
+    return None
+
+
+def resolve_playwright_cli() -> str:
+    found = _find_playwright_cli()
+    if found:
+        return found
+    fail("playwright-cli not found in PATH or ~/.local/share/pnpm/bin")
+
+
+def fail(message: str, code: int = 70) -> NoReturn:
+    print(f"VOYAGE_ENROLL_ERROR: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def run(
+    args: list[str],
+    *,
+    input_text: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        fail(f"command failed: {args[0]} ({type(exc).__name__})")
+
+
+def session_is_open(session: str) -> bool:
+    result = run([resolve_playwright_cli(), "list", "--all"])
+    if result.returncode != 0:
+        fail("cannot inspect Playwright sessions")
+    session_pattern = rf"(?<![A-Za-z0-9_.-]){re.escape(session)}(?![A-Za-z0-9_.-])"
+    return re.search(session_pattern, result.stdout) is not None
+
+
+def attach_extension(session: str) -> None:
+    playwright_cli = str(Path(resolve_playwright_cli()).expanduser().resolve())
+    env = dict(os.environ)
+    env["PLAYWRIGHT_MCP_EXECUTABLE_PATH"] = EDGE_EXECUTABLE
+    result = run(
+        [
+            "creds",
+            "run",
+            "ai",
+            "--",
+            playwright_cli,
+            "attach",
+            "--extension=chrome",
+            f"--session={session}",
+        ],
+        env=env,
+    )
+    if result.returncode != 0:
+        fail("cannot attach Playwright extension session")
+
+
+def detach_session(session: str) -> None:
+    try:
+        result = subprocess.run(
+            [resolve_playwright_cli(), f"-s={session}", "detach"],
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, SystemExit):
+        result = None
+    if result is None or result.returncode != 0:
+        print("warning: could not detach Playwright session", file=sys.stderr)
+
+
+def read_dashboard_session(playwright_session: str) -> str:
+    code = (
+        "async (page) => {"
+        f' const cs=await page.context().cookies("{DASHBOARD_URL}");'
+        ' const c=cs.find(x=>x.name==="__session");'
+        ' if(!c) throw new Error("voyage-dashboard-session-cookie-missing");'
+        " return c.value;"
+        " }"
+    )
+    result = run(
+        [resolve_playwright_cli(), f"-s={playwright_session}", "--raw", "run-code", code]
+    )
+    if result.returncode != 0:
+        fail("cannot read authenticated Voyage dashboard session from Playwright")
+    try:
+        value = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        fail("Playwright returned an unexpected session payload")
+    if not isinstance(value, str) or not value:
+        fail("Voyage dashboard session cookie is missing")
+    return value
+
+
+def credential_exists() -> bool:
+    result = run(["creds", "info", CREDS_ID])
+    return result.returncode == 0
+
+
+def store_session(value: str) -> None:
+    if credential_exists():
+        result = run(["creds", "set", CREDS_ID], input_text=value + "\n")
+    else:
+        result = run(
+            ["creds", "add", CREDS_ID, "--label", CREDS_LABEL, "--binding", CREDS_BINDING],
+            input_text=value + "\n",
+        )
+    if result.returncode != 0:
+        fail(f"creds update failed: exit={result.returncode}")
+
+
+def refresh_usage_snapshot() -> dict:
+    guard = os.environ.get("VOYAGE_GUARD_BIN", DEFAULT_GUARD)
+    result = run(["creds", "run", "ai", "--", guard, "--refresh", "--json"])
+    if result.returncode != 0:
+        fail(f"usage refresh failed after enrollment: guard exit={result.returncode}")
+    try:
+        payload = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        fail("usage refresh returned invalid JSON")
+    if not isinstance(payload, dict) or payload.get("source") != "dashboard" or payload.get("guard") != "PASS":
+        fail("usage refresh returned an unexpected status")
+    return payload
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="One-time/local enrollment of the Voyage dashboard session into creds."
+    )
+    parser.add_argument("--session", default=DEFAULT_SESSION, help="Playwright CLI session name")
+    args = parser.parse_args()
+
+    attached_here = False
+    try:
+        if not session_is_open(args.session):
+            attach_extension(args.session)
+            attached_here = True
+        value = read_dashboard_session(args.session)
+        store_session(value)
+        refresh_usage_snapshot()
+    finally:
+        if attached_here:
+            detach_session(args.session)
+    print(f"enrolled: {CREDS_ID}")
+
+
+if __name__ == "__main__":
+    main()

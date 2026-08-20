@@ -1,0 +1,45 @@
+From 2082dc156a7368d6f53c0d94b4539511ad0685c8 Mon Sep 17 00:00:00 2001
+From: nicezic <nicezic@gmail.com>
+Date: Fri, 14 Aug 2026 13:34:09 +0900
+Subject: [PATCH] fix: quote backtick inferred frontmatter titles
+
+---
+ src/core/frontmatter-inference.ts  | 2 +-
+ test/frontmatter-inference.test.ts | 8 ++++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/core/frontmatter-inference.ts b/src/core/frontmatter-inference.ts
+index 2350730d..2397bf83 100644
+--- a/src/core/frontmatter-inference.ts
++++ b/src/core/frontmatter-inference.ts
+@@ -346,7 +346,7 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
+   const lines: string[] = ['---'];
+ 
+   // Title — quote if it contains special YAML chars
+-  const needsQuote = /[:"'#\[\]{}|>&*!?,]/.test(fm.title);
++  const needsQuote = /[`:"'#\[\]{}|>&*!?,]/.test(fm.title);
+   lines.push(`title: ${needsQuote ? JSON.stringify(fm.title) : fm.title}`);
+ 
+   lines.push(`type: ${fm.type}`);
+diff --git a/test/frontmatter-inference.test.ts b/test/frontmatter-inference.test.ts
+index bc84f3a8..f567f5c2 100644
+--- a/test/frontmatter-inference.test.ts
++++ b/test/frontmatter-inference.test.ts
+@@ -263,6 +263,14 @@ describe('serializeFrontmatter', () => {
+     expect(fm).toContain('title: "What\'s the deal: a \\"primer\\""');
+   });
+ 
++  test('quotes title that starts with a backtick', () => {
++    const fm = serializeFrontmatter({
++      title: '`pydantic_ai.usage`',
++      type: 'note',
++    });
++    expect(fm).toContain('title: "`pydantic_ai.usage`"');
++  });
++
+   test('returns empty string for skipped files', () => {
+     expect(serializeFrontmatter({ title: '', type: '', skipped: true })).toBe('');
+   });
+-- 
+2.34.1
+

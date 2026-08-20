@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from http.cookies import CookieError, SimpleCookie
+from pathlib import Path
+from typing import NoReturn
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+DASHBOARD_ORIGIN = "https://dashboard.voyageai.com"
+DASHBOARD_USAGE_URL = f"{DASHBOARD_ORIGIN}/organization/usage?tab=free-token"
+ACCESS_TOKEN_URL = f"{DASHBOARD_ORIGIN}/auth/access-token"
+QUOTA_ORIGIN = "https://prod.dashboardbackend.voyageai.com"
+ORG_ID = os.environ.get("VOYAGE_ORG_ID", "cmspqd7e6052ss61hr9ugxqnc")
+MODEL = os.environ.get("VOYAGE_GUARD_MODEL", "voyage-code-3")
+FREE_TOTAL_TOKENS = int(os.environ.get("VOYAGE_FREE_TOTAL_TOKENS", "200000000"))
+WARNING_PERCENT = float(os.environ.get("VOYAGE_FREE_WARNING_PERCENT", "80"))
+REAUTH_MAX_AGE_DAYS = int(os.environ.get("VOYAGE_REAUTH_MAX_AGE_DAYS", "30"))
+SESSION_ENV = "VOYAGE_DASHBOARD_SESSION"
+SESSION_CREDS_ID = "voyage.dashboard-session"
+HTTP_TIMEOUT = 15.0
+USER_AGENT = "gbrain-voyage-free-guard/4"
+
+_state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+STATE_DIR = Path(os.environ.get("VOYAGE_USAGE_STATE_DIR", str(_state_home / "gbrain" / "voyage")))
+SNAPSHOT_PATH = STATE_DIR / "free-usage-snapshot.json"
+LEDGER_PATH = STATE_DIR / "free-usage.jsonl"
+
+Opener = Callable[..., object]
+
+
+def fail(message: str, code: int = 70) -> NoReturn:
+    print(f"VOYAGE_GUARD_ERROR: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _open(request: Request, opener: Opener = urlopen):
+    try:
+        return opener(request, timeout=HTTP_TIMEOUT)
+    except HTTPError as exc:
+        fail(f"HTTP verification failed: status={exc.code}")
+    except (URLError, OSError, TimeoutError) as exc:
+        fail(f"HTTP verification failed: {type(exc).__name__}")
+
+
+def _status(response: object) -> int:
+    value = getattr(response, "status", None)
+    if type(value) is not int:
+        fail("HTTP response missing integer status")
+    return value
+
+
+def _read_json(response: object) -> object:
+    try:
+        raw = response.read()
+        if not isinstance(raw, (bytes, bytearray)):
+            fail("HTTP response body is not bytes")
+        return json.loads(bytes(raw).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("backend returned invalid JSON")
+
+
+def _session_from_headers(headers: object) -> str | None:
+    get_all = getattr(headers, "get_all", None)
+    values = get_all("Set-Cookie", []) if callable(get_all) else []
+    for raw in values:
+        try:
+            cookie = SimpleCookie()
+            cookie.load(raw)
+            morsel = cookie.get("__session")
+            if morsel is not None and morsel.value:
+                return morsel.value
+        except CookieError:
+            continue
+    return None
+
+
+def roll_dashboard_session(session: str, opener: Opener = urlopen) -> str:
+    request = Request(
+        DASHBOARD_USAGE_URL,
+        headers={"Cookie": f"__session={session}", "User-Agent": USER_AGENT},
+        method="GET",
+    )
+    response = _open(request, opener)
+    with response:
+        status = _status(response)
+        if not 200 <= status < 300:
+            fail(f"dashboard session verification failed: status={status}")
+        final_url = response.geturl()
+        if not isinstance(final_url, str) or not final_url.startswith(f"{DASHBOARD_ORIGIN}/"):
+            fail("dashboard session redirected away from authenticated dashboard")
+        rotated = _session_from_headers(response.headers)
+    if not rotated:
+        fail("dashboard did not return a rotated __session cookie")
+    return rotated
+
+
+def persist_dashboard_session(session: str) -> None:
+    try:
+        result = subprocess.run(
+            ["creds", "set", SESSION_CREDS_ID],
+            input=session + "\n",
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        fail(f"cannot persist rotated dashboard session: {type(exc).__name__}")
+    if result.returncode != 0:
+        fail(f"cannot persist rotated dashboard session: creds exit={result.returncode}")
+
+
+def fetch_access_token(session: str, opener: Opener = urlopen) -> str:
+    request = Request(
+        ACCESS_TOKEN_URL,
+        headers={"Cookie": f"__session={session}", "User-Agent": USER_AGENT},
+        method="GET",
+    )
+    response = _open(request, opener)
+    with response:
+        status = _status(response)
+        if status != 200:
+            fail(f"access-token endpoint failed: status={status}")
+        payload = _read_json(response)
+
+    token: object
+    if isinstance(payload, str):
+        token = payload
+    elif isinstance(payload, dict):
+        token = payload.get("token") or payload.get("accessToken") or payload.get("access_token")
+    else:
+        token = None
+    if not isinstance(token, str) or not token:
+        fail("access-token endpoint returned an unexpected schema")
+    return token
+
+
+def fetch_quota(access_token: str, opener: Opener = urlopen) -> dict:
+    url = f"{QUOTA_ORIGIN}/api/org/get_free_token/{ORG_ID}"
+    request = Request(
+        url,
+        headers={"Authorization": f"Bearer {access_token}", "User-Agent": USER_AGENT},
+        method="GET",
+    )
+    response = _open(request, opener)
+    with response:
+        status = _status(response)
+        if status != 200:
+            fail(f"quota endpoint failed: status={status}")
+        payload = _read_json(response)
+
+    if not isinstance(payload, dict):
+        fail("quota response is not an object")
+    if payload.get("code") != 200 or payload.get("successCode") != "OK":
+        fail("quota response status schema is invalid")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        fail("quota response data is not a list")
+    matches = [row for row in data if isinstance(row, dict) and row.get("modelName") == MODEL]
+    if len(matches) != 1:
+        fail(f"expected exactly one {MODEL} quota row; found {len(matches)}")
+    row = matches[0]
+    total = row.get("totalFreeToken")
+    remaining = row.get("remainingToken")
+    if type(total) is not int or type(remaining) is not int:
+        fail("quota schema invalid: token fields are not integers")
+    if total <= 0 or remaining < 0 or remaining > total:
+        fail(f"quota values invalid: total={total}, remaining={remaining}")
+    return {"modelName": MODEL, "totalFreeToken": total, "remainingToken": remaining}
+
+
+def fresh_quota(
+    opener: Opener = urlopen,
+    persist: Callable[[str], None] = persist_dashboard_session,
+) -> dict:
+    session = os.environ.get(SESSION_ENV)
+    if not session:
+        fail(f"{SESSION_ENV} is not set; run voyage-dashboard-session-enroll")
+    rotated = roll_dashboard_session(session, opener)
+    persist(rotated)
+    token = fetch_access_token(rotated, opener)
+    return fetch_quota(token, opener)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def make_snapshot(*, total: int, used: int, source: str, verified: bool, now: datetime | None = None) -> dict:
+    now = now or _utc_now()
+    return {
+        "version": 1,
+        "model": MODEL,
+        "source": source,
+        "totalFreeToken": total,
+        "usedTokenAtBaseline": used,
+        "baselineAt": _iso(now),
+        "verifiedAt": _iso(now) if verified else None,
+        "reauthDueAt": _iso(now + timedelta(days=REAUTH_MAX_AGE_DAYS)),
+    }
+
+
+def write_snapshot(snapshot: dict) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = SNAPSHOT_PATH.with_name(f"{SNAPSHOT_PATH.name}.tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, SNAPSHOT_PATH)
+    except OSError as exc:
+        fail(f"cannot persist local usage snapshot: {type(exc).__name__}")
+
+
+def read_snapshot() -> dict:
+    try:
+        raw = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail("local Voyage usage snapshot is missing; reauthenticate or bootstrap the current local baseline")
+    except (OSError, json.JSONDecodeError):
+        fail("local Voyage usage snapshot is unreadable")
+    if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("model") != MODEL:
+        fail("local Voyage usage snapshot schema/model is invalid")
+    total = raw.get("totalFreeToken")
+    used = raw.get("usedTokenAtBaseline")
+    if type(total) is not int or total <= 0 or type(used) is not int or used < 0:
+        fail("local Voyage usage snapshot token values are invalid")
+    if _parse_iso(raw.get("baselineAt")) is None or _parse_iso(raw.get("reauthDueAt")) is None:
+        fail("local Voyage usage snapshot timestamps are invalid")
+    return raw
+
+
+def ledger_tokens_after(baseline_at: datetime) -> int:
+    try:
+        lines = LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        fail("local Voyage usage ledger is unreadable")
+    total = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or row.get("model") != MODEL:
+            continue
+        ts = _parse_iso(row.get("ts"))
+        tokens = row.get("estimatedTokens")
+        if ts is None or ts <= baseline_at or type(tokens) is not int or tokens <= 0:
+            continue
+        total += tokens
+    return total
+
+
+def status_payload(snapshot: dict, now: datetime | None = None) -> dict:
+    now = now or _utc_now()
+    baseline_at = _parse_iso(snapshot.get("baselineAt"))
+    due_at = _parse_iso(snapshot.get("reauthDueAt"))
+    if baseline_at is None or due_at is None:
+        fail("local Voyage usage snapshot timestamps are invalid")
+    local = ledger_tokens_after(baseline_at)
+    total = snapshot["totalFreeToken"]
+    used = snapshot["usedTokenAtBaseline"] + local
+    remaining = max(0, total - used)
+    percent = (used / total) * 100.0
+    return {
+        "model": MODEL,
+        "source": snapshot.get("source"),
+        "totalFreeToken": total,
+        "usedTokenAtBaseline": snapshot["usedTokenAtBaseline"],
+        "localEstimatedToken": local,
+        "usedToken": used,
+        "remainingToken": remaining,
+        "usedPercent": round(percent, 3),
+        "warningAtPercent": WARNING_PERCENT,
+        "warning": percent >= WARNING_PERCENT,
+        "verifiedAt": snapshot.get("verifiedAt"),
+        "reauthDueAt": snapshot["reauthDueAt"],
+        "reauthRequired": now >= due_at,
+        "guard": "BLOCK" if now >= due_at else "PASS",
+    }
+
+
+def print_status(status: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(status, separators=(",", ":")))
+    else:
+        print(
+            f"{MODEL}: estimated-used={status['usedToken']:,} / {status['totalFreeToken']:,} "
+            f"({status['usedPercent']:.1f}%) reauth-due={status['reauthDueAt']} guard={status['guard']}"
+        )
+    if status["warning"]:
+        print(
+            f"VOYAGE_USAGE_WARNING: estimated free-token usage is {status['usedPercent']:.1f}% "
+            f"(warning threshold {WARNING_PERCENT:.0f}%); embedding remains allowed until reauthentication is due.",
+            file=sys.stderr,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Local Voyage free-token usage guard. Normal checks are browserless/local; "
+            "--refresh performs explicit dashboard reauthentication refresh."
+        )
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--refresh", action="store_true", help="Fetch fresh dashboard quota and reset the local baseline")
+    mode.add_argument("--bootstrap-used-tokens", type=int, help="One-time local migration baseline when fresh auth is unavailable")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+
+    if args.refresh:
+        quota = fresh_quota()
+        snapshot = make_snapshot(
+            total=quota["totalFreeToken"],
+            used=quota["totalFreeToken"] - quota["remainingToken"],
+            source="dashboard",
+            verified=True,
+        )
+        write_snapshot(snapshot)
+    elif args.bootstrap_used_tokens is not None:
+        if args.bootstrap_used_tokens < 0 or args.bootstrap_used_tokens > FREE_TOTAL_TOKENS:
+            fail(f"--bootstrap-used-tokens must be in [0, {FREE_TOTAL_TOKENS}]", 64)
+        snapshot = make_snapshot(
+            total=FREE_TOTAL_TOKENS,
+            used=args.bootstrap_used_tokens,
+            source="local-bootstrap",
+            verified=False,
+        )
+        write_snapshot(snapshot)
+    else:
+        snapshot = read_snapshot()
+
+    status = status_payload(snapshot)
+    print_status(status, args.json)
+    if status["reauthRequired"]:
+        fail(
+            f"usage snapshot exceeded {REAUTH_MAX_AGE_DAYS} days; run voyage-dashboard-session-enroll to refresh authoritative Voyage usage",
+            70,
+        )
+
+    command = list(args.command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if command:
+        os.execvp(command[0], command)
+
+
+if __name__ == "__main__":
+    main()

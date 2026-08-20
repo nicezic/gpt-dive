@@ -11,7 +11,7 @@ The GBrain-side work that motivated the browser investigation is complete. Do no
 - Enrollment/recovery may use the generic Edge Playwright Extension, but normal quota lookup does not.
 - Stable Index Filter v1 is now production: `1204 pages / 21368 chunks / 21368 embedded`, stale `0`, source FAILS/QUEUE `0`.
 - Production `~/.gbrain` is a symlink to `~/.cache/gbrain-stable-index-v1/.gbrain`; previous production is preserved at `~/.gbrain.rollback-pre-stable-index-20260814`.
-- GBrain authorities: `~/gbrain/CONTINUATION.md`, `~/gbrain/plans/plan-260814-stable-index-upgrade.md`, and `~/ref/gbrain.md`.
+- GBrain authorities: `~/gpt-dive/gbrain/docs/reconstruction.md`, `~/gpt-dive/gbrain/plans/plan-260814-stable-index-upgrade.md`, and clean upstream `~/ref/gbrain`.
 - Generic Edge automation remains a separate completed browser capability. Do not route Voyage quota runtime back through it.
 
 ## Immediate Handoff — ToolOutputLimits Study / Live Validation
