@@ -33,6 +33,16 @@ def validation_error_invariant(error: str) -> str:
     return error
 
 
+def gbrain_runtime_root(env: dict[str, str]) -> Path:
+    """Return the active GBrain package root, preserving explicit test/dev overrides."""
+    return Path(
+        env.get(
+            "GPT_DIVE_GBRAIN_REPO",
+            Path.home() / ".bun" / "install" / "global" / "node_modules" / "gbrain",
+        )
+    )
+
+
 def _validated_timestamp(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"capture has no valid {field}")
@@ -291,7 +301,7 @@ async def read_current_schema_pack_snapshot(row: dict[str, Any]) -> dict[str, An
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
     env["GPT_DIVE_GBRAIN_SOURCE_IDS"] = json.dumps(source_ids)
     env["GPT_DIVE_GBRAIN_REMOTE"] = "1" if row.get("remote") is True else "0"
-    gbrain_repo = Path(env.get("GPT_DIVE_GBRAIN_REPO", Path.home() / "gbrain"))
+    gbrain_repo = gbrain_runtime_root(env)
     proc = await asyncio.create_subprocess_exec(
         "bun",
         "-",
@@ -363,7 +373,7 @@ async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) 
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
     env["GPT_DIVE_GBRAIN_CHUNK_IDS"] = json.dumps(chunk_ids)
-    gbrain_repo = Path(env.get("GPT_DIVE_GBRAIN_REPO", Path.home() / "gbrain"))
+    gbrain_repo = gbrain_runtime_root(env)
     proc = await asyncio.create_subprocess_exec(
         "bun",
         "-",

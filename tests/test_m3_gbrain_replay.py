@@ -8,6 +8,18 @@ from pathlib import Path
 import gpt_dive.m3_gbrain_replay as replay_module
 
 
+def test_gbrain_runtime_root_defaults_to_installed_bun_package(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert replay_module.gbrain_runtime_root({}) == (
+        tmp_path / ".bun" / "install" / "global" / "node_modules" / "gbrain"
+    )
+
+
+def test_gbrain_runtime_root_preserves_explicit_override(tmp_path: Path) -> None:
+    override = tmp_path / "gbrain-dev"
+    assert replay_module.gbrain_runtime_root({"GPT_DIVE_GBRAIN_REPO": str(override)}) == override
+
+
 def test_load_capture_rows_reads_ndjson(tmp_path: Path) -> None:
     path = tmp_path / "capture.ndjson"
     path.write_text(
