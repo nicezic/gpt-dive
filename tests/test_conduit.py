@@ -131,6 +131,20 @@ def test_every_action_returns_task_snapshot(tmp_path: Path) -> None:
     }
 
 
+def test_emit_event_carries_optional_session_id(tmp_path: Path) -> None:
+    runtime, publisher = _runtime(tmp_path)
+
+    assert runtime.call(action="emit", session_id="acp-session-1", text="answer") == {
+        "result": {"emitted": True},
+        "tasks": [],
+    }
+    assert publisher.events[-1]["session_id"] == "acp-session-1"
+    assert publisher.events[-1]["result"] == {"text": "answer"}
+
+    runtime.call(action="emit", text="legacy")
+    assert "session_id" not in publisher.events[-1]
+
+
 def test_action_validation_is_explicit(tmp_path: Path) -> None:
     runtime, _ = _runtime(tmp_path)
 
@@ -147,6 +161,13 @@ def test_action_validation_is_explicit(tmp_path: Path) -> None:
             assert message in str(exc)
         else:
             raise AssertionError(f"{action} should have failed")
+
+    try:
+        runtime.call(action="emit", text="answer", session_id="   ")
+    except ValueError as exc:
+        assert "session_id must not be empty" in str(exc)
+    else:
+        raise AssertionError("blank emit session_id should have failed")
 
     try:
         runtime.call(action="start", command="true", label="x" * 81)

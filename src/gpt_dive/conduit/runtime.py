@@ -27,6 +27,7 @@ class ConduitRuntime:
         cwd: str | None = None,
         timeout: float = 600.0,
         task_id: str | None = None,
+        session_id: str | None = None,
         text: str | None = None,
     ) -> dict[str, Any]:
         action = action.strip().lower()
@@ -62,6 +63,10 @@ class ConduitRuntime:
         elif action == "emit":
             if text is None or not text.strip():
                 raise ValueError("emit requires text")
+            if session_id is not None:
+                session_id = session_id.strip()
+                if not session_id:
+                    raise ValueError("emit session_id must not be empty")
             result = {"emitted": True}
         else:
             raise ValueError("action must be one of: start, sync, collect, ack, emit")
@@ -74,6 +79,8 @@ class ConduitRuntime:
             "result": self._event_result(action, result, text=text),
             "tasks": tasks,
         }
+        if action == "emit" and session_id is not None:
+            event["session_id"] = session_id
         self.publisher.publish(event)
         return {"result": result, "tasks": tasks}
 

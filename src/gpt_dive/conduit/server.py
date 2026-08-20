@@ -64,6 +64,10 @@ def c(
         str | None,
         Field(description="Conduit task ID for collect or ack."),
     ] = None,
+    session_id: Annotated[
+        str | None,
+        Field(description="Conversation session correlation for emit."),
+    ] = None,
     text: Annotated[
         str | None,
         Field(description="Text for sync or emit."),
@@ -76,5 +80,6 @@ def c(
         cwd=cwd,
         timeout=timeout,
         task_id=task_id,
+        session_id=session_id,
         text=text,
     )
