@@ -118,7 +118,12 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
         "workflow/pydantic-ai/code-mode.md",
         "skills/INDEX.md",
     ]
-    assert "===== BEGIN bootstrap/preload" not in result["stdout"]
+    assert "===== BEGIN" not in result["stdout"]
+    assert "# BOOTSTRAP PACKET" not in result["stdout"]
+    assert "Preload loaded:" not in result["stdout"]
+    assert "Bootstrap reminder added:" not in result["stdout"]
+    assert result["stdout"].startswith(f"$HOME = {Path.home()}\n\n---\n`$ cat {wiki / 'bootstrap/intro.md'}`\n\n")
+    assert f"`$ cat {wiki / 'USER_RULES.md'}`" in result["stdout"]
     assert "INTRO" in result["stdout"]
     assert "FULL RULES" in result["stdout"]
     assert "PYDANTIC" in result["stdout"]
@@ -128,8 +133,46 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert "RECENT LOG MUST NOT BE PRELOADED" not in result["stdout"]
     assert "LIVE CODE MODE CAPABILITIES" not in result["stdout"]
 
+def test_bootstrap_appends_only_nonpreloaded_reminders_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _write_test_wiki(tmp_path)
+    (wiki / "REMINDER_ONLY.md").write_text(
+        "# Extra\n\n## First\nONE\n\n## Second\nTWO\n"
+    )
+    (wiki / "bootstrap" / "reminder.json").write_text(
+        json.dumps(
+            {
+                "interval": 3,
+                "reminder_files": [
+                    {"path": "USER_RULES.md", "section": "Reminder"},
+                    {"path": "REMINDER_ONLY.md", "section": "First"},
+                    {"path": "REMINDER_ONLY.md", "section": "Second"},
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    result = app_module._read_bootstrap_packet()
+    stdout = result["stdout"]
+
+    assert result["bootstrap_reminders"] == [
+        {"path": "REMINDER_ONLY.md", "section": "First"},
+        {"path": "REMINDER_ONLY.md", "section": "Second"},
+    ]
+    assert stdout.count(f"`$ cat {wiki / 'USER_RULES.md'}`") == 1
+    assert stdout.index(f"`$ cat {wiki / 'skills/INDEX.md'}`") < stdout.index(
+        f"`$ cat {wiki / 'REMINDER_ONLY.md'}`"
+    )
+    assert stdout.count(f"`$ cat {wiki / 'REMINDER_ONLY.md'}`") == 1
+    assert stdout.index("## First") < stdout.index("## Second")
+    assert "#First" not in stdout
+    assert "#Second" not in stdout
+
 
 def test_periodic_reminder_reads_only_user_rules_reminder(
+
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wiki = _write_test_wiki(tmp_path)
@@ -137,7 +180,7 @@ def test_periodic_reminder_reads_only_user_rules_reminder(
 
     reminder = app_module._read_periodic_reminder()
 
-    assert reminder == "## Reminder\nROUTE\nPREVIEW FIRST"
+    assert reminder == f"---\n`$ cat {wiki / 'USER_RULES.md'}`\n\n## Reminder\nROUTE\nPREVIEW FIRST"
     assert "FULL RULES" not in reminder
     assert "ERROR_CASE" not in reminder
     assert "INTRO" not in reminder

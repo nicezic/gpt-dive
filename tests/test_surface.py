@@ -151,7 +151,7 @@ def test_periodic_reminder_reads_only_user_rules_reminder(monkeypatch, tmp_path)
     monkeypatch.setattr(app, "_wiki_path", lambda: tmp_path)
 
     text = app._read_periodic_reminder()
-    assert text == "## Reminder\nROUTE\nPREVIEW"
+    assert text == f"---\n`$ cat {tmp_path / 'USER_RULES.md'}`\n\n## Reminder\nROUTE\nPREVIEW"
     assert "FULL RULES" not in text
     assert "ERROR_CASE" not in text
 

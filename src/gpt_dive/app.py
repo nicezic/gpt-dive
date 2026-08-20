@@ -218,22 +218,28 @@ def _read_bootstrap_packet() -> dict[str, Any]:
             "bootstrap preload map resolved no readable preload documents"
         )
 
-    chunks = [
-        f"# BOOTSTRAP PACKET\nWiki: {wiki}\nPreload: {preload}\n",
-    ]
+    preloaded_files = [doc["path"] for doc in documents]
+    bootstrap_reminders = _read_reminder_sections(exclude_paths=set(preloaded_files))
+    chunks: list[str] = [f"$HOME = {Path.home()}"]
     for doc in documents:
+        source = _display_source_path(wiki / doc["path"])
         chunks.append(
-            f"\n\n===== BEGIN {doc['path']} =====\n"
-            f"{doc['content'].rstrip()}\n"
-            f"===== END {doc['path']} ====="
+            f"---\n`$ cat {source}`\n\n"
+            f"{doc['content'].rstrip()}"
         )
+    if bootstrap_reminders:
+        chunks.append(_format_reminder_sections(bootstrap_reminders))
 
     return {
         "wiki_path": str(wiki),
         "preload_path": str(preload),
-        "preloaded_files": [doc["path"] for doc in documents],
+        "preloaded_files": preloaded_files,
+        "bootstrap_reminders": [
+            {"path": item["path"], "section": item["section"]}
+            for item in bootstrap_reminders
+        ],
         "warnings": warnings,
-        "stdout": "".join(chunks) + "\n",
+        "stdout": "\n\n".join(chunks) + "\n",
     }
 
 
@@ -277,12 +283,17 @@ def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str]]]:
     return _parse_reminder_config(path.read_text(errors="replace"))
 
 
-def _read_periodic_reminder() -> str:
-    """Read only the Markdown sections listed by the reminder map."""
+def _read_reminder_sections(
+    *, exclude_paths: set[str] | None = None
+) -> list[dict[str, str]]:
+    """Read reminder sections in config order, optionally skipping whole source files."""
     wiki = _wiki_path()
     _, files = _read_periodic_reminder_config()
-    sections: list[str] = []
+    excluded = exclude_paths or set()
+    sections: list[dict[str, str]] = []
     for relative, heading in files:
+        if relative in excluded:
+            continue
         candidate = (wiki / relative).resolve()
         try:
             candidate.relative_to(wiki)
@@ -296,8 +307,43 @@ def _read_periodic_reminder() -> str:
         )
         if not match:
             raise ValueError(f"{relative} missing reminder section: {heading}")
-        sections.append(f"## {heading}\n{match.group('body').rstrip()}")
-    return "\n\n".join(sections)
+        sections.append(
+            {
+                "path": relative,
+                "section": heading,
+                "content": f"## {heading}\n{match.group('body').rstrip()}",
+            }
+        )
+    return sections
+
+
+def _display_source_path(path: Path) -> str:
+    """Render paths under the current home directory with a ~/ prefix."""
+    resolved = path.resolve()
+    home = Path.home().resolve()
+    try:
+        return f"~/{resolved.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(resolved)
+
+
+def _format_reminder_sections(sections: list[dict[str, str]]) -> str:
+    """Format reminder sections with one source-file marker per consecutive file group."""
+    wiki = _wiki_path()
+    chunks: list[str] = []
+    previous_path: str | None = None
+    for item in sections:
+        if item["path"] != previous_path:
+            source = _display_source_path(wiki / item["path"])
+            chunks.append(f"---\n`$ cat {source}`")
+            previous_path = item["path"]
+        chunks.append(item["content"])
+    return "\n\n".join(chunks)
+
+
+def _read_periodic_reminder() -> str:
+    """Read every configured reminder section in reminder order."""
+    return _format_reminder_sections(_read_reminder_sections())
 
 
 def _periodic_reminder_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, Any]:
