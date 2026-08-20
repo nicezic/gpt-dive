@@ -118,13 +118,23 @@ Do not reopen without new evidence:
    - the final `Task` / `TrackedTask` class and cross-runner schema remain intentionally undecided;
    - automatic TrackedTasks injection into ordinary `@dive` results is an accepted future direction, not current runtime behavior.
 
+5. **Conversation-plane Mirrored Full Output canary — PASS**
+   - one real Web turn sent the complete final text through live `@c emit`;
+   - `@c` returned `emitted: true`;
+   - Redis/NDJSON recorded `action: emit` with Redis ID `1787235113300-0` and the full `result.text`, ending in `Turn Marker: 7`;
+   - the observed event also carried the automatic `tasks` snapshot, which is transport/task-awareness evidence rather than proof that the whole event envelope belongs in canonical conversation domain.
+
 ## Next
 
-1. **Conversation-plane live canary first**
-   - prove one real user turn can send the same complete assistant answer through Conduit and also return it as the native ChatGPT Web final;
-   - verify the Conduit copy reaches the Redis / NDJSON event path;
-   - use the Turn Marker to correlate the two copies during the canary;
-   - do not redesign `Task` / `TrackedTask` classes before this basic chat path is proven.
+1. **ACP projection canary — PASS; minimum session-correlation slice local PASS**
+   - the real Mirrored Full Output event confirms `result.text` maps directly to an ACP v1 `agent_message_chunk`;
+   - existing `emit` semantics already mean a complete assistant answer, so successful `emit` maps deterministically to normal ACP `stopReason=end_turn`; no new stop field is needed for the first normal-turn path;
+   - optional top-level `session_id` correlation is now implemented for `emit`, while legacy emit behavior and `result.text` remain unchanged;
+   - focused validation: Conduit tests 9 passed, ruff PASS, pyright 0 errors / 0 warnings; live MCP acceptance of the new field still requires restart/refresh in a fresh Web session;
+   - Redis ID, transport timestamp, and the automatic task snapshot remain outside conversation semantics without further evidence;
+   - prompt ingress should reuse the already-proven Edge/Playwright input-only primitive; cancellation gets its own later live acceptance rather than a fake/no-op mapping;
+   - ACP stable wire protocol version `1` is the first compatibility target; ACP v2 remains alpha and is only a forward-compatibility check.
+   - disposable stdio canary now passes local `initialize` and `session/new` NDJSON handshakes with protocol-only stdout; the remaining live acceptance is the real `session/prompt` loop through Edge input and correlated Conduit output.
 
 2. **Fresh-session `ack` acceptance after MCP restart/refresh**
    - start and complete a small task;
