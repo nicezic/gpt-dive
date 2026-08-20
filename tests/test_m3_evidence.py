@@ -60,6 +60,7 @@ def test_invoke_m3_evidence_uses_bare_m3_and_validates_contract(monkeypatch) -> 
     assert "newest applicable explicitly dated" in prompt
     assert "effective_date_source=fallback" in prompt
     assert "must not be used as recency evidence" in prompt
+    assert "never a combined form such as `[E3,E5,E2]`" in prompt
 
 
 def test_delimit_evidence_strips_fallback_effective_date_recency_signal() -> None:

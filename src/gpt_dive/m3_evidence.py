@@ -56,7 +56,7 @@ Rules:
 - Do not invent facts that are not supported by the packet.
 - When the exact question asks which source, version, or state is current or latest, and conflicting packet claims carry explicit dates, use the newest applicable explicitly dated evidence for the current value. Still report the older-versus-newer disagreement in `conflicts`; do not request another search merely to reconfirm the newer dated source when the requested current value is already supported.
 - `effective_date_source=fallback` means GBrain fell back to updated/created timestamps rather than a content date; it must not be used as recency evidence for current/latest resolution.
-- If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Never invent an evidence label.
+- If the packet contains evidence labels such as [E1], cite at least one exact packet label in every `known` and `conflicts` item. Write each citation as its own exact bracketed label (for example, `[E3] [E5] [E2]`), never a combined form such as `[E3,E5,E2]`. Never invent an evidence label.
 - Prefer queries that can be run in parallel. Only encode a dependency when a later query truly requires an earlier result.
 - Every query must be non-empty and distinct from the other proposed queries.
 - As soon as every explicitly requested aspect is supported, stop: set `done` true, `missing` empty, and `queries` empty.
