@@ -38,7 +38,7 @@ def test_code_mode_survives_repeated_async_capability_cancellation(
                 make_fake_worker(started, blocker, cancelled),
             )
             worker_task = asyncio.create_task(
-                gpt_dive.code_mode("await agy_worker(task='research')")
+                gpt_dive.code_mode("await agy_worker(task='research', timeout=30.0)")
             )
             await started.wait()
             ordinary_task = asyncio.create_task(gpt_dive.code_mode("40 + 2"))

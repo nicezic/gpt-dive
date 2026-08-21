@@ -11,7 +11,7 @@ GPT Dive exposes outer Code Mode `bare(...)` as the current peer-review lane:
 ```text
 Web SOL
   -> code_mode(background=True)
-       -> bare(model, prompt, cwd)
+       -> bare(provider, model, prompt, timeout, cwd)
             -> invoke_bare(peer_review=True)
                  -> Pydantic Agent
                  -> independent review
@@ -56,7 +56,7 @@ Normal path:
 ```text
 host local read peer_packet.md
         ↓
-bare(prompt=<complete packet>)
+bare(provider=<approved>, model=<exact ID>, prompt=<complete packet>, timeout=<explicit seconds>)
         ↓
 peer final review text
         ↓
@@ -162,8 +162,10 @@ if not packet.strip():
     raise RuntimeError("peer_packet.md is empty")
 
 result = await bare(
+    provider=review_provider,
     model=review_model,
     prompt=packet,
+    timeout=review_timeout,
     cwd=CWD,
 )
 
@@ -171,7 +173,7 @@ if result.get("ok"):
     await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-The actual paid route runs only in outer `code_mode(background=True)` after the skill's provider/model preflight and explicit user approval gate.
+The actual paid route runs only in outer `code_mode(background=True)` after the skill's provider/model preflight and explicit user approval gate. `bare` has no timeout default; each review call supplies its timeout explicitly.
 
 ## Failure semantics
 

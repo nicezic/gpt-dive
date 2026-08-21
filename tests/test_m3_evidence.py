@@ -93,7 +93,7 @@ def test_invoke_m3_evidence_accepts_single_json_code_fence(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert result["ok"] is True
     assert result["done"] is True
@@ -105,7 +105,7 @@ def test_invoke_m3_evidence_rejects_invalid_json(monkeypatch) -> None:
         return {"ok": True, "model": "m3", "provider": "minimax", "output": "not-json"}
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert result["ok"] is False
     assert result["error"] == "invalid m3 evidence JSON"
@@ -123,7 +123,7 @@ def test_invoke_m3_evidence_rejects_query_overflow(monkeypatch) -> None:
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
-        evidence_module.invoke_m3_evidence(question="q", evidence="e", max_queries=2)
+        evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e", max_queries=2)
     )
 
     assert result["ok"] is False
@@ -140,7 +140,7 @@ def test_invoke_m3_evidence_rejects_queries_when_done(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert result["ok"] is False
     assert "empty when done is true" in result["error"]
@@ -157,8 +157,8 @@ def test_invoke_m3_evidence_rejects_empty_or_duplicate_queries(monkeypatch) -> N
         return {"ok": True, "model": "m3", "provider": "minimax", "output": next(outputs)}
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    empty = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
-    duplicate = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    empty = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
+    duplicate = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert empty["ok"] is False
     assert "empty strings" in empty["error"]
@@ -184,7 +184,7 @@ def test_invoke_m3_evidence_rejects_duplicate_evidence_labels_before_model_call(
     try:
         asyncio.run(
             evidence_module.invoke_m3_evidence(
-                question="q",
+                timeout=30.0, question="q",
                 evidence="[E1] first source\n[E1] second source",
             )
         )
@@ -207,7 +207,7 @@ def test_invoke_m3_evidence_requires_known_provenance_when_packet_is_labeled(mon
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
-        evidence_module.invoke_m3_evidence(question="q", evidence="[E1] authoritative evidence")
+        evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="[E1] authoritative evidence")
     )
 
     assert result["ok"] is False
@@ -225,7 +225,7 @@ def test_invoke_m3_evidence_rejects_unknown_evidence_label(monkeypatch) -> None:
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
-        evidence_module.invoke_m3_evidence(question="q", evidence="[E1] authoritative evidence")
+        evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="[E1] authoritative evidence")
     )
 
     assert result["ok"] is False
@@ -242,7 +242,7 @@ def test_invoke_m3_evidence_unlabeled_packet_remains_backward_compatible(monkeyp
         }
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="plain evidence"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="plain evidence"))
 
     assert result["ok"] is True
     assert result["known"] == ["supported fact"]
@@ -258,7 +258,7 @@ def test_invoke_m3_evidence_rejects_missing_when_done(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert result["ok"] is False
     assert "missing must be empty when done is true" in result["error"]
@@ -290,7 +290,7 @@ def test_invoke_m3_evidence_retries_one_invalid_structured_output(monkeypatch) -
         return next(outputs)
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="plain evidence"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="plain evidence"))
 
     assert result["ok"] is True
     assert result["done"] is True
@@ -313,7 +313,7 @@ def test_invoke_m3_evidence_retry_reports_semantic_validation_error(monkeypatch)
         return {"ok": True, "model": "m3", "provider": "minimax", "output": next(outputs)}
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
     assert result["ok"] is True
     assert result["attempts"] == 2
     assert result["queries"] == ["find evidence"]
@@ -333,7 +333,7 @@ def test_invoke_m3_evidence_final_round_cannot_propose_more_queries(monkeypatch)
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
         evidence_module.invoke_m3_evidence(
-            question="q", evidence="e", round_number=3, max_rounds=3
+            timeout=30.0, question="q", evidence="e", round_number=3, max_rounds=3
         )
     )
 
@@ -356,7 +356,7 @@ def test_invoke_m3_evidence_final_round_can_report_unresolved_missing(monkeypatc
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
         evidence_module.invoke_m3_evidence(
-            question="q", evidence="e", round_number=3, max_rounds=3
+            timeout=30.0, question="q", evidence="e", round_number=3, max_rounds=3
         )
     )
 
@@ -381,7 +381,7 @@ def test_invoke_m3_evidence_rejects_unresolved_missing_without_query_before_fina
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
         evidence_module.invoke_m3_evidence(
-            question="q", evidence="e", round_number=1, max_rounds=3, max_queries=3
+            timeout=30.0, question="q", evidence="e", round_number=1, max_rounds=3, max_queries=3
         )
     )
 
@@ -408,7 +408,7 @@ def test_invoke_m3_evidence_allows_unresolved_missing_without_query_when_queries
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
     result = asyncio.run(
         evidence_module.invoke_m3_evidence(
-            question="q", evidence="e", round_number=1, max_rounds=3, max_queries=0
+            timeout=30.0, question="q", evidence="e", round_number=1, max_rounds=3, max_queries=0
         )
     )
 
@@ -430,7 +430,7 @@ def test_invoke_m3_evidence_rejects_round_beyond_max_before_model_call(monkeypat
     try:
         asyncio.run(
             evidence_module.invoke_m3_evidence(
-                question="q", evidence="e", round_number=4, max_rounds=3
+                timeout=30.0, question="q", evidence="e", round_number=4, max_rounds=3
             )
         )
     except ValueError as exc:
@@ -456,7 +456,7 @@ def test_invoke_m3_evidence_stops_after_two_invalid_structured_outputs(monkeypat
         }
 
     monkeypatch.setattr(evidence_module, "invoke_bare", fake_invoke_bare)
-    result = asyncio.run(evidence_module.invoke_m3_evidence(question="q", evidence="e"))
+    result = asyncio.run(evidence_module.invoke_m3_evidence(timeout=30.0, question="q", evidence="e"))
 
     assert calls == 2
     assert result["ok"] is False

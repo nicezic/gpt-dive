@@ -38,6 +38,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
         _build_code_registry(cwd),
         cwd=cwd,
         payload=payload,
+        background=True,
     )
 
 

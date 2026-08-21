@@ -130,7 +130,7 @@ async def invoke_agy_worker(
     *,
     task: str,
     model: str = DEFAULT_MODEL,
-    timeout: float = 120.0,
+    timeout: float,
     workspace_dir: str | None = None,
     conversation_id: str | None = None,
 ) -> dict[str, Any]:

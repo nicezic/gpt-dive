@@ -50,7 +50,7 @@ def score_result(case: dict[str, Any], result: dict[str, Any]) -> tuple[bool, li
     return not errors, errors
 
 
-async def run_cases(cases: list[dict[str, Any]], *, repeat: int = 1) -> dict[str, Any]:
+async def run_cases(cases: list[dict[str, Any]], *, timeout: float, repeat: int = 1) -> dict[str, Any]:
     if repeat <= 0:
         raise ValueError("repeat must be greater than 0")
 
@@ -64,6 +64,7 @@ async def run_cases(cases: list[dict[str, Any]], *, repeat: int = 1) -> dict[str
                 round_number=case.get("round_number", 1),
                 max_rounds=case.get("max_rounds", 3),
                 max_queries=case.get("max_queries", 3),
+                timeout=timeout,
             )
             passed, errors = score_result(case, result)
             rows.append({
@@ -129,8 +130,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the fixed live MiniMax-M3 evidence-controller eval set.")
     parser.add_argument("--cases", type=Path, default=Path("tests/fixtures/m3_evidence_eval.json"))
     parser.add_argument("--repeat", type=int, default=1, help="Run the fixed case set N times sequentially.")
+    parser.add_argument("--timeout", type=float, required=True, help="Per M3 evidence call timeout in seconds.")
     args = parser.parse_args()
-    report = asyncio.run(run_cases(load_cases(args.cases), repeat=args.repeat))
+    report = asyncio.run(run_cases(load_cases(args.cases), timeout=args.timeout, repeat=args.repeat))
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["failed"] == 0 else 1)
 

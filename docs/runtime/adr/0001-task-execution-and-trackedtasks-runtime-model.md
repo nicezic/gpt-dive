@@ -493,7 +493,7 @@ No automatic recovery is attempted.
 
 The first real acceptance consumer is `/peer-review` because reviewer latency caused the original blocking pain.
 
-Use a cheap Haku-class peer model for lifecycle testing.
+Use a cheap Haiku-class peer model for lifecycle testing.
 
 ```text
 /peer-review
@@ -630,7 +630,7 @@ v1 implementation must preserve these rules:
 5. Add task_list / task_get / task_collect / task_cancel / task_ack Code Mode capabilities.
 6. Append compact TrackedTasks after ordinary tool calls using the existing result-content middleware seam.
 7. Verify fresh-session rediscovery and lost behavior.
-8. Convert /peer-review to the Task-backed background Code Mode path using a cheap Haku-class canary.
+8. Convert /peer-review to the Task-backed background Code Mode path using a cheap Haiku-class canary.
 9. Convert long AGY workflows to the same path; remove old skill guidance that teaches raw Job handles.
 10. Point Conduit at the shared TaskStore and remove duplicate tracking metadata.
 11. Update runtime/skill/CAPABILITIES documentation and delete stale Job terminology.

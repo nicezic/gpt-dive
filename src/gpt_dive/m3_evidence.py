@@ -144,7 +144,7 @@ async def invoke_m3_evidence(
     round_number: int = 1,
     max_rounds: int = 3,
     max_queries: int = 3,
-    timeout: float = 120.0,
+    timeout: float,
     output_tokens_limit: int = 2048,
 ) -> dict[str, Any]:
     """Analyze a bounded evidence packet with tool-less MiniMax-M3."""

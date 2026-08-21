@@ -35,7 +35,7 @@ async def invoke_subagent(
     *,
     model: str,
     task: str,
-    timeout: float = 120.0,
+    timeout: float,
     output_tokens_limit: int = 4096,
     workspace_dir: str | None = None,
 ) -> dict[str, Any]:

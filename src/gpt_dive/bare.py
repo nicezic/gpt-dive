@@ -166,7 +166,7 @@ async def invoke_bare(
     *,
     model: str | ModelAlias,
     prompt: str,
-    timeout: float = 120.0,
+    timeout: float,
     output_tokens_limit: int = 4096,
     peer_review: bool = False,
     provider: str | None = None,

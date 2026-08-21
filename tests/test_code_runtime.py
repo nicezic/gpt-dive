@@ -60,7 +60,12 @@ def test_code_mode_payload_type_stub_has_no_input_alias() -> None:
 
     stubs = CallableRegistry().type_check_stubs(include_payload=True)
     assert "PAYLOAD: str" in stubs
+    assert "BACKGROUND: bool" in stubs
     assert "INPUT: str" not in stubs
+
+
+def test_code_mode_exposes_foreground_flag() -> None:
+    assert asyncio.run(code_mode("BACKGROUND")) == {"result": False}
 
 
 def test_local_exec_calls_can_overlap() -> None:
@@ -186,7 +191,7 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
         return {"ok": True, "known": ["k"], "missing": [], "conflicts": [], "queries": [], "done": True}
 
     monkeypatch.setattr(app_module, "invoke_m3_evidence", fake_invoke_m3_evidence)
-    code = "result = await m3_evidence(question='q', evidence='e', max_queries=2); result['done']"
+    code = "result = await m3_evidence(question='q', evidence='e', max_queries=2, timeout=30.0); result['done']"
     assert asyncio.run(gpt_dive.code_mode(code)) == {"result": True}
     assert calls == [{
         "question": "q",
@@ -194,7 +199,7 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
         "round_number": 1,
         "max_rounds": 3,
         "max_queries": 2,
-        "timeout": 120.0,
+        "timeout": 30.0,
         "output_tokens_limit": 2048,
     }]
 
@@ -210,16 +215,19 @@ def test_bare_is_registry_capability(monkeypatch) -> None:
         return {"ok": True, "model": kwargs["model"], "output": "BARE_OK"}
 
     monkeypatch.setattr(app_module, "invoke_bare", fake_invoke_bare)
-    code = "result = await bare(model='opus5', prompt='think'); result['output']"
+    code = (
+        "result = await bare(provider='aiapiflow', model='claude-opus-5', "
+        "prompt='think', timeout=180.0); result['output']"
+    )
     assert asyncio.run(gpt_dive.code_mode(code, cwd="/tmp/ignored")) == {
         "result": "BARE_OK"
     }
     assert calls == [
         {
-            "model": "opus5",
+            "provider": "aiapiflow",
+            "model": "claude-opus-5",
             "prompt": "think",
-            "timeout": 120.0,
-            "output_tokens_limit": 4096,
+            "timeout": 180.0,
             "peer_review": True,
             "workspace_dir": "/tmp/ignored",
         }
@@ -267,7 +275,7 @@ def test_subagent_call_preserves_failure_diagnostics(monkeypatch) -> None:
 
     monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
     result = asyncio.run(
-        gpt_dive.code_mode("await subagent_call(model='luna', task='fail')")
+        gpt_dive.code_mode("await subagent_call(model='luna', task='fail', timeout=30.0)")
     )["result"]
     assert result == {
         "ok": False,
@@ -291,7 +299,7 @@ def test_subagent_call_inherits_code_mode_workspace(
         return {"ok": True, "model": kwargs["model"], "output": "WORKSPACE_OK"}
 
     monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
-    code = "result = await subagent_call(model='terra', task='edit file'); result['output']"
+    code = "result = await subagent_call(model='terra', task='edit file', timeout=30.0); result['output']"
     assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
         "result": "WORKSPACE_OK"
     }
@@ -358,6 +366,27 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
         assert result["job_id"] == started["job_id"]
         assert result["result"] == 3
         assert result["stdout"] == "BG_STDOUT\n"
+    finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_background_exposes_background_flag(tmp_path: Path) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+
+        started = asyncio.run(gpt_dive.code_mode("BACKGROUND", background=True))
+        _wait_code_mode_job(str(started["job_id"]))
+        result = asyncio.run(
+            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+        )
+        assert result["result"] is True
     finally:
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd

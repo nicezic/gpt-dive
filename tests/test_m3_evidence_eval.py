@@ -82,7 +82,7 @@ def test_run_cases_collects_retry_and_query_metrics(monkeypatch) -> None:
             "expect": {"done": False, "missing_min": 1, "queries_min": 1},
         }
     ]
-    report = asyncio.run(eval_module.run_cases(cases))
+    report = asyncio.run(eval_module.run_cases(cases, timeout=30.0))
     assert report["passed"] == 1
     assert report["retry_cases"] == 1
     assert report["rows"][0]["query_count"] == 1
@@ -114,7 +114,7 @@ def test_run_cases_repeat_reports_per_case_stability(monkeypatch) -> None:
             "expect": {"done": True, "missing_empty": True, "known_min": 1},
         }
     ]
-    report = asyncio.run(eval_module.run_cases(cases, repeat=3))
+    report = asyncio.run(eval_module.run_cases(cases, timeout=30.0, repeat=3))
     assert report["repeat"] == 3
     assert report["samples"] == 3
     assert report["passed"] == 2

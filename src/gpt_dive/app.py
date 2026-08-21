@@ -582,7 +582,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         *,
         task: str,
         model: str = DEFAULT_AGY_MODEL,
-        timeout: float = 120.0,
+        timeout: float,
         cwd: str | None = None,
         conversation_id: str | None = None,
     ) -> dict[str, Any]:
@@ -604,7 +604,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         *,
         model: str,
         task: str,
-        timeout: float = 120.0,
+        timeout: float,
         output_tokens_limit: int = 4096,
         cwd: str | None = None,
     ) -> dict[str, Any]:
@@ -626,7 +626,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         provider: str,
         model: str,
         prompt: str,
-        timeout: float = 120.0,
+        timeout: float,
         cwd: str | None = None,
     ) -> dict[str, Any]:
         """Call an independent peer reviewer using a provider and exact model name."""
@@ -646,7 +646,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         round_number: int = 1,
         max_rounds: int = 3,
         max_queries: int = 3,
-        timeout: float = 120.0,
+        timeout: float,
         output_tokens_limit: int = 2048,
     ) -> dict[str, Any]:
         """Use tool-less MiniMax-M3 to assess evidence within a bounded research-round budget."""

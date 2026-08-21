@@ -207,6 +207,7 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     report = asyncio.run(
         replay_module.run_replay(
             [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [hashlib.sha256(b"fact").hexdigest()], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}],
+            timeout=30.0,
             chunk_limit=4,
         )
     )
@@ -264,7 +265,7 @@ def test_validation_error_counts_group_dynamic_messages_by_invariant(monkeypatch
         }
         for i in (1, 2)
     ]
-    report = asyncio.run(replay_module.run_replay(rows))
+    report = asyncio.run(replay_module.run_replay(rows, timeout=30.0))
 
     assert report["validation_error_counts"] == {"known item must cite an evidence label": 2}
     assert report["results"][0]["controller"]["validation_errors"] == [
@@ -327,7 +328,7 @@ def test_run_replay_repeat_reports_serving_window_stats(monkeypatch) -> None:
         "as_of_ts": None,
     }
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
 
     assert report["rows"] == 1
     assert report["repeat"] == 3
@@ -411,7 +412,7 @@ def test_run_replay_preserves_all_captured_chunks_by_default(monkeypatch) -> Non
         "created_at": "2026-08-16T16:10:29.252Z",
         "as_of_ts": None,
     }
-    report = asyncio.run(replay_module.run_replay([row]))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0))
     assert report["results"][0]["chunk_count"] == 6
 
 def test_replay_question_prefers_explicit_as_of_ts() -> None:
@@ -566,7 +567,7 @@ def test_capture_stability_detects_completion_flip_across_repeats(monkeypatch) -
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     row = {"schema_version": 1, "id": 7, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
 
     assert report["capture_stability"] == [{"capture_id": 7, "samples": 3, "successful_samples": 3, "done_true": 1, "done_false": 2, "completion_stable": False, "known_evidence_label_sets": [["[E1]"]], "known_evidence_coverage_stable": True, "critical_evidence_labels": [], "critical_evidence_scored_runs": 0, "critical_evidence_recall_range": None, "critical_evidence_omission_runs": 0, "known_count_range": [1, 1], "missing_count_range": [0, 1], "query_count_range": [0, 1], "decision_shape_stable": False}]
 
@@ -588,7 +589,7 @@ def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) 
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     row = {"schema_version": 1, "id": 20, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
     stability = report["capture_stability"][0]
     assert stability["completion_stable"] is True
     assert stability["known_count_range"] == [0, 2]
@@ -624,7 +625,7 @@ def test_stability_drift_separates_controller_failure_from_completion_flip(monke
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     row = {"schema_version": 1, "id": 20, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
 
     assert report["capture_stability"][0]["completion_stable"] is False
     assert report["stability_drift_counts"]["completion"] == 0
@@ -652,7 +653,7 @@ def test_known_count_drift_can_preserve_evidence_coverage(monkeypatch) -> None:
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a", "b"], "retrieved_chunk_ids": [31, 32], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
     stability = report["capture_stability"][0]
 
     assert stability["known_count_range"] == [1, 2]
@@ -693,7 +694,7 @@ def test_critical_evidence_qrels_measure_omission_without_changing_controller(mo
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a", "b"], "retrieved_chunk_ids": [31, 32], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
-    report = asyncio.run(replay_module.run_replay([row], repeat=3, critical_evidence_qrels=qrels))
+    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3, critical_evidence_qrels=qrels))
     stability = report["capture_stability"][0]
     assert stability["critical_evidence_labels"] == ["[E1]", "[E2]"]
     assert stability["critical_evidence_scored_runs"] == 3
@@ -714,7 +715,7 @@ def test_critical_evidence_reports_zero_scored_runs_when_controller_never_succee
     row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
 
     report = asyncio.run(
-        replay_module.run_replay([row], repeat=3, critical_evidence_qrels={30: frozenset({"[E1]"})})
+        replay_module.run_replay([row], timeout=30.0, repeat=3, critical_evidence_qrels={30: frozenset({"[E1]"})})
     )
     stability = report["capture_stability"][0]
 

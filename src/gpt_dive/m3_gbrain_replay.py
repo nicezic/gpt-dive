@@ -433,6 +433,7 @@ def _known_evidence_labels(controller: dict[str, Any]) -> frozenset[str]:
 async def run_replay(
     rows: list[dict[str, Any]],
     *,
+    timeout: float,
     chunk_limit: int | None = None,
     max_queries: int = 3,
     repeat: int = 1,
@@ -455,6 +456,7 @@ async def run_replay(
                 question=replay_question(row),
                 evidence=build_evidence_packet(chunks),
                 max_queries=max_queries,
+                timeout=timeout,
             )
             results.append(
                 {
@@ -590,6 +592,7 @@ def main() -> None:
         help="Optional maximum captured chunks supplied to M3 per query; default preserves all captured chunks.",
     )
     parser.add_argument("--max-queries", type=int, default=3, help="Maximum M3 follow-up queries per row.")
+    parser.add_argument("--timeout", type=float, required=True, help="Per M3 evidence call timeout in seconds.")
     parser.add_argument("--repeat", type=int, default=1, help="Replay the same capture set N times sequentially.")
     parser.add_argument(
         "--critical-qrels",
@@ -605,6 +608,7 @@ def main() -> None:
     report = asyncio.run(
         run_replay(
             rows,
+            timeout=args.timeout,
             chunk_limit=args.chunk_limit,
             max_queries=args.max_queries,
             repeat=args.repeat,
