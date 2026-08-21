@@ -113,6 +113,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
     assert "expected_hash" in result["write_file"]["signature"]
     assert "expected_hash" in result["edit_file"]["signature"]
     assert "timeout_seconds" in result["run_command"]["signature"]
+    assert "conversation_id" in result["agy_worker"]["signature"]
     assert result["read_file"]["description"].startswith(
         "Read a text file with line numbers."
     )

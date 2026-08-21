@@ -33,7 +33,19 @@ def test_build_command_uses_safe_plan_mode() -> None:
     assert command[command.index("--print-timeout") + 1] == "13s"
     assert "--disable-slash-commands" not in command
     assert "--dangerously-skip-permissions" in command
+    assert "--conversation" not in command
     assert command[command.index("--add-dir") + 1] == "/tmp/workspace"
+
+
+def test_build_command_resumes_exact_conversation() -> None:
+    command = _build_command(
+        task="continue review",
+        model=DEFAULT_MODEL,
+        timeout=30.0,
+        conversation_id="conversation-123",
+    )
+
+    assert command[command.index("--conversation") + 1] == "conversation-123"
 
 
 def test_parse_stream_json_returns_terminal_result() -> None:

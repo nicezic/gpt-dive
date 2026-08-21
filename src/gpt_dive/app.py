@@ -584,17 +584,20 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         model: str = DEFAULT_AGY_MODEL,
         timeout: float = 120.0,
         cwd: str | None = None,
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         """Run a read-only Antigravity worker through the official agy CLI.
 
         Defaults to Gemini 3.7 Flash High. Google authentication and entitlement stay
-        inside agy. The worker runs in read-only plan mode and auto-approves headless tool permission prompts.
+        inside agy. Pass conversation_id to resume that exact AGY conversation. The worker
+        runs in read-only plan mode and auto-approves headless tool permission prompts.
         """
         return await invoke_agy_worker(
             task=task,
             model=model,
             timeout=timeout,
             workspace_dir=cwd if cwd is not None else default_cwd,
+            conversation_id=conversation_id,
         )
 
     async def subagent_call(

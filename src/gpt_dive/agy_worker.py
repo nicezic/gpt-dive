@@ -16,7 +16,12 @@ logger = logging.getLogger("gpt_dive.runtime")
 
 
 def _build_command(
-    *, task: str, model: str, timeout: float, workspace_dir: str | None = None
+    *,
+    task: str,
+    model: str,
+    timeout: float,
+    workspace_dir: str | None = None,
+    conversation_id: str | None = None,
 ) -> list[str]:
     if not task.strip():
         raise ValueError("task must not be empty")
@@ -40,6 +45,8 @@ def _build_command(
         "--print-timeout",
         print_timeout,
     ]
+    if conversation_id is not None:
+        command.extend(["--conversation", conversation_id])
     if workspace_dir is not None:
         command.extend(["--add-dir", workspace_dir])
     return command
@@ -125,6 +132,7 @@ async def invoke_agy_worker(
     model: str = DEFAULT_MODEL,
     timeout: float = 120.0,
     workspace_dir: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one read-only Antigravity worker through the official agy CLI."""
     if not AGY.is_file():
@@ -143,7 +151,11 @@ async def invoke_agy_worker(
         run_cwd = str(workspace)
 
     command = _build_command(
-        task=task, model=model, timeout=timeout, workspace_dir=run_cwd
+        task=task,
+        model=model,
+        timeout=timeout,
+        workspace_dir=run_cwd,
+        conversation_id=conversation_id,
     )
 
     try:
