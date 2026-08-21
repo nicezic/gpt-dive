@@ -364,19 +364,30 @@ A fresh ChatGPT session therefore rediscovers whatever Task records still exist.
 
 ## 9. TrackedTasks projection
 
-Minimal shape:
+`task_list()` and automatic TrackedTasks use the same standard row renderer. The Task layer first loads complete Task records for control and diagnostics; rendering is a separate final step that exposes only the compact model-facing rows.
 
-```json
-{
-  "id": "<task_id>",
-  "label": "Review Task ADR",
-  "state": "working"
-}
+```text
+TrackedTasks
+├─ Review ADR · 🧵 working · 2:30
+├─ AGY research · ✅ completed · 5:59
+└─ Regression · 🧵 working · 11:01
 ```
 
-No progress probe is required in v1.
+State markers are deliberately small and fixed:
 
-Ordinary output should remain compact. A bounded item count is an implementation policy, not a domain rule. No v1 ADR requirement exists for terminal-first sorting, oldest-first fairness, status text normalization, or progress percentages.
+```text
+🧵 working
+✅ completed
+❌ failed
+⛔ cancelled
+⚠️ lost
+```
+
+The displayed time is derived, not persisted: working Tasks use `now - created_at`; terminal/lost Tasks use `updated_at - created_at`. `updated_at` changes when the Task state changes, not on a no-op refresh, so terminal elapsed time stays stable. Render `M:SS` below one hour and `H:MM:SS` at one hour or above. No progress probe or extra duration field is required.
+
+Internal list results retain the complete v1 Task record (`task_id`, `execution_id`, `label`, `state`, `created_at`, `updated_at`). Compact rendering must not throw away that internal information.
+
+Explicit `task_list()` returns all outstanding Tasks through the standard renderer. Automatic TrackedTasks appended to unrelated tool results may use a bounded item count to protect foreground output size. Selection limits are rendering policy, not Task-domain state. No v1 ADR requirement exists for terminal-first sorting, oldest-first fairness, status text normalization, or progress percentages.
 
 ### 9.1 Preserve the primary tool result
 
@@ -401,6 +412,7 @@ Normal Task controls live behind Code Mode capabilities rather than adding sever
 Required operations are conceptually:
 
 ```text
+task_list()
 task_get(task_id)
 task_collect(task_id)
 task_cancel(task_id)
@@ -409,11 +421,15 @@ task_ack(task_id)
 
 Exact capability names/signatures are implementation details verified against live CAPABILITIES when implemented.
 
-### 10.1 `task_get`
+### 10.1 `task_list`
+
+Refresh locally and load the complete outstanding Task records. The internal result keeps every v1 Task field; the capability then renders all outstanding Tasks with the standard TrackedTasks row format shown above.
+
+### 10.2 `task_get`
 
 Refresh locally, then return Task-level state and optional diagnostic link to `execution_id` when explicitly requested.
 
-### 10.2 `task_collect`
+### 10.3 `task_collect`
 
 ```text
 working   → not ready
@@ -425,13 +441,13 @@ lost      → lost / result unavailable
 
 Collection is non-destructive and does not acknowledge the Task.
 
-### 10.3 `task_cancel`
+### 10.4 `task_cancel`
 
 If still running, forward cancellation to the backing Execution. Repeated cancellation should be harmless.
 
 If already terminal or lost, return the current state without inventing another lifecycle.
 
-### 10.4 `task_ack`
+### 10.5 `task_ack`
 
 Acknowledgement means:
 
@@ -600,6 +616,7 @@ v1 implementation must preserve these rules:
 13. No start-key/idempotency claim subsystem exists in v1.
 14. No status-probe/progress subsystem exists in v1.
 15. No JobManager/job_id backward-compatibility layer is created.
+16. `task_list()` and automatic TrackedTasks share one standard row renderer; explicit `task_list()` renders all outstanding Tasks while automatic projection may be bounded.
 
 ---
 
@@ -610,7 +627,7 @@ v1 implementation must preserve these rules:
 2. Add minimal SQLite TaskStore.
 3. Extend existing code_mode(background=True) so a label creates and returns a Task.
 4. Persist one normalized Execution terminal outcome usable after reconnect.
-5. Add task_get / task_collect / task_cancel / task_ack Code Mode capabilities.
+5. Add task_list / task_get / task_collect / task_cancel / task_ack Code Mode capabilities.
 6. Append compact TrackedTasks after ordinary tool calls using the existing result-content middleware seam.
 7. Verify fresh-session rediscovery and lost behavior.
 8. Convert /peer-review to the Task-backed background Code Mode path using a cheap Haku-class canary.
@@ -637,6 +654,11 @@ Native MCP Tasks, progress decoration, launch idempotency, and recovery remain o
 
 ```text
 [ ] background start returns task_id/label/state
+[ ] task_list internally retains complete v1 Task records
+[ ] explicit task_list renders every outstanding Task
+[ ] task_list and automatic TrackedTasks use the same compact row renderer
+[ ] standard rows render label · state emoji/state · derived elapsed time
+[ ] no-op refresh does not change updated_at or terminal elapsed time
 [ ] a fresh ChatGPT session can rediscover retained outstanding Tasks
 [ ] completed/failed/cancelled states refresh from local Execution state
 [ ] missing Execution/result becomes lost
