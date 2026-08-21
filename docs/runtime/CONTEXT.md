@@ -13,5 +13,9 @@ The durable runtime instance that performs one Task in the v1 model.
 _Avoid_: Job when referring to the canonical runtime concept; PID or process when referring to durable execution identity.
 
 **TrackedTasks**:
-The compact bounded projection of unhandled Tasks surfaced to Web SOL during ordinary tool activity so detached work is not forgotten.
+The compact projection of outstanding Tasks surfaced to Web SOL during ordinary tool activity so detached work is not forgotten.
 _Avoid_: Job list, Execution list, task registry when referring to the Web-facing projection.
+
+**Lost**:
+A Task whose backing Execution or retained result can no longer be found. Lost work is not reconstructed or recovered; it remains lost until acknowledged.
+_Avoid_: stale when the runtime has definitively lost the backing state.
