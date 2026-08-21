@@ -7,6 +7,12 @@ from typing import Any
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
+_MODEL_OUTPUT_TOKENS_LIMITS: dict[str, int] = {
+    "claude-opus-5": 128_000,
+    "claude-sonnet-5": 128_000,
+    "claude-haiku-4-5-20251001": 64_000,
+}
+
 
 class ModelAlias(StrEnum):
     """Single source of truth for model aliases and provider/model routing."""
@@ -18,6 +24,7 @@ class ModelAlias(StrEnum):
     base_url: str | None
     bare: bool
     subagent: bool
+    output_tokens_limit: int | None
 
     def __new__(
         cls,
@@ -39,6 +46,7 @@ class ModelAlias(StrEnum):
         obj.base_url = base_url
         obj.bare = bare
         obj.subagent = subagent
+        obj.output_tokens_limit = _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)
         return obj
 
     OPUS5 = (
@@ -71,17 +79,18 @@ class ModelAlias(StrEnum):
     TERRA = ("terra", "openai-codex", "gpt-5.6-terra", "codex-subscription")
     LUNA = ("luna", "openai-codex", "gpt-5.6-luna", "codex-subscription")
 
-    def public_spec(self) -> dict[str, str | bool]:
+    def public_spec(self) -> dict[str, str | bool | int | None]:
         return {
             "provider": self.provider,
             "model": self.model_name,
             "transport": self.transport,
             "bare": self.bare,
             "subagent": self.subagent,
+            "output_tokens_limit": self.output_tokens_limit,
         }
 
 
-def model_catalog() -> dict[str, dict[str, str | bool]]:
+def model_catalog() -> dict[str, dict[str, str | bool | int | None]]:
     """Return the sanitized public model catalog derived from ModelAlias."""
     return {alias.value: alias.public_spec() for alias in ModelAlias}
 
@@ -120,3 +129,28 @@ def build_model(value: str | ModelAlias) -> Any:
         return OpenAICodexResponsesModel(alias.model_name, provider=OpenAICodexProvider())
 
     raise RuntimeError(f"unsupported transport {alias.transport!r} for {alias.value!r}")
+
+
+def build_provider_model(provider: str, model_name: str) -> Any:
+    """Build an exact model name on a registered Anthropic-compatible provider route."""
+    route = next(
+        (
+            alias
+            for alias in ModelAlias
+            if alias.provider == provider and alias.transport == "anthropic-compatible"
+        ),
+        None,
+    )
+    if route is None or not route.credential_env or not route.base_url:
+        raise ValueError(f"unknown peer provider {provider!r}")
+    return AnthropicModel(
+        model_name,
+        provider=AnthropicProvider(
+            api_key=os.environ[route.credential_env],
+            base_url=route.base_url,
+        ),
+    )
+
+
+def model_output_tokens_limit(model_name: str) -> int | None:
+    return _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)

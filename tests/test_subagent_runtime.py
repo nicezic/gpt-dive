@@ -11,6 +11,8 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
     assert set(MODEL_SPECS) == {"opus5", "kunavo-opus5", "m3", "sol", "terra", "luna"}
     catalog = model_catalog()
     assert catalog["opus5"]["provider"] == "aiapiflow"
+    assert catalog["opus5"]["output_tokens_limit"] == 128_000
+    assert catalog["kunavo-opus5"]["output_tokens_limit"] == 128_000
     assert catalog["m3"]["model"] == "MiniMax-M3"
     assert catalog["sol"]["model"] == "gpt-5.6-sol"
     assert catalog["terra"]["model"] == "gpt-5.6-terra"

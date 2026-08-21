@@ -12,7 +12,13 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai_harness import CodeMode, FileSystem
 
 from .filesystem_policy import harness_denied_patterns, is_secret_path
-from .model_registry import ModelAlias, build_model, resolve_model
+from .model_registry import (
+    ModelAlias,
+    build_model,
+    build_provider_model,
+    model_output_tokens_limit,
+    resolve_model,
+)
 from .runtime_env import build_runtime_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,8 +29,9 @@ _PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
 
 _PEER_REVIEW_INSTRUCTIONS = (
     "Act as an independent peer reviewer. Use the supplied packet as the primary evidence path. "
-    "Read-only tools are allowed when a missing fact materially blocks judgment or is likely to change the answer; "
-    "do not guess merely to save tokens. Still consider token economy because premium-model reasoning, tool outputs, "
+    "Do not reread evidence already embedded in the packet. Read/write file tools are available inside the scoped workspace only when extra evidence is materially necessary. "
+    "Return the complete review as your final response; the host will persist it to peer_answer.md. "
+    "Do not guess merely to save tokens. Still consider token economy because premium-model reasoning, tool outputs, "
     "and new context cost money even when a stable prompt prefix is cached. Avoid broad exploratory tool use by default. "
     "When broader research can wait, state focused questions or the exact evidence needed so the host can return it in "
     "the next packet, potentially using a cheaper subagent."
@@ -32,7 +39,7 @@ _PEER_REVIEW_INSTRUCTIONS = (
 
 
 def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
-    """Build a compact read-only inspection surface for peer review."""
+    """Build a compact read/write inspection surface for peer review."""
     workspace = Path(workspace_dir).expanduser().resolve()
     home = Path.home().resolve()
     if not workspace.is_dir():
@@ -43,7 +50,7 @@ def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
     return [
         FileSystem(
             root_dir=workspace,
-            read_only=True,
+            read_only=False,
             denied_patterns=denied_patterns,
         ),
         CodeMode(),
@@ -72,52 +79,48 @@ def _validate(
     model: str | ModelAlias,
     prompt: str,
     timeout: float,
-    output_tokens_limit: int,
+    output_tokens_limit: int | None,
 ) -> ModelAlias:
     alias = resolve_model(model, lane="bare")
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
-    if output_tokens_limit <= 0:
+    if output_tokens_limit is not None and output_tokens_limit <= 0:
         raise ValueError("output_tokens_limit must be greater than 0")
     return alias
 
 
 async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    alias = _validate(
-        str(payload["model"]),
-        str(payload["prompt"]),
-        1.0,
-        int(payload.get("output_tokens_limit", 4096)),
-    )
-    prompt = str(payload["prompt"])
-    output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
-
     peer_review = bool(payload.get("peer_review", False))
+    prompt = str(payload["prompt"])
     workspace_dir = payload.get("workspace_dir")
     anthropic_thinking = payload.get("anthropic_thinking")
-    if anthropic_thinking is not None:
-        if anthropic_thinking not in {"adaptive", "disabled"}:
-            raise ValueError("anthropic_thinking must be 'adaptive', 'disabled', or None")
-        if alias.transport != "anthropic-compatible":
-            raise ValueError("anthropic_thinking requires an Anthropic-compatible model")
+
     if peer_review:
+        provider = str(payload["provider"])
+        model_name = str(payload["model"])
+        if not prompt.strip():
+            raise ValueError("prompt must not be empty")
+        output_tokens_limit = model_output_tokens_limit(model_name)
+        if output_tokens_limit is None:
+            raise ValueError(f"model {model_name!r} has no output_tokens_limit metadata")
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
-        peer_model_settings = (
-            AnthropicModelSettings(max_tokens=output_tokens_limit)
-            if alias is ModelAlias.KUNAVO_OPUS5
-            else None
-        )
         agent = Agent(
-            build_model(alias),
+            build_provider_model(provider, model_name),
             instructions=_PEER_REVIEW_INSTRUCTIONS,
             capabilities=_build_peer_review_capabilities(str(workspace_dir)),
-            model_settings=peer_model_settings,
+            model_settings=AnthropicModelSettings(max_tokens=output_tokens_limit),
         )
     else:
-        # Preserve the true tool-less primitive for m3_evidence and direct low-level use.
+        output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
+        alias = _validate(str(payload["model"]), prompt, 1.0, output_tokens_limit)
+        if anthropic_thinking is not None:
+            if anthropic_thinking not in {"adaptive", "disabled"}:
+                raise ValueError("anthropic_thinking must be 'adaptive', 'disabled', or None")
+            if alias.transport != "anthropic-compatible":
+                raise ValueError("anthropic_thinking requires an Anthropic-compatible model")
         model_settings = (
             AnthropicModelSettings(anthropic_thinking={"type": anthropic_thinking})
             if anthropic_thinking is not None
@@ -128,14 +131,14 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             if model_settings
             else Agent(build_model(alias))
         )
+
     run_prompt: str | list[Any] = prompt
-    if peer_review and alias is ModelAlias.KUNAVO_OPUS5 and _PEER_CACHE_BREAK in prompt:
+    if peer_review and provider == "kunavo" and model_name == "claude-opus-5" and _PEER_CACHE_BREAK in prompt:
         stable_base, round_delta = prompt.split(_PEER_CACHE_BREAK, 1)
         if not stable_base.strip() or not round_delta.strip():
             raise ValueError("Kunavo peer cache marker requires non-empty base and round delta")
         run_prompt = [stable_base, CachePoint(ttl="5m"), round_delta]
 
-    # output_tokens_limit is a Pydantic usage budget, NOT the provider max_tokens cap.
     result = await agent.run(
         run_prompt,
         usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),
@@ -147,9 +150,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     truncated = finish_reason == "length"
     return {
         "ok": not truncated,
-        "model": alias.value,
-        "provider": alias.provider,
-        "model_name": alias.model_name,
+        "model": model_name if peer_review else alias.value,
+        "provider": provider if peer_review else alias.provider,
+        "model_name": model_name if peer_review else alias.model_name,
         "output": str(result.output),
         "mode": "peer-review" if peer_review else "bare",
         "finish_reason": finish_reason,
@@ -166,16 +169,36 @@ async def invoke_bare(
     timeout: float = 120.0,
     output_tokens_limit: int = 4096,
     peer_review: bool = False,
+    provider: str | None = None,
     workspace_dir: str | None = None,
     anthropic_thinking: str | None = None,
 ) -> dict[str, Any]:
-    """Run a model call through the registry, optionally with peer-review inspection tools."""
-    alias = _validate(model, prompt, timeout, output_tokens_limit)
+    """Run a model call, using provider + exact model name for peer review."""
+    if not prompt.strip():
+        raise ValueError("prompt must not be empty")
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than 0")
+
+    if peer_review:
+        if not provider:
+            raise ValueError("provider is required for peer-review mode")
+        model_label = str(model)
+        provider_label = provider
+        payload_model = model_label
+        requested_output_tokens_limit = None
+    else:
+        alias = _validate(model, prompt, timeout, output_tokens_limit)
+        model_label = alias.value
+        provider_label = alias.provider
+        payload_model = alias.value
+        requested_output_tokens_limit = output_tokens_limit
+
     payload = json.dumps(
         {
-            "model": alias.value,
+            "provider": provider if peer_review else None,
+            "model": payload_model,
             "prompt": prompt,
-            "output_tokens_limit": output_tokens_limit,
+            "output_tokens_limit": requested_output_tokens_limit,
             "peer_review": peer_review,
             "workspace_dir": workspace_dir,
             "anthropic_thinking": anthropic_thinking,
@@ -222,8 +245,8 @@ async def invoke_bare(
         await proc.wait()
         return {
             "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
+            "model": model_label,
+            "provider": provider_label,
             "error": f"bare call timed out after {timeout} seconds",
         }
 
@@ -232,8 +255,8 @@ async def invoke_bare(
     if proc.returncode != 0:
         return {
             "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
+            "model": model_label,
+            "provider": provider_label,
             "error": f"bare worker exited with code {proc.returncode}",
             "stderr": stderr_text[-2000:],
         }
@@ -243,8 +266,8 @@ async def invoke_bare(
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
+            "model": model_label,
+            "provider": provider_label,
             "error": f"invalid bare worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_text[-2000:],

@@ -623,23 +623,18 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
 
     async def bare(
         *,
+        provider: str,
         model: str,
         prompt: str,
         timeout: float = 120.0,
-        output_tokens_limit: int = 4096,
         cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Call an independent peer reviewer with on-demand read-only Code Mode inspection.
-
-        The reviewer receives the full prompt first. It should use run_code only when the
-        supplied review packet leaves a material evidence gap. File access is read-only and
-        scoped to cwd (or the current Code Mode workspace when cwd is omitted).
-        """
+        """Call an independent peer reviewer using a provider and exact model name."""
         return await invoke_bare(
+            provider=provider,
             model=model,
             prompt=prompt,
             timeout=timeout,
-            output_tokens_limit=output_tokens_limit,
             peer_review=True,
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
@@ -901,7 +896,7 @@ async def code_mode(
                 "strings here. Use the payload parameter and read it as PAYLOAD for multiline text, code, shell "
                 "snippets, JSON, Markdown, or payloads containing quotes/backticks/$(). Process large "
                 "results inside the sandbox and make the final expression a compact result. CWD is a "
-                "path string, not process chdir; prefer registered FileSystem capabilities for workspace file access instead of assuming CPython path helpers exist inside Monty. Capability "
+                "path string, not process chdir. BACKGROUND is a runtime-injected bool that reflects the actual outer code_mode execution mode; use it for fail-closed checks before costly capabilities. Prefer registered FileSystem capabilities for workspace file access instead of assuming CPython path helpers exist inside Monty. Capability "
                 "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set payload to "
                 'a quoted/multiline payload, then code=\'r = await local_exec(command="cat", '
                 'stdin=PAYLOAD); r["stdout"]\'.'
@@ -1001,6 +996,7 @@ async def code_mode(
         "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
         "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
         "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
+        "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
         "- Use background=True only for detached Code Mode jobs."
     ),
 )
@@ -1038,7 +1034,7 @@ async def _mcp_code_mode(
     ] = None,
     background: Annotated[
         bool,
-        Field(description="Detach this Code Mode program as a durable background job."),
+        Field(description="Detach this Code Mode program as a durable background job; the actual mode is exposed inside Monty as BACKGROUND."),
     ] = False,
     action: Annotated[
         str | None,

@@ -1,243 +1,189 @@
 # GPT Dive Peer Review
 
 > Status: **Draft / experimental**
-> Updated: 2026-08-17
-> Scope: GPT Dive Pydantic integration
+> Updated: 2026-08-21
+> Scope: GPT Dive implementation contract. Workflow policy SSOT is `~/wiki/skills/web/peer-review.md`.
 
 ## Purpose
 
-GPT Dive's Code Mode-facing `bare(...)` capability is currently an **independent peer-review lane**. It gives a selected Pydantic model a compact reviewer instruction plus read-only Harness `FileSystem + CodeMode`, so Web SOL can send a focused review packet and let the peer inspect referenced evidence when needed.
-
-The name is transitional. The underlying `invoke_bare(..., peer_review=False)` primitive remains genuinely tool-less because `m3_evidence()` depends on that behavior. Only the outer Code Mode `bare(...)` route enables peer-review mode.
+GPT Dive exposes outer Code Mode `bare(...)` as the current peer-review lane:
 
 ```text
 Web SOL
-  -> code_mode
+  -> code_mode(background=True)
        -> bare(model, prompt, cwd)
             -> invoke_bare(peer_review=True)
                  -> Pydantic Agent
-                      -> read-only FileSystem
-                      -> CodeMode(run_code)
                  -> independent review
 ```
 
-## Current contract
+The `bare` name is transitional. Internal `invoke_bare(..., peer_review=False)` remains a tool-less primitive because `m3_evidence()` uses it.
 
-Implementation:
-- `src/gpt_dive/app.py` exposes `bare(model, prompt, timeout, output_tokens_limit, cwd)` as the peer reviewer.
-- `src/gpt_dive/bare.py` owns the worker, reviewer instruction, capabilities, subprocess isolation, timeout, and usage summary.
-- `src/gpt_dive/model_registry.py` owns provider/model routing. Do not hard-code provider economics in this document.
-
-The current reviewer instruction is intentionally small. Its job is not to teach a frontier model how to review; it explains the packet/evidence economics and the escape hatch when context is still insufficient:
-
-For the Kunavo cached multi-round path, the current policy is deliberately asymmetric: a decisive read-only tool call is allowed when it prevents reasoning from a false premise, while broad exploratory research should normally be requested as focused next-packet evidence. Web SOL may gather that evidence itself or delegate suitable factual research to the cheaper `agy_worker` lane. Prompt-cache reuse lowers stable-prefix replay cost; it does not make premium reasoning/tool output free.
+## Implementation ownership
 
 ```text
-Act as an independent peer reviewer.
-The packet carries causal context and may include a first-run Code Mode evidence loader.
-Treat that supplied packet as the primary evidence path.
-Keep extra tool turns rare because third-party gateways may replay expensive uncached input.
-If evidence remains insufficient, identify what is missing and suggest focused questions
-or a better next packet instead of exploratory browsing unless the gap blocks judgment.
+src/gpt_dive/app.py             Code Mode-facing bare(...) capability
+src/gpt_dive/bare.py            worker, reviewer instruction, capabilities, subprocess, usage
+src/gpt_dive/model_registry.py  provider/model routing + model output-token metadata
 ```
 
-This follows the current frontier-model lesson: prefer a strong model plus good evidence/tools over a large behavioral harness. It also reflects the current provider reality rather than pretending every tool call is economically free.
+Do not duplicate workflow policy here. Packet composition, approval gates, resend rules, and result consumption belong to the Wiki skill.
 
-## Safety boundary
+## Reviewer runtime
 
-Peer review is read-only. Its Harness `FileSystem`:
-- is rooted at the supplied `cwd`;
-- rejects a workspace that is itself a credential/secret path;
-- applies GPT Dive's shared credential/secret deny patterns;
-- cannot write through the reviewer capability.
-
-Choose the **narrowest common workspace root** that contains every reference the packet needs. A review spanning `~/wiki` and `~/gpt-dive` may use the user's home as the common root; ordinary repo review should use the repo root.
-
-## Review Packet
-
-The **workflow policy SSOT** for packet composition is:
-
-- `~/wiki/skills/web/peer-review.md` — runtime review procedure;
-- `~/wiki/skills/web/peer-review-adr.md` — rationale, external research, and change triggers.
-
-This GPT Dive document owns the implementation/evidence-loader boundary and current provider economics. Do not duplicate or override the Wiki's evolving DRAFT review policy here.
-
-The current workflow distinguishes:
+Peer-review mode gives the model scoped Harness capabilities:
 
 ```text
-Ground Truth / Problem Why
-        +
-Review Target
-        -> independent judgment
-
-Prior Opinion / Verdict
-        -> normally withheld until a later informed challenge
+FileSystem(read/write, root=cwd, secret denies)
+CodeMode
 ```
 
-This still preserves the original Council lesson: incomplete causal context can make a strong reviewer reason correctly about the wrong problem. The change is that **Problem Why** and original evidence are front-loaded while avoidable prior-opinion framing is not treated as ground truth.
+They are an **escape hatch**, not the normal packet transport. The normal path does not require the peer to read or write workflow files through model tool turns.
 
-### Evidence loader
+The reviewer instruction stays deliberately small: use the supplied packet as primary evidence, return the complete review in the final response, and use tools only when a material evidence gap genuinely blocks judgment.
 
-For GPT Dive peer review, comments carry the compact task/causal context and Code Mode carries known evidence. The current `opus5` route is a third-party gateway where useful prompt-cache reuse has not been reliable, so known relevant references are normally loaded together in one deliberate `run_code` turn rather than discovered piecemeal.
+## Two-file transport
 
-> **Cheap reads, expensive turns. Optimize for decision completeness per model turn, not minimum input size.**
+Canonical workflow state is exactly:
 
-Representative loader shape:
+```text
+peer_packet.md  -> complete accumulated input
+peer_answer.md  <- latest answer only
+```
+
+Normal path:
+
+```text
+host local read peer_packet.md
+        ↓
+bare(prompt=<complete packet>)
+        ↓
+peer final review text
+        ↓
+host local write peer_answer.md
+```
+
+Local packet reads and answer writes add **zero provider round-trips**. Use raw local reads (`cat` via `local_exec`) for packet transport; GPT Dive `read_file()` adds inspection metadata such as line numbers and must not be fed back as packet text.
+
+For another round:
+
+```text
+peer_answer.md -> append to peer_packet.md
+peer_answer.md -> delete
+new evidence/question -> append to peer_packet.md
+resend the complete peer_packet.md
+```
+
+There is no round-file tree, recovery state, reconstructed conversation, or additional history store.
+
+## Why host-local output write
+
+A 2026-08-21 live low-cost peer-model test first let the reviewer write the output file itself. The model returned `completed`, but `peer_answer.md` did not exist afterward:
+
+```text
+model             claude-haiku-4-5
+provider requests 3
+input tokens      9,197
+output tokens       732
+model final        completed
+answer file        missing
+```
+
+The normal path was therefore simplified: the reviewer returns review text; outer Code Mode persists it locally.
+
+With that change, the same live route used one provider request:
+
+```text
+Round 1
+provider requests 1
+input tokens      2,584
+output tokens       177
+result             correct rejection of price + qty vs required price * qty
+
+Round 2 after answer -> packet rollover
+provider requests 1
+input tokens      2,845
+output tokens       191
+result             correctly updated judgment after requirement changed to price + qty
+```
+
+This is the current acceptance evidence for the two-file transport.
+
+## Output-token limit
+
+Peer review does not accept a caller-supplied `output_tokens_limit` through outer `bare(...)`.
+
+```text
+selected alias
+   ↓
+model_registry model_name metadata
+   ↓
+output_tokens_limit
+   ├─ provider max_tokens
+   └─ Pydantic UsageLimits.output_tokens_limit
+```
+
+Current metadata includes:
+
+```text
+claude-opus-5      128000
+claude-sonnet-5    128000
+claude-haiku-4-5-20251001    64000
+```
+
+If peer-review mode selects a model without output-limit metadata, fail instead of silently falling back to an arbitrary value.
+
+## Current peer aliases
+
+## Reviewer selection boundary
+
+The user chooses the provider and model. SOL resolves that choice to the provider's exact current model ID before approval. Peer-review runtime receives `provider + exact model ID` directly; it does not select another model, add an alias for the choice, or repeat provider-catalog lookup inside inference.
+
+## Cache
+
+Cache behavior is provider economics, not workflow architecture.
+
+- Kunavo has shown useful repeated-prefix cache reuse in local testing.
+- AIAPIFLOW previously showed unreliable useful-prefix reuse.
+- A cache hit may reduce cost, but a miss does not trigger recovery/fallback logic.
+
+The two-file workflow stays the same either way. Current provider economics belong in the user/provider docs and provider-lab evidence.
+
+## Canonical outer Code Mode shape
+
+The Wiki skill owns the full commented sample. Implementation shape is:
 
 ```python
-# PEER REVIEW PACKET — exact review framing is owned by the Wiki skill.
-# Problem Why / current reality / goal / constraints / uncertainty
-# Review Target: the artifact or hypothesis being judged, when ordinary review is intended.
-# Evidence plan: these sources are already known to be relevant.
-docs = await asyncio.gather(
-    read_file(path="/path/to/background.md"),
-    read_file(path="/path/to/review-target.md"),
-    read_file(path="/path/to/material-evidence.md"),
-)
+packet_read = await local_exec(command="cat peer_packet.md", cwd=CWD)
+if packet_read["returncode"] != 0:
+    raise RuntimeError(packet_read["stderr"] or "failed to read peer_packet.md")
+packet = packet_read["stdout"]
+if not packet.strip():
+    raise RuntimeError("peer_packet.md is empty")
 
-# REQUIRED — without this final expression run_code returns {}.
-docs
-```
-
-For a fresh-eye **Independent Solver**, the Wiki workflow may deliberately omit the current solution/Review Target until a comparison phase. That is a review-policy choice, not a different GPT Dive capability.
-
-> **IMPORTANT:** Keep `docs` as the final expression. If it is removed, `run_code` returns `{}` and the peer does not receive the loaded evidence.
-
-The packet is reviewer-facing intent. The model may issue an equivalent `run_code` program rather than copying it literally. Independent reads should normally be grouped in one `asyncio.gather(...)` inside a single `run_code` call. This is not only parallel I/O; it keeps known evidence acquisition inside one provider round-trip.
-
-If evidence remains insufficient after that load, the reviewer should usually identify the missing fact or propose a better next packet instead of browsing out of curiosity. Additional investigation is reserved for a material blocker because each extra tool/model turn may replay expensive uncached input on the current provider route.
-
-## Review lenses
-
-Use a lens only when it sharpens the real question:
-- **Independent Peer** — default; judge the proposal without obligation to agree.
-- **Adversarial Reviewer** — seek concrete weaknesses and counterexamples.
-- **Assumption Breaker** — find hidden premises that must be true.
-- **Failure-mode Hunter** — focus on crash, timeout, race, stale state, partial failure, recovery.
-- **Alternative Designer** — look for a materially simpler/different route to the same goal.
-- **Independent Solver** — fresh solve with prior AI reasoning minimized when anchoring bias matters.
-- **Algorithm Critic** — correctness, robustness, objective mismatch, regime dependency.
-
-A lens is not an instruction to manufacture disagreement.
-
-## Experimental evidence
-
-### Read-only CodeMode smoke
-
-A 2026-08-17 Sonnet 5 experiment supplied eight Pydantic/Orchestra/provider documents and asked for an architecture review. The model used:
-
-```text
-provider requests  2
-outer run_code      1
-nested read_file    8
-```
-
-It correctly grouped all independent reads with `asyncio.gather(...)`, demonstrating that one CodeMode round-trip can gather a multi-document evidence packet efficiently.
-
-### Grounding failure
-
-That same experiment also produced unsupported project claims after reading the documents. This is the important negative result: **successful retrieval does not prove evidence-grounded judgment**.
-
-The draft skill therefore asks the peer to distinguish:
-- supported project facts;
-- proposals/hypotheses;
-- speculative failure modes.
-
-Do not compensate with a giant system prompt. Keep the rule small and improve it only when real peer-review runs show a repeatable failure.
-
-### Opus 5 full-packet acceptance
-
-The first 24-document Opus 5 self-review exposed a packet bug: the `asyncio.gather(...)` result was assigned but not returned as the final `run_code` expression. Harness therefore returned `{}` even though the files had been read, and the model filled the missing evidence with unsupported implementation claims. The packet template now makes the final `docs` expression mandatory.
-
-After that fix, the same review shape loaded 24 selected Wiki/GPT Dive documents (about 150 KB on disk) in one `run_code` evidence round. The successful call used:
-
-```text
-provider requests  2
-input tokens      55,013
-output tokens      4,034
-additional retrieval   0
-```
-
-The second review correctly referenced the current `bare.py` implementation, provider/cache evidence, Council rationale, and workflow boundaries without needing another evidence turn. This is the current strongest acceptance evidence for the draft rule: **front-load enough relevant evidence, return it explicitly from `run_code`, then spend the expensive model turn on judgment rather than piecemeal discovery.**
-
-### Provider/cache note
-
-The current default `opus5` alias routes through AIAPIFLOW, a third-party Anthropic-compatible gateway. A repeated fixed-prefix cache probe on 2026-08-17 produced the same pattern on all three runs:
-
-```text
-input_tokens       3031
-cache_read_tokens    86
-cache_write_tokens 2928
-```
-
-The useful 2,928-token prefix was cache-created again on every request instead of becoming a cache read, and `/v1/usage` balance/`actual_cost` deltas matched the charged requests. This is the concrete reason the draft reviewer front-loads known evidence and treats extra tool turns as expensive.
-
-A control test against Kunavo produced `WRITE -> READ -> READ` for the same style of repeated prefix, confirming that the probe can observe working cache reuse and that the behavior is provider-specific rather than a Pydantic/Anthropic telemetry assumption.
-
-Treat cache support and effective price as runtime/provider evidence, not as a permanent peer-review semantic contract. If the `opus5` route changes, re-test before preserving or relaxing the one-round evidence policy. Current provider facts belong in:
-- `~/wiki/user/models-and-providers.md`
-- `~/wiki/user/aiapiflow-provider.md`
-- provider-lab profiles/results
-
-### Kunavo repeated-review path
-
-For a multi-round premium review, GPT Dive also exposes `kunavo-opus5` as a **bare-only** alias. It routes `claude-opus-5` through the verified Kunavo Anthropic-compatible endpoint and is intentionally disabled for the ordinary subagent lane.
-
-The repeated-review cache shape stays inside the existing `bare()` capability rather than adding another MCP tool. Web SOL sends:
-
-```text
-<stable base packet>
-<!-- GPT_DIVE_PEER_CACHE_BREAK -->
-<round-specific delta>
-```
-
-For `kunavo-opus5` peer-review mode, `bare.py` splits that marker and calls Pydantic AI with:
-
-```python
-[stable_base, CachePoint(ttl="5m"), round_delta]
-```
-
-This matters because `bare()` is stateless across calls: there is no durable provider conversation to reuse. Cache reuse therefore depends on preserving the **same stable prefix** across review rounds. The review target's stable `PEER-REVIEW.md` content belongs before the cache point; new answers, corrections, or challenges belong after it as the round delta.
-
-Local provider testing previously observed Kunavo cache reuse as `WRITE -> READ -> READ` for a repeated prefix. The 5-minute TTL is the currently verified conservative choice. Do not infer 1-hour support or build a fallback path until live evidence justifies it. If a round misses the cache because the TTL expired, ordinary input billing is acceptable; the workflow does not add recovery complexity merely to force a hit.
-
-## Invocation
-
-Inside GPT Dive Code Mode:
-
-```python
 result = await bare(
-    model="opus5",
-    prompt=PAYLOAD,
+    model=review_model,
+    prompt=packet,
     cwd=CWD,
-    output_tokens_limit=4096,
 )
+
+if result.get("ok"):
+    await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-Use `PAYLOAD` for the multiline review packet. Set `CWD`/`cwd` to the narrowest common root containing the referenced evidence.
+The actual paid route runs only in outer `code_mode(background=True)` after the skill's provider/model preflight and explicit user approval gate.
 
-`output_tokens_limit` is a Pydantic usage budget, not the provider's `max_tokens` request setting.
+## Failure semantics
 
-## After the review
+- No provider/model fallback.
+- No synchronous fallback for `/peer-review`.
+- Preserve full failure diagnostics from `bare(...)`.
+- `finish_reason == "length"` is reported as truncated / unsuccessful.
+- Secret/credential paths remain denied inside the peer FileSystem.
+- Missing evidence should normally become a focused next-packet request rather than an automatic exploratory premium loop.
 
-The peer answer is advisory, not authority.
+## References
 
-Web SOL should:
-1. verify material factual claims against source/runtime evidence;
-2. separate confirmed flaws from speculative concerns;
-3. accept, reject, or modify the current position with a reason;
-4. preserve consequential disagreement or evidence that changed the decision in the relevant plan/ADR/context artifact;
-5. when the peer reports missing context, turn that into a focused **next packet**: answer the useful questions, add the missing evidence, retain what mattered, and remove references the peer found redundant/noisy;
-6. let the user decide whether another peer turn is worth the cost.
-
-Do not automatically start a debate loop or force consensus. A review that ends with a precise missing-information request can be more useful than an expensive exploratory tool loop.
-
-## Draft follow-ups
-
-This design is intentionally small. Improve it from real usage, not speculation.
-
-Candidates only after evidence justifies them:
-- rename the outer Code Mode capability from transitional `bare` to `peer_review` while retaining the true tool-less primitive internally;
-- provider selection/cache policy for repeated premium reviews;
-- compact structured telemetry for reviewer tool calls;
-- packet helpers if repeated manual packet construction becomes genuine friction.
+- Workflow SSOT: `~/wiki/skills/web/peer-review.md`
+- Design rationale: `~/wiki/skills/web/peer-review-adr.md`
+- Model routing: `~/gpt-dive/src/gpt_dive/model_registry.py`
