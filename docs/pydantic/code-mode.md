@@ -18,6 +18,20 @@ workspace = (
 
 That workspace drives the primary read/write Harness FileSystem root and Harness Shell cwd. Additional trusted reference trees are exposed only through read-side dispatch.
 
+## Model-facing programming contract
+
+`code_mode` is a Monty/Python orchestration surface, not a shell launcher. Prefer the smallest matching primitive:
+
+```text
+direct capability available → call it directly
+dependent operations        → sequential await
+independent operations      → asyncio.gather(...)
+command execution required  → local_exec(...)
+multiline shell script      → local_exec(command="bash", stdin=PAYLOAD)
+```
+
+`local_exec` executes through guarded `bash -lc` internally; that implementation detail is not a reason to rebuild FileSystem/Search operations in shell.
+
 ## Direct Harness FileSystem
 
 GPT Dive constructs:
@@ -73,6 +87,8 @@ The direct registry registers:
 - `stop_command`
 
 Harness Shell command filtering is not treated as an OS sandbox. Hard local execution restrictions belong below the harness where possible.
+
+`local_exec` is GPT Dive's structured synchronous command path (`stdout` / `stderr` / `returncode`, plus per-call `cwd`, `timeout`, and `stdin`). It shares the same prefiltered provider-credential environment and `guard-bin` PATH policy as Harness Shell, while remaining separate from Harness managed-process lifecycle.
 
 ### Direct-method output adapter
 

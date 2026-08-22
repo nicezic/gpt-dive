@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
 import functools
 import gzip
 import json
@@ -12,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -45,26 +46,30 @@ mcp = MCPServer(
     title="GPT Dive",
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
-        "default for normal local work, including one-shot file/shell operations; use "
-        "wsl2_async for durable jobs and wsl2_sync only for transport/smoke checks or when "
-        "explicitly required. Every MCP code_mode call requires string payload; use payload='' "
-        "when there is no data. Never guess capability names, arguments, or return shapes: "
-        "inspect the live contract first. On error/mistake, report immediately and Web Search "
-        "current primary sources before retrying or theorizing."
+        "default programmable root for normal local work: compose registered capabilities in "
+        "Monty/Python, prefer direct capabilities over shell reimplementation, and use local_exec "
+        "only when command execution is actually required. Every MCP code_mode call requires "
+        "string payload; use payload='' when there is no data. Never guess capability names, "
+        "arguments, or return shapes: inspect the live contract first. On tool errors, inspect "
+        "the live contract and local evidence before retrying; use Web Search when the missing "
+        "fact is external and current."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
         "processes, network state, and command results as belonging to the user's local "
         "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
-        "session, call bootstrap first. After bootstrap, use code_mode as the default execution "
-        "root for normal local work, including short one-shot file and shell operations. Every Web "
-        "MCP code_mode call must explicitly provide payload as a string; use payload='' when there is no "
-        "payload or for lifecycle calls. Never pass an object/list as payload; serialize structured "
-        "payloads to text and parse them inside Code Mode if needed. Never invent capability names, "
-        "parameter names, optional arguments, or return shapes from memory. Inspect the live MCP "
-        "schema/CAPABILITIES contract first whenever uncertain. On any tool error or assistant "
-        "mistake, report it immediately, Web Search current primary sources before retrying or "
-        "committing to a theory, then verify against live local state. Use /grill-me only when deeper "
+        "session, call bootstrap first. After bootstrap, use code_mode as the default programmable "
+        "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
+        "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
+        "for independent work. Use local_exec only when command execution is actually required; do "
+        "not rebuild file/search/edit operations in shell. Every Web MCP code_mode call must explicitly "
+        "provide payload as a string; use payload='' when there is no payload or for lifecycle calls. "
+        "Never pass an object/list as payload; serialize structured payloads to text and parse them "
+        "inside Code Mode if needed. Never invent capability names, parameter names, optional arguments, "
+        "or return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
+        "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the live "
+        "contract plus local state before retrying. Use Web Search only when the missing evidence is "
+        "external and current. Use /grill-me only when deeper "
         "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke "
         "checks, explicit user requests, or cases where Code Mode is genuinely inapplicable; use "
         "wsl2_async for durable background job "
@@ -82,6 +87,7 @@ def _run_command(
     cwd: str | None = None,
     timeout: float = 600.0,
     stdin: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not command.strip():
         raise ValueError("command must not be empty")
@@ -103,6 +109,7 @@ def _run_command(
             input=stdin,
             timeout=timeout,
             check=False,
+            env=env,
         )
 
         return {
@@ -126,7 +133,7 @@ def _run_command(
             "returncode": 124,
             "stdout": stdout,
             "stderr": (
-                f"{stderr}\n[wsl2_sync] timed out after {timeout} seconds"
+                f"{stderr}\n[command] timed out after {timeout} seconds"
             ).lstrip(),
         }
 
@@ -543,17 +550,22 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         return await toolset.create_directory(relative)
 
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
-    shell_env = os.environ.copy()
+    shell_denied_env_patterns = (
+        *LLM_API_KEY_ENV_PATTERNS,
+        "MINIMAX_*",
+        "AIAPIFLOW_*",
+    )
+    shell_env = {
+        name: value
+        for name, value in os.environ.items()
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in shell_denied_env_patterns)
+    }
     shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
     shell_max_output_chars = 50_000
     shell_toolset = Shell(
         cwd=workspace,
         env=shell_env,
-        denied_env_patterns=[
-            *LLM_API_KEY_ENV_PATTERNS,
-            "MINIMAX_*",
-            "AIAPIFLOW_*",
-        ],
+        denied_env_patterns=shell_denied_env_patterns,
         default_timeout=60.0,
         max_output_chars=shell_max_output_chars,
     ).get_toolset()
@@ -565,10 +577,12 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         timeout: float = 600.0,
         stdin: str | None = None,
     ) -> dict[str, Any]:
-        """Run a guarded short local shell command and wait for its result.
+        """Run a guarded short local command through bash -lc and return structured results.
 
-        Returns a dict; read r["stdout"], r["stderr"], and r["returncode"].
-        Pass payload data through stdin instead of embedding it in the shell command.
+        Prefer registered file/search/edit capabilities when they directly match the operation;
+        do not use local_exec as a generic replacement for them. For a multiline shell script
+        carried in payload, run command="bash" and pass the script through stdin. Returns a dict
+        with stdout, stderr, and returncode.
         """
         return await asyncio.to_thread(
             _run_command,
@@ -576,6 +590,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             cwd if cwd is not None else default_cwd,
             timeout,
             stdin,
+            shell_env,
         )
 
     async def agy_worker(
@@ -892,14 +907,14 @@ async def code_mode(
         str | None,
         Field(
             description=(
-                "Monty Python executable logic. Keep code simple; do not embed complex payload "
-                "strings here. Use the payload parameter and read it as PAYLOAD for multiline text, code, shell "
-                "snippets, JSON, Markdown, or payloads containing quotes/backticks/$(). Process large "
-                "results inside the sandbox and make the final expression a compact result. CWD is a "
-                "path string, not process chdir. BACKGROUND is a runtime-injected bool that reflects the actual outer code_mode execution mode; use it for fail-closed checks before costly capabilities. Prefer registered FileSystem capabilities for workspace file access instead of assuming CPython path helpers exist inside Monty. Capability "
-                "results are dicts, e.g. r['stdout']. Ultra-simple safe example: set payload to "
-                'a quoted/multiline payload, then code=\'r = await local_exec(command="cat", '
-                'stdin=PAYLOAD); r["stdout"]\'.'
+                "Monty/Python executable orchestration. Prefer registered capabilities that directly "
+                "match the operation instead of rebuilding them in shell. Keep multiline/quoted data in "
+                "payload and read it as PAYLOAD. Decide dependencies before calling: dependent work stays "
+                "sequential; independent awaits may use asyncio.gather(...). Process large results inside "
+                "Code Mode and make the final expression compact. CWD is a path string, not process chdir. "
+                "BACKGROUND is runtime-injected from the actual outer execution mode. Never guess capability "
+                "contracts; inspect CAPABILITIES when uncertain."
+
             )
         ),
     ] = None,
@@ -930,7 +945,7 @@ async def code_mode(
         Field(description="Detach this Code Mode program as a durable background job."),
     ] = False,
     action: Annotated[
-        str | None,
+        Literal["status", "result", "cancel"] | None,
         Field(
             description="Lifecycle action for a background Code Mode job: status, result, or cancel."
         ),
@@ -988,13 +1003,13 @@ async def code_mode(
     title="Pydantic Monty Code Mode",
     description=(
         "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
-        "- Default to code_mode for normal local work, including one-shot file/shell operations.\n"
+        "- Write code as Monty/Python orchestration, not as a shell script.\n"
+        "- Prefer registered capabilities directly for file, search, edit, and other matched operations.\n"
+        "- Decide dependencies first: await dependent work sequentially; use asyncio.gather(...) for independent work.\n"
+        "- Use local_exec only when command execution is required; use bash + PAYLOAD only for multiline shell scripts.\n"
         "- Every MCP call requires payload as a string; use payload='' when there is no data.\n"
         "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
-        "- Call registered capabilities directly with await name(...).\n"
-        "- asyncio is pre-imported; use await asyncio.gather(...) for independent work.\n"
-        "- Prefer Harness FileSystem/Shell capabilities for normal filesystem and command work.\n"
         "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
         "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
         "- Use background=True only for detached Code Mode jobs."
@@ -1008,8 +1023,8 @@ async def _mcp_code_mode(
                 "Required opaque string payload exposed to Monty code as PAYLOAD. Always provide this "
                 "field: use payload='' when no data is needed or for lifecycle actions. Never pass "
                 "an object/list directly. For structured data, serialize it to text first and parse "
-                "inside Code Mode. Safe shell example: payload='set -e\\npwd\\n' with "
-                "code='r = await local_exec(command=\"bash\", stdin=PAYLOAD, cwd=CWD); r'."
+                "inside Code Mode. Payload is data; a shell script belongs here only when the Monty "
+                "program intentionally invokes bash for shell semantics."
             )
         ),
     ],
@@ -1017,9 +1032,10 @@ async def _mcp_code_mode(
         str | None,
         Field(
             description=(
-                "Monty Python executable logic. Keep code simple and keep payload/data in PAYLOAD. "
-                "Do not guess capability contracts: inspect CAPABILITIES/live schema when uncertain. "
-                "Capability results are dicts, e.g. r['stdout']."
+                "Monty/Python executable orchestration. Call registered capabilities directly and do "
+                "not place shell scripts here. Keep payload/data in PAYLOAD. Decide dependencies before "
+                "calling: dependent work is sequential and independent work may use asyncio.gather(...). "
+                "Do not guess capability contracts; inspect CAPABILITIES/live schema when uncertain."
             )
         ),
     ] = None,
@@ -1037,7 +1053,7 @@ async def _mcp_code_mode(
         Field(description="Detach this Code Mode program as a durable background job; the actual mode is exposed inside Monty as BACKGROUND."),
     ] = False,
     action: Annotated[
-        str | None,
+        Literal["status", "result", "cancel"] | None,
         Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
     ] = None,
     job_id: Annotated[

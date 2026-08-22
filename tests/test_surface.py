@@ -41,21 +41,25 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     description = tool.description
     assert description is not None
     assert "Primary programmable execution root for GPT Dive" in description
-    assert "Default to code_mode for normal local work" in description
+    assert "Write code as Monty/Python orchestration" in description
+    assert "Prefer registered capabilities directly" in description
+    assert "Decide dependencies first" in description
+    assert "Use local_exec only when command execution is required" in description
     assert "Every MCP call requires payload as a string" in description
     assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
     assert "Never invent capability names, arguments, optional fields, or return shapes" in description
-    assert "Prefer Harness FileSystem/Shell capabilities" in description
     assert "payload" in tool.input_schema["required"]
     assert tool.input_schema["properties"]["payload"]["type"] == "string"
+    action_variants = tool.input_schema["properties"]["action"]["anyOf"]
+    assert {tuple(v.get("enum", [])) for v in action_variants} >= {("status", "result", "cancel")}
     assert "input" not in tool.input_schema["properties"]
 
 
 def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> None:
     instructions = gpt_dive.mcp.instructions
     assert instructions is not None
-    assert "use code_mode as the default execution root" in instructions
-    assert "Web Search current primary sources before retrying" in instructions
+    assert "use code_mode as the default programmable root" in instructions
+    assert "Use Web Search only when the missing evidence is external and current" in instructions
     assert "Never invent capability names" in instructions
     assert "Use wsl2_sync only for transport/smoke" in instructions
 
@@ -64,7 +68,7 @@ def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     tool = tools["code_mode"]
     assert tool.description is not None
-    assert "Prefer Harness FileSystem/Shell capabilities" in tool.description
+    assert "Prefer registered capabilities directly" in tool.description
     properties = tool.input_schema["properties"]
     assert "Path(CWD)" not in properties["code"]["description"]
     assert "Path(CWD)" not in properties["cwd"]["description"]

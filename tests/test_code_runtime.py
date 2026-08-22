@@ -42,6 +42,24 @@ old_python = await local_exec(command="python3.10 --version")
     assert "Old Python" in result["old_python"]["stderr"]
 
 
+def test_local_exec_strips_provider_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-local-exec")
+    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-local-exec")
+    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-local-exec")
+    code = r'''
+result = await local_exec(
+    command="printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\""
+)
+result
+'''
+    result = asyncio.run(code_mode(code))["result"]
+    assert result["returncode"] == 0
+    assert result["stdout"] == "||"
+    assert "must-not-reach-local-exec" not in result["stdout"]
+
+
 def test_code_mode_payload_can_feed_local_exec_stdin() -> None:
     payload = """# Markdown
 
