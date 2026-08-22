@@ -237,7 +237,7 @@ def _read_bootstrap_packet() -> dict[str, Any]:
     if bootstrap_reminders:
         chunks.append(_format_reminder_sections(bootstrap_reminders))
 
-    return {
+    result: dict[str, Any] = {
         "wiki_path": str(wiki),
         "preload_path": str(preload),
         "preloaded_files": preloaded_files,
@@ -245,9 +245,11 @@ def _read_bootstrap_packet() -> dict[str, Any]:
             {"path": item["path"], "section": item["section"]}
             for item in bootstrap_reminders
         ],
-        "warnings": warnings,
         "stdout": "\n\n".join(chunks) + "\n",
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"

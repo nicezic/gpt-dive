@@ -109,7 +109,7 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
 
     result = app_module._read_bootstrap_packet()
 
-    assert result["warnings"] == []
+    assert "warnings" not in result
     assert result["preload_path"] == str(wiki / "bootstrap" / "preload.json")
     assert result["preloaded_files"] == [
         "bootstrap/intro.md",
@@ -132,6 +132,18 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert "SHOULD NOT BE PRELOADED" not in result["stdout"]
     assert "RECENT LOG MUST NOT BE PRELOADED" not in result["stdout"]
     assert "LIVE CODE MODE CAPABILITIES" not in result["stdout"]
+
+
+def test_read_bootstrap_packet_exposes_nonempty_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _write_test_wiki(tmp_path)
+    (wiki / "skills" / "INDEX.md").unlink()
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    result = app_module._read_bootstrap_packet()
+
+    assert result["warnings"] == ["missing preload document: skills/INDEX.md"]
 
 def test_bootstrap_appends_only_nonpreloaded_reminders_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
