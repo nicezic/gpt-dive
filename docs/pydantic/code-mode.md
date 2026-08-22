@@ -26,11 +26,11 @@ That workspace drives the primary read/write Harness FileSystem root and Harness
 direct capability available → call it directly
 dependent operations        → sequential await
 independent operations      → asyncio.gather(...)
-command execution required  → local_exec(...)
-multiline shell script      → local_exec(command="bash", stdin=PAYLOAD)
+command execution required  → run_command(...)
+multiline shell script      → run_command(PAYLOAD)
 ```
 
-`local_exec` executes through guarded `bash -lc` internally; that implementation detail is not a reason to rebuild FileSystem/Search operations in shell.
+`run_command()` remains upstream-shaped; GPT Dive supplies Shell environment policy without redefining its signature or return contract.
 
 ## Direct Harness FileSystem
 
@@ -88,7 +88,7 @@ The direct registry registers:
 
 Harness Shell command filtering is not treated as an OS sandbox. Hard local execution restrictions belong below the harness where possible.
 
-`local_exec` is GPT Dive's structured synchronous command path (`stdout` / `stderr` / `returncode`, plus per-call `cwd`, `timeout`, and `stdin`). It shares the same prefiltered provider-credential environment and `guard-bin` PATH policy as Harness Shell, while remaining separate from Harness managed-process lifecycle.
+`run_command()` is the single normal foreground shell capability. Exceptional direct WSL/Win11 maintenance uses `wsl2_sync(permission=...)`; `gz64()` remains only as OpenAI tunnel transport recovery.
 
 ### Direct-method output adapter
 
@@ -148,7 +148,7 @@ The direct Code Mode registry and child-agent capability bundle intentionally sh
 
 ## Search integration
 
-`repo_search` is GPT Dive's Probe-backed repository retrieval capability. It is not a Harness FileSystem method. Relative `path` values resolve from the Code Mode workspace; absolute/`~/` paths remain explicit. This fixes the earlier mismatch where `path="src"` could resolve from the process/home context instead of `cwd`.
+`repo_search` is GPT Dive's Probe-backed repository retrieval capability. Relative `path` values resolve from the Code Mode workspace; absolute/`~/` paths remain explicit. `search_files`, `find_files`, and `repo_search` reject `/` and `/mnt/c` as broad search roots without blocking direct host access.
 
 ## Validation contract
 
@@ -159,7 +159,7 @@ When changing the model-facing Code Mode capability surface, prove at minimum:
 3. containment and protected/stale-write failures remain explicit;
 4. managed background processes are cleaned up;
 5. provider credentials are not inherited by ordinary Harness Shell subprocesses;
-6. existing `local_exec`, `subagent_call`, background Code Mode, and public MCP surface remain regression-green;
+6. `run_command`, `subagent_call`, background Code Mode, and the public MCP surface remain regression-green;
 7. statically invalid inner capability calls are rejected before host dispatch while representative valid calls still execute;
 8. fresh-session live `CAPABILITIES` discovery passes after any required service/schema refresh.
 

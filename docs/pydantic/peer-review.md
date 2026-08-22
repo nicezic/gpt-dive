@@ -63,7 +63,7 @@ peer final review text
 host local write peer_answer.md
 ```
 
-Local packet reads and answer writes add **zero provider round-trips**. Use raw local reads (`cat` via `local_exec`) for packet transport; GPT Dive `read_file()` adds inspection metadata such as line numbers and must not be fed back as packet text.
+Local packet reads and answer writes add **zero provider round-trips**. Use direct `Path.read_text()` for raw packet transport; GPT Dive `read_file()` adds inspection metadata such as line numbers and must not be fed back as packet text.
 
 For another round:
 
@@ -154,10 +154,9 @@ The two-file workflow stays the same either way. Current provider economics belo
 The Wiki skill owns the full commented sample. Implementation shape is:
 
 ```python
-packet_read = await local_exec(command="cat peer_packet.md", cwd=CWD)
-if packet_read["returncode"] != 0:
-    raise RuntimeError(packet_read["stderr"] or "failed to read peer_packet.md")
-packet = packet_read["stdout"]
+from pathlib import Path
+
+packet = (Path(CWD) / "peer_packet.md").read_text()
 if not packet.strip():
     raise RuntimeError("peer_packet.md is empty")
 

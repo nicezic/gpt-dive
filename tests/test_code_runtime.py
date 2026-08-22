@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from pydantic_monty import MontyTypingError
+from pydantic_monty import MontyRuntimeError, MontyTypingError
 
 import gpt_dive.app as app_module
 from gpt_dive import code_mode
@@ -25,52 +25,44 @@ def test_code_mode_can_read_and_write_local_filesystem() -> None:
         assert target.read_text() == "DIVE_RW_OK"
 
 
-def test_local_exec_works_and_preserves_guard_bin() -> None:
+def test_run_command_works_and_preserves_guard_bin() -> None:
     code = """\
-ok = await local_exec(command="printf 'LOCAL_EXEC_OK\\n'")
-rerouted = await local_exec(command="python --version")
-old_python = await local_exec(command="python3.10 --version")
+ok = await run_command("printf 'RUN_COMMAND_OK\\n'")
+rerouted = await run_command("python --version")
+old_python = await run_command("python3.10 --version")
 {"ok": ok, "rerouted": rerouted, "old_python": old_python}
 """
     result = asyncio.run(code_mode(code))["result"]
-    assert result["ok"]["returncode"] == 0
-    assert result["ok"]["stdout"] == "LOCAL_EXEC_OK\n"
-    assert result["rerouted"]["returncode"] == 0
-    assert "Python 3.14" in result["rerouted"]["stdout"]
-    assert "auto-reroute" in result["rerouted"]["stderr"]
-    assert result["old_python"]["returncode"] == 2
-    assert "Old Python" in result["old_python"]["stderr"]
+    assert "RUN_COMMAND_OK" in result["ok"]
+    assert "Python 3.14" in result["rerouted"]
+    assert "auto-reroute" in result["rerouted"]
+    assert "Old Python" in result["old_python"]
+    assert "[exit code: 2]" in result["old_python"]
 
 
-def test_local_exec_strips_provider_keys(
+def test_run_command_strips_provider_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-local-exec")
-    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-local-exec")
-    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-local-exec")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-run-command")
+    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-run-command")
+    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-run-command")
     code = r'''
-result = await local_exec(
-    command="printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\""
+result = await run_command(
+    "printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\""
 )
 result
 '''
     result = asyncio.run(code_mode(code))["result"]
-    assert result["returncode"] == 0
-    assert result["stdout"] == "||"
-    assert "must-not-reach-local-exec" not in result["stdout"]
+    assert "||" in result
+    assert "must-not-reach-run-command" not in result
 
 
-def test_code_mode_payload_can_feed_local_exec_stdin() -> None:
-    payload = """# Markdown
-
-quotes: 'single' "double" `backticks`
-shell-ish: $HOME $(printf nope) <<'EOF'
-"""
-    code = """\
-r = await local_exec(command="cat", stdin=PAYLOAD)
-r["stdout"]
-"""
-    assert asyncio.run(code_mode(code, payload=payload)) == {"result": payload}
+def test_code_mode_payload_can_carry_multiline_shell() -> None:
+    payload = "printf 'PAYLOAD_OK\n'\nprintf 'SECOND_LINE\n'"
+    code = "await run_command(PAYLOAD)"
+    result = asyncio.run(code_mode(code, payload=payload))["result"]
+    assert "PAYLOAD_OK" in result
+    assert "SECOND_LINE" in result
 
 
 def test_code_mode_payload_type_stub_has_no_input_alias() -> None:
@@ -86,24 +78,23 @@ def test_code_mode_exposes_foreground_flag() -> None:
     assert asyncio.run(code_mode("BACKGROUND")) == {"result": False}
 
 
-def test_local_exec_calls_can_overlap() -> None:
-    code = """\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(local_exec(command=cmd), local_exec(command=cmd))\n[a["stdout"], b["stdout"]]\n"""
+def test_run_command_calls_can_overlap() -> None:
+    code = """\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(run_command(cmd), run_command(cmd))\n[a, b]\n"""
     outputs = asyncio.run(code_mode(code))["result"]
-    intervals = [tuple(map(int, output.split())) for output in outputs]
+    intervals = []
+    for output in outputs:
+        numbers = [int(part) for part in output.split() if part.isdigit()]
+        intervals.append((numbers[0], numbers[1]))
     starts = [start for start, _ in intervals]
     ends = [end for _, end in intervals]
     assert max(starts) < min(ends)
 
 
-def test_large_local_exec_output_can_be_aggregated_before_return(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "large.txt"
-    source.write_text("alpha\n" * 20_000)
-    code = f"""\nr = await local_exec(command="cat {source}")\n{{"bytes": len(r["stdout"]), "lines": r["stdout"].count("\\n")}}\n"""
-    result = asyncio.run(code_mode(code))
-    assert result == {"result": {"bytes": 120_000, "lines": 20_000}}
-    assert "alpha" not in str(result)
+def test_run_command_output_is_bounded() -> None:
+    code = "await run_command(\"yes alpha | head -n 20000\")"
+    result = asyncio.run(code_mode(code))["result"]
+    assert len(result) <= 50_000
+    assert "alpha" in result
 
 
 def test_capabilities_are_runtime_discoverable() -> None:
@@ -121,7 +112,6 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "start_command",
         "check_command",
         "stop_command",
-        "local_exec",
         "agy_worker",
         "subagent_call",
         "bare",
@@ -130,8 +120,6 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "council_emit",
         "gz64",
     }
-    assert "signature" in result["local_exec"]
-    assert "stdin" in result["local_exec"]["signature"]
     assert "offset" in result["read_file"]["signature"]
     assert "expected_hash" in result["write_file"]["signature"]
     assert "expected_hash" in result["edit_file"]["signature"]
@@ -141,6 +129,22 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "Read a text file with line numbers."
     )
     assert result["run_command"]["description"].startswith("Execute a shell command")
+
+
+def test_normal_search_rejects_broad_root_paths(tmp_path: Path) -> None:
+    with pytest.raises(MontyRuntimeError, match="search_files refuses broad recursive search rooted at /"):
+        asyncio.run(code_mode("await search_files('needle', path='/')"))
+    with pytest.raises(MontyRuntimeError, match="find_files refuses broad recursive search rooted at /mnt/c"):
+        asyncio.run(code_mode("await find_files('*', path='/mnt/c')"))
+    with pytest.raises(MontyRuntimeError, match="repo_search refuses broad recursive search rooted at /"):
+        asyncio.run(code_mode("await repo_search(query='needle', path='/')"))
+
+    target = tmp_path / "narrow.txt"
+    target.write_text("needle")
+    result = asyncio.run(
+        code_mode(f"await search_files('needle', path={str(tmp_path)!r})")
+    )["result"]
+    assert "narrow.txt" in result
 
 
 def test_code_mode_static_type_check_rejects_wrong_capability_argument() -> None:
@@ -369,7 +373,7 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
 
         started = asyncio.run(
             gpt_dive.code_mode(
-                'await local_exec(command="sleep 0.15")\nprint("BG_STDOUT")\n1 + 2',
+                'await run_command("sleep 0.15")\nprint("BG_STDOUT")\n1 + 2',
                 background=True,
             )
         )
@@ -423,7 +427,7 @@ def test_code_mode_background_preserves_payload(tmp_path: Path) -> None:
         payload = "BG_PAYLOAD ' \" ` $() <<EOF\n"
         started = asyncio.run(
             gpt_dive.code_mode(
-                'r = await local_exec(command="cat", stdin=PAYLOAD)\nr["stdout"]',
+                'PAYLOAD',
                 payload=payload,
                 background=True,
             )
@@ -521,7 +525,7 @@ def test_code_mode_background_cancel(tmp_path: Path) -> None:
 
         started = asyncio.run(
             gpt_dive.code_mode(
-                'await local_exec(command="sleep 30")\n"never"',
+                'await run_command("sleep 30")\n"never"',
                 background=True,
             )
         )
@@ -547,10 +551,10 @@ def test_code_mode_background_jobs_and_internal_gather_overlap(tmp_path: Path) -
         code = """
 import asyncio
 a, b = await asyncio.gather(
-    local_exec(command="sleep 0.25; printf a"),
-    local_exec(command="sleep 0.25; printf b"),
+    run_command("sleep 0.25; printf a"),
+    run_command("sleep 0.25; printf b"),
 )
-[a["stdout"], b["stdout"]]
+[a, b]
 """
         first = asyncio.run(gpt_dive.code_mode(code, background=True))
         second = asyncio.run(gpt_dive.code_mode(code, background=True))
@@ -564,7 +568,7 @@ a, b = await asyncio.gather(
             result = asyncio.run(
                 gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
             )
-            assert result["result"] == ["a", "b"]
+            assert all(marker in output for marker, output in zip(("a", "b"), result["result"], strict=True))
     finally:
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd

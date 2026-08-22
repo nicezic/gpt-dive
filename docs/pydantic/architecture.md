@@ -73,7 +73,7 @@ GPT Dive still owns lower local execution policy such as `guard-bin` PATH preced
 
 **Change**
 - Registered the Harness FileSystem toolset directly in the Code Mode registry: read/write/edit/list/search/find/create/info.
-- Registered Harness Shell run/start/check/stop capabilities directly while retaining `local_exec` for compatibility.
+- Registered Harness Shell run/start/check/stop capabilities directly; `run_command()` is the single normal foreground shell path.
 - Added registry-owned async cleanup for managed Harness background processes.
 - Added a thin output-limit adapter for direct Shell method calls because bypassing Harness `call_tool()` also bypasses its normal output limiting.
 

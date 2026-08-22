@@ -48,8 +48,8 @@ Shell
 Model / orchestration
   subagent_call / agy_worker / bare / m3_evidence / council_emit
 
-Retrieval / compatibility
-  repo_search / local_exec / gz64
+Retrieval / recovery
+  repo_search / gz64
 ```
 
 Code Mode FileSystem resolves relative paths from `cwd` but permits host-wide non-secret reads and writes across `/` subject to normal OS permissions; credential/secret paths remain denied. `m3_evidence` is deliberately tool-less: it analyzes a caller-supplied evidence packet and proposes a bounded next-query set, while retrieval execution remains owned by the caller/Harness. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.

@@ -47,8 +47,8 @@ mcp = MCPServer(
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
         "default programmable root for normal local work: compose registered capabilities in "
-        "Monty/Python, prefer direct capabilities over shell reimplementation, and use local_exec "
-        "only when command execution is actually required. Every MCP code_mode call requires "
+        "Monty/Python, prefer direct capabilities over shell reimplementation, and use the "
+        "Pydantic run_command capability for foreground shell execution. Every MCP code_mode call requires "
         "string payload; use payload='' when there is no data. Never guess capability names, "
         "arguments, or return shapes: inspect the live contract first. On tool errors, inspect "
         "the live contract and local evidence before retrying; use Web Search when the missing "
@@ -61,8 +61,8 @@ mcp = MCPServer(
         "session, call bootstrap first. After bootstrap, use code_mode as the default programmable "
         "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
         "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
-        "for independent work. Use local_exec only when command execution is actually required; do "
-        "not rebuild file/search/edit operations in shell. Every Web MCP code_mode call must explicitly "
+        "for independent work. Use Pydantic run_command only when shell execution is actually required; "
+        "do not rebuild file/search/edit operations in shell. Every Web MCP code_mode call must explicitly "
         "provide payload as a string; use payload='' when there is no payload or for lifecycle calls. "
         "Never pass an object/list as payload; serialize structured payloads to text and parse them "
         "inside Code Mode if needed. Never invent capability names, parameter names, optional arguments, "
@@ -70,8 +70,8 @@ mcp = MCPServer(
         "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the live "
         "contract plus local state before retrying. Use Web Search only when the missing evidence is "
         "external and current. Use /grill-me only when deeper "
-        "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke "
-        "checks, explicit user requests, or cases where Code Mode is genuinely inapplicable; use "
+        "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke, "
+        "explicit user requests, exceptional WSL/Win11 maintenance, or cases where Code Mode is genuinely inapplicable; use "
         "wsl2_async for durable background job "
         "lifecycle operations. Background jobs survive MCP server restarts and completed job "
         "logs are retained for 5 days. When the client negotiates "
@@ -419,12 +419,16 @@ mcp.middleware.append(request_lifecycle_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
 
 
+_WSL2_SYNC_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
+
+
 @mcp.tool(
     title="Synchronous WSL2",
     description=(
         "Execute a short shell command synchronously inside the user's local WSL2 and return "
-        "its result immediately. Use code_mode for programmable multi-step work and wsl2_async "
-        "for durable background jobs. Keep timeout only slightly above the expected runtime."
+        "its result immediately. This is an exceptional direct-shell path for transport/smoke or "
+        "special WSL/Win11 maintenance; use code_mode for normal local work and wsl2_async for "
+        "durable background jobs. Keep timeout only slightly above the expected runtime."
     ),
 )
 def wsl2_sync(
@@ -432,6 +436,15 @@ def wsl2_sync(
         str,
         Field(
             description="Shell command to run via /bin/bash -lc."
+        ),
+    ],
+    permission: Annotated[
+        str,
+        Field(
+            description=(
+                "Required exact harness declaration for direct WSL execution: "
+                f"{_WSL2_SYNC_PERMISSION}"
+            )
         ),
     ],
     cwd: Annotated[
@@ -448,13 +461,29 @@ def wsl2_sync(
         ),
     ] = 600.0,
 ) -> dict[str, Any]:
-    """Run a short shell command synchronously in the user's local WSL2 environment."""
+    """Run a short explicitly authorized shell command in the user's local WSL2."""
+    if permission != _WSL2_SYNC_PERMISSION:
+        raise ValueError(
+            "wsl2_sync permission mismatch; use the exact harness declaration from the live schema"
+        )
     return _run_command(command, cwd, timeout)
 
 
 def _code_mode_home_root() -> Path:
     """Return the user home used only for credential/secret path policy."""
     return Path.home().resolve()
+
+
+_BROAD_SEARCH_ROOTS = {"/", "/mnt/c"}
+
+
+def _reject_broad_search_root(path: Path, *, operation: str) -> None:
+    resolved = str(path.resolve())
+    if resolved in _BROAD_SEARCH_ROOTS:
+        raise ValueError(
+            f"{operation} refuses broad recursive search rooted at {resolved}; "
+            "narrow to a specific subdirectory first"
+        )
 
 
 
@@ -509,6 +538,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         pattern: str, *, path: str = ".", include_glob: str | None = None
     ) -> str:
         """Search file contents by regex. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
+        _reject_broad_search_root(resolve_path(path), operation="search_files")
         toolset, relative = select_read_toolset(path)
         return await toolset.search_files(
             pattern, path=relative, include_glob=include_glob
@@ -516,6 +546,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
 
     async def find_files(pattern: str, *, path: str = ".") -> str:
         """Find files by glob. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
+        _reject_broad_search_root(resolve_path(path), operation="find_files")
         toolset, relative = select_read_toolset(path)
         return await toolset.find_files(pattern, path=relative)
 
@@ -569,29 +600,6 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         default_timeout=60.0,
         max_output_chars=shell_max_output_chars,
     ).get_toolset()
-
-    async def local_exec(
-        *,
-        command: str,
-        cwd: str | None = None,
-        timeout: float = 600.0,
-        stdin: str | None = None,
-    ) -> dict[str, Any]:
-        """Run a guarded short local command through bash -lc and return structured results.
-
-        Prefer registered file/search/edit capabilities when they directly match the operation;
-        do not use local_exec as a generic replacement for them. For a multiline shell script
-        carried in payload, run command="bash" and pass the script through stdin. Returns a dict
-        with stdout, stderr, and returncode.
-        """
-        return await asyncio.to_thread(
-            _run_command,
-            command,
-            cwd if cwd is not None else default_cwd,
-            timeout,
-            stdin,
-            shell_env,
-        )
 
     async def agy_worker(
         *,
@@ -692,9 +700,11 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         search_path = Path(path).expanduser() if path is not None else workspace
         if not search_path.is_absolute():
             search_path = workspace / search_path
+        search_path = search_path.resolve()
+        _reject_broad_search_root(search_path, operation="repo_search")
         return await search_repo(
             query=query,
-            path=str(search_path.resolve()),
+            path=str(search_path),
             max_results=max_results,
             max_tokens=max_tokens,
             allow_tests=allow_tests,
@@ -712,7 +722,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         )
 
     async def gz64(payload: str) -> dict[str, Any]:
-        """Decode Base64+gzip UTF-8 command text and execute it locally. Slow path: do not use for normal commands; use only when quote/payload transport or filtering issues make plain local_exec unsuitable."""
+        """Last-resort command transport when normal execution is blocked by the OpenAI tunnel/filtering path."""
         compressed = base64.b64decode(payload, validate=True)
         command = gzip.decompress(compressed).decode("utf-8")
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
@@ -739,7 +749,6 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         registry.register(name, bounded_shell_method(name))
 
     registry.add_async_cleanup(shell_toolset.__aexit__)
-    registry.register("local_exec", local_exec)
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("bare", bare)
@@ -923,9 +932,8 @@ async def code_mode(
         Field(
             description=(
                 "Optional default WSL2 working directory exposed to code as CWD and inherited "
-                "by registered capabilities when they accept cwd. Does not chdir Monty itself; "
-                "prefer registered FileSystem/Shell capabilities for workspace operations and pass "
-                "cwd=CWD to capabilities such as local_exec when needed."
+                "by registered capabilities. Does not chdir Monty itself; prefer registered "
+                "FileSystem/Shell capabilities for workspace operations."
             )
         ),
     ] = None,
@@ -1006,7 +1014,7 @@ async def code_mode(
         "- Write code as Monty/Python orchestration, not as a shell script.\n"
         "- Prefer registered capabilities directly for file, search, edit, and other matched operations.\n"
         "- Decide dependencies first: await dependent work sequentially; use asyncio.gather(...) for independent work.\n"
-        "- Use local_exec only when command execution is required; use bash + PAYLOAD only for multiline shell scripts.\n"
+        "- Use Pydantic run_command only when shell execution is required; pass multiline shell through PAYLOAD when needed.\n"
         "- Every MCP call requires payload as a string; use payload='' when there is no data.\n"
         "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"

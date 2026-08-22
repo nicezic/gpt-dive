@@ -49,7 +49,7 @@ Suggested next skill: `/grill-me` only if live acceptance exposes a real configu
 
 - Implementation commit: `e0f6f1f` (`feat: expose harness files and shell in code mode`).
 - Plan / decision / validation record: `plans/code_mode/plan-260814-files-and-shell.md`.
-- Added Harness FileSystem 8 tools + Shell 4 tools to the per-run Code Mode registry; `local_exec` remains. Shell keeps guard-bin/provider-secret stripping, run-owned background cleanup, and the 50k Harness output cap.
+- Code Mode uses Harness FileSystem 8 tools + Shell 4 tools directly; `run_command()` is the single normal foreground shell path. Shell keeps guard-bin/provider-secret stripping, run-owned background cleanup, and the 50k output cap.
 - Validation before commit: targeted Code Mode tests **30 passed**; full suite **78 passed**; touched-file Ruff PASS; `git diff --check` PASS.
 
 ### Verified live acceptance state — PASS

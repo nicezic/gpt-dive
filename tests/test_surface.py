@@ -44,7 +44,7 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "Write code as Monty/Python orchestration" in description
     assert "Prefer registered capabilities directly" in description
     assert "Decide dependencies first" in description
-    assert "Use local_exec only when command execution is required" in description
+    assert "Use Pydantic run_command only when shell execution is required" in description
     assert "Every MCP call requires payload as a string" in description
     assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
     assert "Never invent capability names, arguments, optional fields, or return shapes" in description
@@ -245,15 +245,41 @@ def test_wsl2_async_validates_action_specific_fields() -> None:
         gpt_dive.wsl2_async("future-action")
 
 
+def test_wsl2_sync_requires_exact_permission() -> None:
+    with pytest.raises(ValueError, match="permission mismatch"):
+        gpt_dive.wsl2_sync("true", permission="wrong")
+
+
+def test_wsl2_sync_permission_is_required_in_live_schema() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    schema = tools["wsl2_sync"].input_schema
+    assert "permission" in schema["required"]
+    assert app._WSL2_SYNC_PERMISSION in schema["properties"]["permission"]["description"]
+
+
+def test_wsl2_sync_allows_intentional_root_inspection() -> None:
+    result = gpt_dive.wsl2_sync(
+        "find / -maxdepth 0 -print",
+        permission=app._WSL2_SYNC_PERMISSION,
+        timeout=5,
+    )
+    assert result["returncode"] == 0
+    assert result["stdout"].strip() == "/"
+
+
 def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
-    result = gpt_dive.wsl2_sync("python --version", timeout=5)
+    result = gpt_dive.wsl2_sync(
+        "python --version", permission=app._WSL2_SYNC_PERMISSION, timeout=5
+    )
     assert result["returncode"] == 0
     assert "Python 3.14" in result["stdout"]
     assert "auto-reroute" in result["stderr"]
 
 
 def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
-    result = gpt_dive.wsl2_sync("pytest --version", timeout=5)
+    result = gpt_dive.wsl2_sync(
+        "pytest --version", permission=app._WSL2_SYNC_PERMISSION, timeout=5
+    )
     assert result["returncode"] == 2
     assert "Direct 'pytest' execution is prohibited" in result["stderr"]
 
