@@ -40,6 +40,14 @@ old_python = await run_command("python3.10 --version")
     assert "[exit code: 2]" in result["old_python"]
 
 
+def test_run_command_allows_normal_cleanup_commands(tmp_path: Path) -> None:
+    target = tmp_path / "cleanup-me.txt"
+    target.write_text("temporary")
+    result = asyncio.run(code_mode("await run_command(PAYLOAD)", payload=f"rm {target}"))["result"]
+    assert result == "(no output)"
+    assert not target.exists()
+
+
 def test_run_command_strips_provider_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

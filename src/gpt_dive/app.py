@@ -421,7 +421,7 @@ mcp.middleware.append(request_lifecycle_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
 
 
-_WSL2_SYNC_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
+_DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
 
 
 @mcp.tool(
@@ -445,7 +445,7 @@ def wsl2_sync(
         Field(
             description=(
                 "Required exact harness declaration for direct WSL execution: "
-                f"{_WSL2_SYNC_PERMISSION}"
+                f"{_DIRECT_WSL_PERMISSION}"
             )
         ),
     ],
@@ -464,7 +464,7 @@ def wsl2_sync(
     ] = 600.0,
 ) -> dict[str, Any]:
     """Run a short explicitly authorized shell command in the user's local WSL2."""
-    if permission != _WSL2_SYNC_PERMISSION:
+    if permission != _DIRECT_WSL_PERMISSION:
         raise ValueError(
             "wsl2_sync permission mismatch; use the exact harness declaration from the live schema"
         )
@@ -598,6 +598,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     shell_toolset = Shell(
         cwd=workspace,
         env=shell_env,
+        denied_commands=[],
         denied_env_patterns=shell_denied_env_patterns,
         default_timeout=60.0,
         max_output_chars=shell_max_output_chars,
@@ -1111,6 +1112,15 @@ def wsl2_async(
         str | None,
         Field(description="Shell command for start."),
     ] = None,
+    permission: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Required exact harness declaration for direct WSL job start: "
+                f"{_DIRECT_WSL_PERMISSION}"
+            )
+        ),
+    ] = None,
     job_id: Annotated[
         str | None,
         Field(
@@ -1134,7 +1144,7 @@ def wsl2_async(
     if normalized == "capabilities":
         return {
             "actions": {
-                "start": {"requires": ["command"], "optional": ["cwd", "timeout"]},
+                "start": {"requires": ["command", "permission"], "optional": ["cwd", "timeout"]},
                 "status": {"requires": ["job_id"]},
                 "result": {"requires": ["job_id"]},
                 "cancel": {"requires": ["job_id"]},
@@ -1143,6 +1153,10 @@ def wsl2_async(
     if normalized == "start":
         if command is None or not command.strip():
             raise ValueError("wsl2_async action='start' requires command")
+        if permission != _DIRECT_WSL_PERMISSION:
+            raise ValueError(
+                "wsl2_async permission mismatch; use the exact harness declaration from the live schema"
+            )
         return jobs.start(command, cwd, timeout)
     if normalized == "status":
         return jobs.status(_required_job_id(normalized, job_id))

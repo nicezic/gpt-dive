@@ -186,6 +186,10 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
 def test_wsl2_async_capabilities_are_runtime_discoverable() -> None:
     payload = gpt_dive.wsl2_async("capabilities")
     assert set(payload["actions"]) == {"start", "status", "result", "cancel"}
+    assert payload["actions"]["start"] == {
+        "requires": ["command", "permission"],
+        "optional": ["cwd", "timeout"],
+    }
 
 
 def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
@@ -222,7 +226,13 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
     )
 
     assert (
-        gpt_dive.wsl2_async("start", command="cmd", cwd="/tmp", timeout=11)["job_id"]
+        gpt_dive.wsl2_async(
+            "start",
+            command="cmd",
+            cwd="/tmp",
+            timeout=11,
+            permission=app._DIRECT_WSL_PERMISSION,
+        )["job_id"]
         == "j1"
     )
     assert gpt_dive.wsl2_async("status", job_id="j1")["status"] == "running"
@@ -239,6 +249,10 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
 def test_wsl2_async_validates_action_specific_fields() -> None:
     with pytest.raises(ValueError, match="requires command"):
         gpt_dive.wsl2_async("start")
+    with pytest.raises(ValueError, match="permission mismatch"):
+        gpt_dive.wsl2_async("start", command="cmd")
+    with pytest.raises(ValueError, match="permission mismatch"):
+        gpt_dive.wsl2_async("start", command="cmd", permission="wrong")
     with pytest.raises(ValueError, match="requires job_id"):
         gpt_dive.wsl2_async("status")
     with pytest.raises(ValueError, match="capabilities"):
@@ -254,13 +268,21 @@ def test_wsl2_sync_permission_is_required_in_live_schema() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     schema = tools["wsl2_sync"].input_schema
     assert "permission" in schema["required"]
-    assert app._WSL2_SYNC_PERMISSION in schema["properties"]["permission"]["description"]
+    assert app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+
+
+def test_wsl2_async_permission_is_exposed_in_live_schema() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    schema = tools["wsl2_async"].input_schema
+    assert "permission" in schema["properties"]
+    assert "permission" not in schema.get("required", [])
+    assert app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
 
 
 def test_wsl2_sync_allows_intentional_root_inspection() -> None:
     result = gpt_dive.wsl2_sync(
         "find / -maxdepth 0 -print",
-        permission=app._WSL2_SYNC_PERMISSION,
+        permission=app._DIRECT_WSL_PERMISSION,
         timeout=5,
     )
     assert result["returncode"] == 0
@@ -269,7 +291,7 @@ def test_wsl2_sync_allows_intentional_root_inspection() -> None:
 
 def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
     result = gpt_dive.wsl2_sync(
-        "python --version", permission=app._WSL2_SYNC_PERMISSION, timeout=5
+        "python --version", permission=app._DIRECT_WSL_PERMISSION, timeout=5
     )
     assert result["returncode"] == 0
     assert "Python 3.14" in result["stdout"]
@@ -278,7 +300,7 @@ def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
 
 def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
     result = gpt_dive.wsl2_sync(
-        "pytest --version", permission=app._WSL2_SYNC_PERMISSION, timeout=5
+        "pytest --version", permission=app._DIRECT_WSL_PERMISSION, timeout=5
     )
     assert result["returncode"] == 2
     assert "Direct 'pytest' execution is prohibited" in result["stderr"]
@@ -292,7 +314,12 @@ def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> Non
     try:
         gpt_dive.jobs.root = tmp_path
         gpt_dive.jobs._systemd_available = False
-        started = gpt_dive.wsl2_async("start", command="python --version", timeout=5)
+        started = gpt_dive.wsl2_async(
+            "start",
+            command="python --version",
+            timeout=5,
+            permission=app._DIRECT_WSL_PERMISSION,
+        )
         deadline = time.monotonic() + 3
         state = started
         while time.monotonic() < deadline:
@@ -318,7 +345,12 @@ def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
     try:
         gpt_dive.jobs.root = tmp_path
         gpt_dive.jobs._systemd_available = False
-        started = gpt_dive.wsl2_async("start", command="pytest --version", timeout=5)
+        started = gpt_dive.wsl2_async(
+            "start",
+            command="pytest --version",
+            timeout=5,
+            permission=app._DIRECT_WSL_PERMISSION,
+        )
         deadline = time.monotonic() + 3
         state = started
         while time.monotonic() < deadline:
