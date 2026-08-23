@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..job_manager import JobManager
-from ..task_runtime import ack_task, collect_task, refresh_task
+from ..task_runtime import ack_task, collect_task, project_task, refresh_task
 from ..task_store import TaskStore
 
 
@@ -101,18 +101,18 @@ class ConduitRuntime:
 
     def snapshot(self) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        for stored in self.task_store.list_tasks():
-            task = refresh_task(self.jobs, self.task_store, stored)
-            created = datetime.fromisoformat(str(task["created_at"]))
-            age_sec = max(0, int((datetime.now(UTC) - created).total_seconds()))
-            tasks.append(
-                {
-                    "id": str(task["task_id"]),
-                    "label": str(task["label"]),
-                    "status": self._map_state(str(task["state"])),
-                    "age_sec": age_sec,
-                }
-            )
+        for stored in self.task_store.list_tasks()[:8]:
+            task = project_task(refresh_task(self.jobs, self.task_store, stored))
+            row: dict[str, object] = {
+                "id": str(task["task_id"]),
+                "label": str(task["label"]),
+                "status": self._map_state(str(task["state"])),
+                "age_sec": int(task["elapsed_seconds"]),
+            }
+            status_label = task.get("status_label")
+            if status_label:
+                row["status_label"] = str(status_label)
+            tasks.append(row)
         return tasks
 
     def _collect(self, task_id: str) -> dict[str, Any]:

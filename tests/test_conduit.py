@@ -187,6 +187,7 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
                 'await run_command("sleep 0.3")\n{"origin": "dive"}',
                 background=True,
                 label="from-dive",
+                status_cmd="printf 'TODOS 3/9'",
             )
         )
         dive_task_id = str(dive_started["task_id"])
@@ -196,6 +197,8 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
             conduit_task_id,
             dive_task_id,
         }
+        dive_snapshot = next(task for task in conduit_snapshot if task["id"] == dive_task_id)
+        assert dive_snapshot["status_label"] == "TODOS 3/9"
 
         runtime.jobs.cancel(conduit_execution_id)
         asyncio.run(gpt_dive.code_mode("await task_cancel(PAYLOAD)", payload=dive_task_id))
@@ -203,6 +206,18 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
         app_module.task_store = original_task_store
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_conduit_snapshot_is_bounded(tmp_path: Path) -> None:
+    runtime, _ = _runtime(tmp_path)
+    for index in range(9):
+        runtime.task_store.create(
+            execution_id=f"missing-{index}",
+            label=f"task-{index}",
+            state="lost",
+        )
+
+    assert len(runtime.snapshot()) == 8
 
 
 def test_every_action_returns_task_snapshot(tmp_path: Path) -> None:

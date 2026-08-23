@@ -11,6 +11,7 @@ import pytest
 from pydantic_monty import MontyRuntimeError, MontyTypingError
 
 import gpt_dive.app as app_module
+import gpt_dive.task_runtime as task_runtime_module
 from gpt_dive import code_mode
 
 
@@ -838,7 +839,7 @@ def test_task_status_display_falls_back_without_changing_state(
         app_module.task_store.create(execution_id="c", label="timeout", status_cmd="timeout", status="TIMEOUTBACK")
         app_module.task_store.create(execution_id="d", label="empty", status_cmd="empty", status="EMPTYBACK")
         monkeypatch.setattr(app_module, "_refresh_task", lambda task: task)
-        monkeypatch.setattr(app_module, "_run_command", fake_run)
+        monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
 
         tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
         assert [task["status_label"] for task in tasks] == [

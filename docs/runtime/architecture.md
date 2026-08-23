@@ -17,14 +17,14 @@ ChatGPT Web
   -> local WSL2
 ```
 
-`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the durable process-lifecycle path.
+`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). Long model-visible background Code Mode work uses `background=True` with a human-readable `label`, which creates a durable Runtime Task while reusing the existing process execution path. `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the low-level durable process-lifecycle surface.
 
 ## Stable Web MCP Surface
 
 Exactly four top-level tools are exposed:
 
 - `bootstrap` — loads trusted fresh-session context from the user's local WSL2 wiki.
-- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports foreground execution and durable background execution with `background=True` plus `status/result/cancel` lifecycle actions.
+- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports foreground execution, raw durable background execution, and Task-aware background execution when `label` is supplied.
 - `wsl2_sync` — exceptional short synchronous shell path for transport/smoke checks or explicit cases where Code Mode is not appropriate.
 - `wsl2_async` — durable shell/process lifecycle interface, normally backed by `systemd --user`.
 
@@ -48,6 +48,9 @@ Shell
 Model / orchestration
   subagent_call / agy_worker / bare / m3_evidence / council_emit
 
+Task awareness
+  task_list / task_collect / task_cancel / task_ack
+
 Retrieval / recovery
   repo_search / gz64
 ```
@@ -70,6 +73,20 @@ Council registers `council_emit` behind Code Mode as the explicit Web SOL output
 
 Background Code Mode launches a worker process through `JobManager`. The worker rebuilds a fresh Monty runtime and capability registry, then returns a strict structured result envelope. The registry itself is not serialized across the process boundary.
 
+Model-visible asynchronous work is tracked separately from process execution:
+
+```text
+JobManager execution
+      ↓ execution_id
+SQLite TaskStore
+      ↓
+shared Task runtime + TrackedTasks projection
+      ├─ @dive ordinary tool awareness
+      └─ @c Conduit snapshot
+```
+
+Task state, acknowledgement, optional `status_cmd`/static status display, and derived elapsed time are Runtime-owned. Conduit uses the same JobManager root, TaskStore, lifecycle normalization, and projection rather than maintaining `conduit.json` or a separate task-tracking SSOT. Execution results keep their normal retention policy; acknowledgement removes Task awareness without pinning the backing result.
+
 ## Harness and Subagents
 
 `subagent_call` is a registered Code Mode capability rather than a top-level MCP tool. Workspace-enabled subagents use the Pydantic AI Harness coding bundle scoped to the supplied `cwd`, while GPT Dive's `guard-bin` remains first on `PATH`.
@@ -85,7 +102,7 @@ GPT Dive separates hard execution policy from harness policy.
 
 ## MCP Tasks
 
-GPT Dive can integrate with the MCP Tasks lifecycle when the client negotiates `io.modelcontextprotocol/tasks` on the required protocol version. ChatGPT Web has not negotiated that extension in the verified environment, so GPT Dive currently relies on its own durable job lifecycle for background work.
+GPT Dive can integrate with the MCP Tasks lifecycle when the client negotiates `io.modelcontextprotocol/tasks` on the required protocol version. ChatGPT Web has not negotiated that extension in the verified environment, so model-visible background work currently uses GPT Dive Runtime Tasks and TrackedTasks awareness over the existing durable execution primitive.
 
 ## Source Layout
 
@@ -96,7 +113,11 @@ src/gpt_dive/
 ├── app.py
 ├── code_runtime.py
 ├── code_mode_worker.py
+├── command_runtime.py
 ├── job_manager.py
+├── task_store.py
+├── task_runtime.py
+├── conduit/
 ├── subagent_runtime.py
 ├── subagent_worker.py
 ├── tasks_extension.py

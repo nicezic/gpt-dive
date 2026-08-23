@@ -5,6 +5,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from .command_runtime import run_command
 from .job_manager import JobManager, JobNotFoundError
 from .task_store import TaskStore
 
@@ -167,6 +168,77 @@ def _state_from_result(result: dict[str, Any]) -> str:
     if isinstance(exit_code, int) and exit_code != 0:
         return "failed"
     return "completed"
+
+
+def task_status_label(task: dict[str, Any]) -> str | None:
+    if task["state"] != "working":
+        return None
+
+    static_status = str(task.get("status") or "").strip()
+    status_cmd = str(task.get("status_cmd") or "").strip()
+    if status_cmd:
+        try:
+            probe = run_command(status_cmd, timeout=1.0)
+        except OSError:
+            probe = {"returncode": 1, "stdout": ""}
+        if probe.get("returncode") == 0:
+            stdout = " ".join(str(probe.get("stdout") or "").splitlines()).strip()
+            if stdout:
+                return stdout[:256]
+    return static_status[:256] if static_status else None
+
+
+def task_elapsed_seconds(task: dict[str, Any]) -> int:
+    from datetime import UTC, datetime
+
+    created = datetime.fromisoformat(str(task["created_at"]))
+    if task["state"] == "working":
+        end = datetime.now(UTC)
+    else:
+        end = datetime.fromisoformat(str(task["updated_at"]))
+    return max(0, int((end - created).total_seconds()))
+
+
+def project_task(task: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(task)
+    projected["status_label"] = task_status_label(task)
+    projected["elapsed_seconds"] = task_elapsed_seconds(task)
+    return projected
+
+
+_TASK_STATE_MARKERS = {
+    "working": "🧵",
+    "completed": "✅",
+    "failed": "❌",
+    "cancelled": "⛔",
+    "lost": "⚠️",
+}
+
+
+def format_task_elapsed(seconds: int) -> str:
+    if seconds < 3600:
+        minutes, secs = divmod(seconds, 60)
+        return f"{minutes}:{secs:02d}"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
+    lines = ["TrackedTasks"]
+    for task in tasks[:limit]:
+        state = str(task["state"])
+        marker = _TASK_STATE_MARKERS.get(state, "•")
+        parts = [
+            str(task["label"]),
+            f"{marker} {state}",
+            format_task_elapsed(int(task["elapsed_seconds"])),
+        ]
+        status_label = str(task.get("status_label") or "").strip()
+        if status_label:
+            parts.append(status_label)
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
 
 
 def refresh_task(

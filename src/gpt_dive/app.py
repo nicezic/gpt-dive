@@ -9,10 +9,8 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -28,6 +26,7 @@ from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
 from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
+from .command_runtime import run_command as _run_command
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .job_manager import JobManager
@@ -40,7 +39,9 @@ from .task_runtime import CODE_MODE_WORKER_PROTOCOL
 from .task_runtime import ack_task as runtime_ack_task
 from .task_runtime import cancel_task as runtime_cancel_task
 from .task_runtime import collect_task as runtime_collect_task
+from .task_runtime import project_task as runtime_project_task
 from .task_runtime import refresh_task as runtime_refresh_task
+from .task_runtime import render_tracked_tasks as runtime_render_tracked_tasks
 from .task_store import TaskStore
 from .tasks_extension import TasksExtension
 
@@ -88,62 +89,6 @@ mcp = MCPServer(
     ),
     extensions=[tasks_extension],
 )
-
-
-def _run_command(
-    command: str,
-    cwd: str | None = None,
-    timeout: float = 600.0,
-    stdin: str | None = None,
-    env: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    if not command.strip():
-        raise ValueError("command must not be empty")
-
-    if timeout <= 0:
-        raise ValueError("timeout must be greater than 0")
-
-    run_cwd = str(Path(cwd).expanduser()) if cwd else None
-    guard_bin = Path(__file__).resolve().parent / "guard-bin"
-    runtime_path = build_runtime_path(guard_bin)
-    guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
-
-    try:
-        completed = subprocess.run(
-            ["/bin/bash", "-lc", guarded_command],
-            cwd=run_cwd,
-            capture_output=True,
-            text=True,
-            input=stdin,
-            timeout=timeout,
-            check=False,
-            env=env,
-        )
-
-        return {
-            "command": command,
-            "returncode": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
-        }
-
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
-
-        return {
-            "command": command,
-            "returncode": 124,
-            "stdout": stdout,
-            "stderr": (
-                f"{stderr}\n[command] timed out after {timeout} seconds"
-            ).lstrip(),
-        }
 
 
 def _expand_env_path(value: str) -> Path:
@@ -829,80 +774,15 @@ def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
     return runtime_refresh_task(jobs, task_store, task)
 
 
-def _task_status_label(task: dict[str, Any]) -> str | None:
-    if task["state"] != "working":
-        return None
-
-    static_status = str(task.get("status") or "").strip()
-    status_cmd = str(task.get("status_cmd") or "").strip()
-    if status_cmd:
-        try:
-            probe = _run_command(status_cmd, timeout=1.0)
-        except OSError:
-            probe = {"returncode": 1, "stdout": ""}
-        if probe.get("returncode") == 0:
-            stdout = " ".join(str(probe.get("stdout") or "").splitlines()).strip()
-            if stdout:
-                return stdout[:256]
-    return static_status[:256] if static_status else None
-
-
-def _task_elapsed_seconds(task: dict[str, Any]) -> int:
-    created = datetime.fromisoformat(str(task["created_at"]))
-    if task["state"] == "working":
-        end = datetime.now(UTC)
-    else:
-        end = datetime.fromisoformat(str(task["updated_at"]))
-    return max(0, int((end - created).total_seconds()))
-
-
-def _decorate_task(task: dict[str, Any]) -> dict[str, Any]:
-    decorated = dict(task)
-    decorated["status_label"] = _task_status_label(task)
-    decorated["elapsed_seconds"] = _task_elapsed_seconds(task)
-    return decorated
-
-
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
     tasks = task_store.list_tasks()
     if limit is not None:
         tasks = tasks[:limit]
-    return [_decorate_task(_refresh_task(task)) for task in tasks]
-
-
-_TASK_STATE_MARKERS = {
-    "working": "🧵",
-    "completed": "✅",
-    "failed": "❌",
-    "cancelled": "⛔",
-    "lost": "⚠️",
-}
-
-
-def _format_task_elapsed(seconds: int) -> str:
-    if seconds < 3600:
-        minutes, secs = divmod(seconds, 60)
-        return f"{minutes}:{secs:02d}"
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}"
+    return [runtime_project_task(_refresh_task(task)) for task in tasks]
 
 
 def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
-    lines = ["TrackedTasks"]
-    for task in tasks[:limit]:
-        state = str(task["state"])
-        marker = _TASK_STATE_MARKERS.get(state, "•")
-        parts = [
-            str(task["label"]),
-            f"{marker} {state}",
-            _format_task_elapsed(int(task["elapsed_seconds"])),
-        ]
-        status_label = str(task.get("status_label") or "").strip()
-        if status_label:
-            parts.append(status_label)
-        lines.append(" · ".join(parts))
-    return "\n".join(lines)
+    return runtime_render_tracked_tasks(tasks, limit=limit)
 
 
 def _task_collect(task_id: str) -> dict[str, Any]:
