@@ -1,7 +1,7 @@
 ---
 title: ADR - Task, Execution, and TrackedTasks Runtime Model
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-23
 type: decision
 status: proposed
 ---
@@ -36,6 +36,31 @@ Execution
 TrackedTasks
 = compact automatic projection of outstanding Tasks
 ```
+
+### Why Task and Execution are separate
+
+GPT Dive must manage heterogeneous long-running work without forcing those workers to share one implementation:
+
+```text
+background Code Mode   AGY   peer review   Conduit   future workers
+        \               |        |           |            /
+         +--------------+--------+-----------+-----------+
+                                |
+                                v
+                          Execution boundary
+                     status / result / cancel
+                                |
+                                v
+                              Task
+                 Web SOL awareness / handling
+                                |
+                                v
+                          TrackedTasks
+```
+
+The separation protects two different semantics. **Execution completion is a runtime event; Task handling is a Web SOL event.** A worker may finish while its Task must remain visible until Web SOL decides that the result was handled or is no longer useful.
+
+Execution is also the common boundary across different long-running workers, not a requirement that every worker use one runner framework. Existing worker-specific launch and result semantics stay at their current boundaries and are normalized only enough for Task awareness and control.
 
 The v1 rule is **reuse before abstraction**. Existing background Code Mode remains the normal detached execution path. GPT Dive does not introduce a new runner framework, recovery subsystem, idempotency subsystem, or launcher hierarchy merely to implement Task awareness.
 
@@ -142,6 +167,8 @@ Task
 ├─ execution_id
 ├─ label
 ├─ state
+├─ status_cmd?   # optional dynamic display probe
+├─ status?       # optional static display text
 ├─ created_at
 └─ updated_at
 ```
@@ -152,8 +179,8 @@ No v1 Task field exists for:
 source
 runner
 start_key
-status_cmd
-status_label
+status_label     # derived at render time, not persisted
+elapsed/duration # derived from timestamps, not persisted
 handled_at
 provider session ids
 PID/backend
@@ -214,29 +241,42 @@ If a previously observed terminal Task later loses its backing retained Executio
 
 There is no recovery transition out of `lost`.
 
+### 4.5 Display status
+
+Task display status is optional decoration and never lifecycle state.
+
+```text
+status_cmd present
+    → run the small local command
+    → usable stdout becomes status_label
+
+status_cmd absent, or probe has no usable output
+    → use static status when present
+
+neither available
+    → render label + state + elapsed time only
+```
+
+Typical dynamic output may be as small as `TODOS 3/9`. A worker such as AGY may expose this through a command like `cat /tmp/agy-worker/<job>/status.md` without learning the Task database contract.
+
+`status_cmd` is best-effort, local, bounded, and only useful for visible working Tasks. Failure, timeout, or empty output does not change `Task.state`. `status_label` is derived output and is not persisted.
+
 ---
 
 ## 5. Execution contract
 
-The existing durable background machinery is reused and renamed around the canonical **Execution** terminology.
+The existing durable background machinery supplies the v1 **Execution** boundary. Task/TrackedTasks functionality is proven on top of that machinery before terminology cleanup becomes a migration concern.
 
-The old implementation may supply proven process-management code, but new runtime/domain code uses:
+The canonical domain language is:
 
 ```text
-ExecutionManager
 Execution
 execution_id
 ```
 
-No permanent compatibility layer is added for:
+The current `JobManager` / `job_id` implementation may remain internally during the first functional rollout. After the Task lifecycle is proven, it may be renamed/refactored to Execution terminology as cleanup. That rename is **not a prerequisite** for Task awareness and must not grow into a second execution framework.
 
-```text
-JobManager
-Job
-job_id
-```
-
-Old persisted Job state does not need migration support. It may age out or be deleted outside the new runtime path.
+No permanent dual Job/Execution compatibility layer or old-state migration reader is required once that cleanup happens.
 
 ### 5.1 One normalized Execution outcome
 
@@ -327,7 +367,7 @@ SQLite
 
 SQLite owns **Task awareness only**.
 
-Execution/process persistence remains owned by ExecutionManager. Do not duplicate Execution state into a second SQLite execution SSOT.
+Execution/process persistence remains owned by the backing Execution runtime. Do not duplicate Execution state into a second SQLite execution SSOT.
 
 There is no source partition. `@dive` and `@c` read the same outstanding Task list.
 
@@ -364,13 +404,31 @@ A fresh ChatGPT session therefore rediscovers whatever Task records still exist.
 
 ## 9. TrackedTasks projection
 
-`task_list()` and automatic TrackedTasks use the same standard row renderer. The Task layer first loads complete Task records for control and diagnostics; rendering is a separate final step that exposes only the compact model-facing rows.
+`task_list()` returns complete structured TrackedTask objects and may also include the same human-readable rows used by automatic awareness. Structured data and display text are separate projections of the same Task records.
+
+A structured item conceptually contains:
+
+```text
+TrackedTask
+├─ task_id
+├─ execution_id
+├─ label
+├─ state
+├─ status_cmd?
+├─ status?
+├─ status_label?     # derived from status_cmd or static status
+├─ created_at
+├─ updated_at
+└─ elapsed_seconds   # derived, not persisted
+```
+
+The compact text stays small:
 
 ```text
 TrackedTasks
-├─ Review ADR · 🧵 working · 2:30
-├─ AGY research · ✅ completed · 5:59
-└─ Regression · 🧵 working · 11:01
+├─ AGY research · 🧵 working · 4:21 · TODOS 3/9
+├─ Review ADR · ✅ completed · 2:08
+└─ Regression · ❌ failed · 1:22
 ```
 
 State markers are deliberately small and fixed:
@@ -383,11 +441,9 @@ State markers are deliberately small and fixed:
 ⚠️ lost
 ```
 
-The displayed time is derived, not persisted: working Tasks use `now - created_at`; terminal/lost Tasks use `updated_at - created_at`. `updated_at` changes when the Task state changes, not on a no-op refresh, so terminal elapsed time stays stable. Render `M:SS` below one hour and `H:MM:SS` at one hour or above. No progress probe or extra duration field is required.
+Elapsed time is derived, not persisted: working Tasks use `now - created_at`; terminal/lost Tasks use `updated_at - created_at`. `updated_at` changes when Task state changes, not on a no-op refresh, so terminal elapsed time stays stable.
 
-Internal list results retain the complete v1 Task record (`task_id`, `execution_id`, `label`, `state`, `created_at`, `updated_at`). Compact rendering must not throw away that internal information.
-
-Explicit `task_list()` returns all outstanding Tasks through the standard renderer. Automatic TrackedTasks appended to unrelated tool results may use a bounded item count to protect foreground output size. Selection limits are rendering policy, not Task-domain state. No v1 ADR requirement exists for terminal-first sorting, oldest-first fairness, status text normalization, or progress percentages.
+Automatic TrackedTasks appended to unrelated `@dive` / `@c` results adds only the compact readable text and does not merge Task objects into the tool's existing structured result. Explicit `task_list()` is the structured inspection surface. Automatic output may be bounded to protect foreground context; selection limits are rendering policy, not Task-domain state.
 
 ### 9.1 Preserve the primary tool result
 
@@ -413,23 +469,18 @@ Required operations are conceptually:
 
 ```text
 task_list()
-task_get(task_id)
 task_collect(task_id)
 task_cancel(task_id)
 task_ack(task_id)
 ```
 
-Exact capability names/signatures are implementation details verified against live CAPABILITIES when implemented.
+Exact capability names/signatures are implementation details verified against live CAPABILITIES when implemented. v1 does not add a separate `task_get`; `task_list()` already exposes complete structured Task objects.
 
 ### 10.1 `task_list`
 
-Refresh locally and load the complete outstanding Task records. The internal result keeps every v1 Task field; the capability then renders all outstanding Tasks with the standard TrackedTasks row format shown above.
+Refresh locally and return all outstanding Tasks as complete structured TrackedTask objects, plus optional human-readable rows for direct model use.
 
-### 10.2 `task_get`
-
-Refresh locally, then return Task-level state and optional diagnostic link to `execution_id` when explicitly requested.
-
-### 10.3 `task_collect`
+### 10.2 `task_collect`
 
 ```text
 working   → not ready
@@ -441,13 +492,13 @@ lost      → lost / result unavailable
 
 Collection is non-destructive and does not acknowledge the Task.
 
-### 10.4 `task_cancel`
+### 10.3 `task_cancel`
 
 If still running, forward cancellation to the backing Execution. Repeated cancellation should be harmless.
 
 If already terminal or lost, return the current state without inventing another lifecycle.
 
-### 10.5 `task_ack`
+### 10.4 `task_ack`
 
 Acknowledgement means:
 
@@ -467,7 +518,7 @@ Ack does not pin, extend, or otherwise control Execution result retention.
 
 ## 11. Result retention and loss
 
-ExecutionManager keeps its normal result retention policy.
+The backing Execution runtime keeps its normal result retention policy.
 
 Task awareness does **not** pin results indefinitely.
 
@@ -553,7 +604,7 @@ The following ideas were explored during grilling and are deliberately **not par
 | unhandled result pin/unpin | Couples awareness to retention and can retain data forever. Normal Execution retention is enough. |
 | handled Task retention lifecycle | `ack` can simply remove awareness. No `handled_at` state machine is needed. |
 | Task `source` provenance | Shared registry is enough; provenance is diagnostic logging, not Task domain state. |
-| `status_cmd` / `status_label` progress system | Nice-to-have progress decoration, not required for non-blocking awareness. |
+| structured progress/status subsystem | v1 keeps only optional `status_cmd` + static `status` display text; no progress phases, percentages, persistence protocol, or worker-to-Task update API. |
 | `shell_task` / `code_task` / agent-specific Task launcher hierarchy | Reuse background Code Mode rather than creating parallel launch abstractions. |
 | native MCP Tasks v1 integration | Not required for ChatGPT Web Task awareness. |
 | detailed TrackedTasks ordering/fairness rules | Compact bounded rendering is implementation policy, not an architectural invariant. |
@@ -591,9 +642,9 @@ Rejected. Machine lifecycle remains a small explicit state.
 
 Rejected. Missing backing state becomes `lost`; no reconstruction or remote polling occurs.
 
-### Preserve JobManager/job_id compatibility
+### Preserve permanent JobManager/job_id compatibility
 
-Rejected. This is an internal cleanup and does not need permanent aliases or old-state readers.
+Rejected. The existing implementation may remain during the first functional rollout, but later terminology cleanup does not need permanent dual aliases or old-state readers.
 
 ---
 
@@ -604,39 +655,40 @@ v1 implementation must preserve these rules:
 1. Long model-visible background work has a Task with a human-readable label.
 2. v1 uses one Task per one Execution.
 3. `task_id` and `execution_id` are distinct identities.
-4. Existing background Code Mode is reused rather than replaced by a new launcher framework.
+4. Existing background execution paths are reused rather than replaced by a new launcher framework.
 5. Task persistence is a small SQLite awareness registry; Execution persistence remains separate.
 6. Background Execution exposes one normalized terminal outcome; no durable Runner/collector registry exists.
 7. Missing backing Execution/result becomes `lost`; v1 performs no automatic recovery.
 8. Ordinary tool traffic refreshes outstanding Tasks using local evidence only.
 9. TrackedTasks is supplemental and does not mutate primary tool result contracts.
-10. Collection is non-destructive and does not imply acknowledgement.
-11. Ack removes Task awareness and does not manage result retention.
-12. Normal Execution retention may cause an ignored Task/result to become lost.
-13. No start-key/idempotency claim subsystem exists in v1.
-14. No status-probe/progress subsystem exists in v1.
-15. No JobManager/job_id backward-compatibility layer is created.
-16. `task_list()` and automatic TrackedTasks share one standard row renderer; explicit `task_list()` renders all outstanding Tasks while automatic projection may be bounded.
+10. `task_list()` exposes complete structured TrackedTask objects; automatic `@dive` / `@c` awareness adds compact text only.
+11. Optional `status_cmd` or static `status` decorates display only and never owns lifecycle state.
+12. Elapsed time and `status_label` are derived and are not persisted Task state.
+13. Collection is non-destructive and does not imply acknowledgement.
+14. Ack removes Task awareness and does not manage result retention.
+15. Normal Execution retention may cause an ignored Task/result to become lost.
+16. No start-key/idempotency, structured progress, runner registry, or recovery subsystem exists in v1.
+17. Job→Execution terminology cleanup happens after the Task lifecycle is proven and does not require a permanent compatibility layer.
 
 ---
 
 ## 18. Implementation order
 
 ```text
-1. Rename/refactor durable Job runtime into Execution terminology; do not preserve Job compatibility aliases.
-2. Add minimal SQLite TaskStore.
-3. Extend existing code_mode(background=True) so a label creates and returns a Task.
-4. Persist one normalized Execution terminal outcome usable after reconnect.
-5. Add task_list / task_get / task_collect / task_cancel / task_ack Code Mode capabilities.
-6. Append compact TrackedTasks after ordinary tool calls using the existing result-content middleware seam.
+1. Add minimal SQLite TaskStore.
+2. Extend existing code_mode(background=True) so a label creates and returns a Task while reusing the current background runtime.
+3. Persist one normalized Execution terminal outcome usable after reconnect.
+4. Add task_list / task_collect / task_cancel / task_ack Code Mode capabilities.
+5. Add optional status_cmd / static status display and derived elapsed time.
+6. Append compact TrackedTasks text after ordinary tool calls using the existing result-content middleware seam.
 7. Verify fresh-session rediscovery and lost behavior.
 8. Convert /peer-review to the Task-backed background Code Mode path using a cheap Haiku-class canary.
-9. Convert long AGY workflows to the same path; remove old skill guidance that teaches raw Job handles.
+9. Convert long AGY workflows to the same path.
 10. Point Conduit at the shared TaskStore and remove duplicate tracking metadata.
-11. Update runtime/skill/CAPABILITIES documentation and delete stale Job terminology.
+11. After the lifecycle is proven, clean Job terminology into Execution terminology and update runtime/skill/CAPABILITIES docs without permanent compatibility aliases.
 ```
 
-Native MCP Tasks, progress decoration, launch idempotency, and recovery remain outside this v1 implementation sequence.
+Native MCP Tasks, structured progress, launch idempotency, and recovery remain outside this v1 implementation sequence.
 
 ---
 
@@ -654,10 +706,12 @@ Native MCP Tasks, progress decoration, launch idempotency, and recovery remain o
 
 ```text
 [ ] background start returns task_id/label/state
-[ ] task_list internally retains complete v1 Task records
-[ ] explicit task_list renders every outstanding Task
-[ ] task_list and automatic TrackedTasks use the same compact row renderer
-[ ] standard rows render label · state emoji/state · derived elapsed time
+[ ] task_list returns complete structured TrackedTask objects
+[ ] task_list may also return compact readable rows without discarding structured fields
+[ ] standard rows render label · state · derived elapsed time and optional status text
+[ ] status_cmd stdout such as `TODOS 3/9` can decorate a visible working Task
+[ ] absent/failing/empty status_cmd falls back to static status when present, otherwise no status decoration
+[ ] status display failure never changes Task.state
 [ ] no-op refresh does not change updated_at or terminal elapsed time
 [ ] a fresh ChatGPT session can rediscover retained outstanding Tasks
 [ ] completed/failed/cancelled states refresh from local Execution state
@@ -682,15 +736,16 @@ Native MCP Tasks, progress decoration, launch idempotency, and recovery remain o
 
 ```text
 [ ] primary MCP tool result remains structurally compatible
-[ ] TrackedTasks is appended as small supplemental content
-[ ] no ordinary TrackedTasks entry exposes PID/backend/raw command
-[ ] no runner registry, start claim, status probe, or recovery subsystem is introduced
+[ ] ordinary @dive / @c results append compact TrackedTasks text without merging Task objects into existing structuredContent
+[ ] explicit task_list exposes the structured Task objects when needed
+[ ] no ordinary TrackedTasks text exposes PID/backend/raw command or status_cmd itself
+[ ] no runner registry, start claim, structured progress subsystem, or recovery subsystem is introduced
 ```
 
 ### Migration cleanliness
 
 ```text
-[ ] new code/docs use Execution/execution_id terminology
+[ ] after terminology cleanup, runtime code/docs use Execution/execution_id terminology consistently
 [ ] no permanent JobManager/job_id compatibility shim remains
 [ ] no duplicate Conduit Task SSOT remains after migration
 [ ] long agent skills use the shared background Code Mode Task path rather than separate Task launcher frameworks
@@ -716,9 +771,9 @@ Native MCP Tasks, progress decoration, launch idempotency, and recovery remain o
                          execution_id
                                │
                                v
-                        ExecutionManager
+                       Execution runtime
                                │
-                     existing durable runtime
+                    existing durable machinery
                                │
                        normalized result
 ```
