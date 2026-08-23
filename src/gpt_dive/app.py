@@ -494,7 +494,7 @@ def _reject_broad_search_root(path: Path, *, operation: str) -> None:
 
 def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry = CallableRegistry()
-    workspace = (
+    effective_cwd = (
         Path(default_cwd).expanduser().resolve()
         if default_cwd is not None
         else Path.home().resolve()
@@ -512,7 +512,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         expanded = Path(path).expanduser()
         if expanded.is_absolute():
             return expanded.resolve()
-        return (workspace / expanded).resolve()
+        return (effective_cwd / expanded).resolve()
 
     async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
         """Read a text file with line numbers. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
@@ -582,7 +582,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
     shell_max_output_chars = 50_000
     shell_toolset = Shell(
-        cwd=workspace,
+        cwd=effective_cwd,
         env=shell_env,
         denied_commands=[],
         denied_env_patterns=shell_denied_env_patterns,
@@ -686,9 +686,9 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         Relative path values resolve from the Code Mode cwd; absolute/~/ paths remain explicit.
         Use precise technical keywords when possible.
         """
-        search_path = Path(path).expanduser() if path is not None else workspace
+        search_path = Path(path).expanduser() if path is not None else effective_cwd
         if not search_path.is_absolute():
-            search_path = workspace / search_path
+            search_path = effective_cwd / search_path
         search_path = search_path.resolve()
         _reject_broad_search_root(search_path, operation="repo_search")
         return await search_repo(
