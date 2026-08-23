@@ -7,7 +7,41 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from .app import CODE_MODE_WORKER_PROTOCOL, _build_code_registry, code_runtime
+from .code_capabilities import build_code_registry, code_runtime
+from .command_runtime import run_command
+from .execution_manager import ExecutionManager
+from .task_runtime import (
+    CODE_MODE_WORKER_PROTOCOL,
+    ack_task,
+    cancel_task,
+    collect_task,
+    list_projected_tasks,
+)
+from .task_store import TaskStore
+
+
+def _tracked_task_ops() -> dict[str, Any]:
+    executions = ExecutionManager()
+    task_store = TaskStore()
+
+    def task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
+        return list_projected_tasks(executions, task_store, limit=limit)
+
+    def task_collect(task_id: str) -> dict[str, Any]:
+        return collect_task(executions, task_store, task_id)
+
+    def task_cancel(task_id: str) -> dict[str, Any]:
+        return cancel_task(executions, task_store, task_id)
+
+    def task_ack(task_id: str) -> dict[str, Any]:
+        return ack_task(executions, task_store, task_id)
+
+    return {
+        "task_list": task_list,
+        "task_collect": task_collect,
+        "task_cancel": task_cancel,
+        "task_ack": task_ack,
+    }
 
 
 def _emit(envelope: dict[str, Any]) -> None:
@@ -35,7 +69,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("worker payload must be a string or null")
     return await code_runtime.run(
         code,
-        _build_code_registry(cwd),
+        build_code_registry(cwd, run_command=run_command, **_tracked_task_ops()),
         cwd=cwd,
         payload=payload,
         background=True,

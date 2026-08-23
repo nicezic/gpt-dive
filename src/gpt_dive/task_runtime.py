@@ -206,6 +206,19 @@ def project_task(task: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def list_projected_tasks(
+    executions: ExecutionManager,
+    task_store: TaskStore,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Refresh every stored Task and return the projected awareness rows."""
+    tasks = task_store.list_tasks()
+    if limit is not None:
+        tasks = tasks[:limit]
+    return [project_task(refresh_task(executions, task_store, task)) for task in tasks]
+
+
 _TASK_STATE_MARKERS = {
     "working": "🧵",
     "completed": "✅",

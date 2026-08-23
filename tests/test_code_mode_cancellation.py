@@ -11,7 +11,7 @@ def test_code_mode_survives_repeated_async_capability_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
+    import gpt_dive.code_capabilities as code_capabilities_module
 
     def make_fake_worker(
         started: asyncio.Event, blocker: asyncio.Event, cancelled: asyncio.Event
@@ -33,7 +33,7 @@ def test_code_mode_survives_repeated_async_capability_cancellation(
             blocker = asyncio.Event()
 
             monkeypatch.setattr(
-                app_module,
+                code_capabilities_module,
                 "invoke_agy_worker",
                 make_fake_worker(started, blocker, cancelled),
             )
