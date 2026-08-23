@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -391,6 +392,29 @@ def _tool_name_from_request(params: Any) -> str | None:
     return name if isinstance(name, str) else None
 
 
+async def _tracked_tasks_middleware(
+    ctx: ServerRequestContext[Any, Any], call_next: CallNext
+) -> HandlerResult:
+    if ctx.method != "tools/call":
+        return await call_next(ctx)
+
+    tool_name = _tool_name_from_request(ctx.params)
+    result = await call_next(ctx)
+    if tool_name == "bootstrap" or not isinstance(result, CallToolResult) or result.is_error:
+        return result
+
+    try:
+        tasks = await asyncio.to_thread(_task_list, limit=8)
+        if not tasks:
+            return result
+        text = _render_tracked_tasks(tasks)
+    except Exception:  # noqa: BLE001 - awareness must never fail the primary tool result
+        text = "TrackedTasks unavailable"
+
+    awareness = TextContent(type="text", text=f"\n\n{text}\n")
+    return result.model_copy(update={"content": [*result.content, awareness]})
+
+
 async def _periodic_reminder_middleware(
     ctx: ServerRequestContext[Any, Any], call_next: CallNext
 ) -> HandlerResult:
@@ -424,6 +448,7 @@ async def _periodic_reminder_middleware(
 
 mcp.middleware.append(request_lifecycle_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
+mcp.middleware.append(_tracked_tasks_middleware)
 
 
 _DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
@@ -826,8 +851,80 @@ def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
     return task_store.update_state(task_id, target)
 
 
-def _task_list() -> list[dict[str, Any]]:
-    return [_refresh_task(task) for task in task_store.list_tasks()]
+def _task_status_label(task: dict[str, Any]) -> str | None:
+    if task["state"] != "working":
+        return None
+
+    static_status = str(task.get("status") or "").strip()
+    status_cmd = str(task.get("status_cmd") or "").strip()
+    if status_cmd:
+        try:
+            probe = _run_command(status_cmd, timeout=1.0)
+        except OSError:
+            probe = {"returncode": 1, "stdout": ""}
+        if probe.get("returncode") == 0:
+            stdout = " ".join(str(probe.get("stdout") or "").splitlines()).strip()
+            if stdout:
+                return stdout[:256]
+    return static_status[:256] if static_status else None
+
+
+def _task_elapsed_seconds(task: dict[str, Any]) -> int:
+    created = datetime.fromisoformat(str(task["created_at"]))
+    if task["state"] == "working":
+        end = datetime.now(UTC)
+    else:
+        end = datetime.fromisoformat(str(task["updated_at"]))
+    return max(0, int((end - created).total_seconds()))
+
+
+def _decorate_task(task: dict[str, Any]) -> dict[str, Any]:
+    decorated = dict(task)
+    decorated["status_label"] = _task_status_label(task)
+    decorated["elapsed_seconds"] = _task_elapsed_seconds(task)
+    return decorated
+
+
+def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
+    tasks = task_store.list_tasks()
+    if limit is not None:
+        tasks = tasks[:limit]
+    return [_decorate_task(_refresh_task(task)) for task in tasks]
+
+
+_TASK_STATE_MARKERS = {
+    "working": "🧵",
+    "completed": "✅",
+    "failed": "❌",
+    "cancelled": "⛔",
+    "lost": "⚠️",
+}
+
+
+def _format_task_elapsed(seconds: int) -> str:
+    if seconds < 3600:
+        minutes, secs = divmod(seconds, 60)
+        return f"{minutes}:{secs:02d}"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
+    lines = ["TrackedTasks"]
+    for task in tasks[:limit]:
+        state = str(task["state"])
+        marker = _TASK_STATE_MARKERS.get(state, "•")
+        parts = [
+            str(task["label"]),
+            f"{marker} {state}",
+            _format_task_elapsed(int(task["elapsed_seconds"])),
+        ]
+        status_label = str(task.get("status_label") or "").strip()
+        if status_label:
+            parts.append(status_label)
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
 
 
 def _task_collect(task_id: str) -> dict[str, Any]:
@@ -874,6 +971,8 @@ def _start_background_code_mode(
     cwd: str | None,
     payload: str | None,
     label: str | None,
+    status_cmd: str | None,
+    status: str | None,
 ) -> dict[str, Any]:
     request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
@@ -910,7 +1009,12 @@ def _start_background_code_mode(
         if label is None:
             return started
         try:
-            task = task_store.create(execution_id=job_id, label=label)
+            task = task_store.create(
+                execution_id=job_id,
+                label=label,
+                status_cmd=status_cmd,
+                status=status,
+            )
         except Exception:
             _cleanup_code_mode_request(job_id)
             jobs.cancel(job_id)
@@ -1052,6 +1156,14 @@ async def code_mode(
         str | None,
         Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
     ] = None,
+    status_cmd: Annotated[
+        str | None,
+        Field(description="Optional bounded local command whose stdout decorates a working Task."),
+    ] = None,
+    status: Annotated[
+        str | None,
+        Field(description="Optional static Task display status used when status_cmd has no usable output."),
+    ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(
@@ -1067,10 +1179,14 @@ async def code_mode(
     normalized_action = action.strip().lower() if action is not None else None
     has_code = code is not None and bool(code.strip())
     clean_label = label.strip() if label is not None else None
+    clean_status_cmd = status_cmd.strip() if status_cmd is not None and status_cmd.strip() else None
+    clean_status = status.strip() if status is not None and status.strip() else None
     if label is not None and not clean_label:
         raise ValueError("label must not be empty")
     if clean_label is not None and len(clean_label) > 80:
         raise ValueError("label must be 80 characters or fewer")
+    if (clean_status_cmd is not None or clean_status is not None) and clean_label is None:
+        raise ValueError("status fields require a labeled background Task")
 
     if normalized_action is None:
         if not has_code:
@@ -1081,7 +1197,13 @@ async def code_mode(
             raise ValueError("job_id is only valid with a lifecycle action")
         if background:
             return await asyncio.to_thread(
-                _start_background_code_mode, str(code), cwd, payload, clean_label
+                _start_background_code_mode,
+                str(code),
+                cwd,
+                payload,
+                clean_label,
+                clean_status_cmd,
+                clean_status,
             )
         if clean_label is not None:
             raise ValueError("label is only valid with background code")
@@ -1095,6 +1217,8 @@ async def code_mode(
         raise ValueError("background is only valid when launching code")
     if clean_label is not None:
         raise ValueError("label is only valid with background code")
+    if clean_status_cmd is not None or clean_status is not None:
+        raise ValueError("status fields require a labeled background Task")
     if cwd is not None:
         raise ValueError("cwd is only valid when launching code")
     if payload is not None:
@@ -1173,6 +1297,14 @@ async def _mcp_code_mode(
         str | None,
         Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
     ] = None,
+    status_cmd: Annotated[
+        str | None,
+        Field(description="Optional bounded local command whose stdout decorates a working Task."),
+    ] = None,
+    status: Annotated[
+        str | None,
+        Field(description="Optional static Task display status used when status_cmd has no usable output."),
+    ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
@@ -1193,6 +1325,8 @@ async def _mcp_code_mode(
         payload=payload if action is None else None,
         background=background,
         label=label,
+        status_cmd=status_cmd,
+        status=status,
         action=action,
         job_id=job_id,
     )

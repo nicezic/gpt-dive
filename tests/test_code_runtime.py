@@ -612,7 +612,11 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
         assert tasks[0]["execution_id"] == started["execution_id"]
 
         listed = asyncio.run(code_mode("await task_list()"))["result"]
-        assert listed == {"tasks": tasks}
+        listed_task = listed["tasks"][0]
+        for key, value in tasks[0].items():
+            assert listed_task[key] == value
+        assert listed_task["status_label"] is None
+        assert listed_task["elapsed_seconds"] >= 0
 
         _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
@@ -768,11 +772,94 @@ def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) ->
         gpt_dive.jobs._systemd_available = original_systemd
 
 
+def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(
+            code_mode(
+                'await run_command("sleep 30")',
+                background=True,
+                label="AGY worker",
+                status_cmd="printf 'TODOS 3/9'",
+                status="STATIC",
+            )
+        )
+        task_id = str(started["task_id"])
+        listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        task = listed[0]
+        assert task["status_cmd"] == "printf 'TODOS 3/9'"
+        assert task["status"] == "STATIC"
+        assert task["status_label"] == "TODOS 3/9"
+        assert isinstance(task["elapsed_seconds"], int)
+        assert task["elapsed_seconds"] >= 0
+        assert "duration" not in task
+        raw = app_module.task_store.get(task_id)
+        assert "status_label" not in raw
+        assert "elapsed_seconds" not in raw
+
+        asyncio.run(code_mode("await task_cancel(PAYLOAD)", payload=task_id))
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_task_status_display_falls_back_without_changing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gpt_dive.task_store import TaskStore
+
+    original_task_store = app_module.task_store
+    calls: list[tuple[str, float]] = []
+
+    def fake_run(command: str, cwd=None, timeout: float = 600.0, stdin=None, env=None):
+        calls.append((command, timeout))
+        responses = {
+            "fail": {"returncode": 1, "stdout": "", "stderr": "no"},
+            "timeout": {"returncode": 124, "stdout": "", "stderr": "timeout"},
+            "empty": {"returncode": 0, "stdout": "", "stderr": ""},
+        }
+        return {"command": command, **responses[command]}
+
+    try:
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+        app_module.task_store.create(execution_id="a", label="static", status="STATIC")
+        app_module.task_store.create(execution_id="b", label="fail", status_cmd="fail", status="FAILBACK")
+        app_module.task_store.create(execution_id="c", label="timeout", status_cmd="timeout", status="TIMEOUTBACK")
+        app_module.task_store.create(execution_id="d", label="empty", status_cmd="empty", status="EMPTYBACK")
+        monkeypatch.setattr(app_module, "_refresh_task", lambda task: task)
+        monkeypatch.setattr(app_module, "_run_command", fake_run)
+
+        tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        assert [task["status_label"] for task in tasks] == [
+            "STATIC",
+            "FAILBACK",
+            "TIMEOUTBACK",
+            "EMPTYBACK",
+        ]
+        assert all(task["state"] == "working" for task in tasks)
+        assert calls == [("fail", 1.0), ("timeout", 1.0), ("empty", 1.0)]
+    finally:
+        app_module.task_store = original_task_store
+
+
 def test_code_mode_task_label_validation() -> None:
     with pytest.raises(ValueError, match="label must not be empty"):
         asyncio.run(code_mode("1", background=True, label="   "))
     with pytest.raises(ValueError, match="label is only valid with background"):
         asyncio.run(code_mode("1", label="foreground"))
+    with pytest.raises(ValueError, match="status fields require a labeled background Task"):
+        asyncio.run(code_mode("1", background=True, status="orphan"))
 
 
 def test_code_mode_cancels_execution_when_task_persistence_fails(

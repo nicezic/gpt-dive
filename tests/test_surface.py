@@ -53,6 +53,8 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     label_variants = tool.input_schema["properties"]["label"]["anyOf"]
     assert {variant.get("type") for variant in label_variants} >= {"string", "null"}
     assert any(variant.get("maxLength") == 80 for variant in label_variants)
+    assert "status_cmd" in tool.input_schema["properties"]
+    assert "status" in tool.input_schema["properties"]
     action_variants = tool.input_schema["properties"]["action"]["anyOf"]
     assert {tuple(v.get("enum", [])) for v in action_variants} >= {("status", "result", "cancel")}
     assert "input" not in tool.input_schema["properties"]
@@ -88,6 +90,76 @@ def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
 
 def _middleware_tool_result(text: str = "ok") -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)])
+
+
+async def _call_tracked_tasks_middleware(
+    tool_name: str, result: CallToolResult
+) -> CallToolResult:
+    connection = SimpleNamespace(state={})
+    session = SimpleNamespace(_connection=connection)
+    ctx = SimpleNamespace(method="tools/call", params={"name": tool_name}, session=session)
+
+    async def call_next(_ctx):
+        return result
+
+    output = await app._tracked_tasks_middleware(cast(Any, ctx), call_next)
+    assert isinstance(output, CallToolResult)
+    return output
+
+
+def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
+    def awareness_tasks(*, limit=None):
+        assert limit == 8
+        return [
+            {
+                "label": "AGY worker",
+                "state": "working",
+                "elapsed_seconds": 261,
+                "status_label": "TODOS 3/9",
+            }
+        ]
+
+    monkeypatch.setattr(app, "_task_list", awareness_tasks)
+    primary = CallToolResult(
+        content=[TextContent(type="text", text="PRIMARY")],
+        structured_content={"answer": 3},
+    )
+
+    result = asyncio.run(_call_tracked_tasks_middleware("wsl2_sync", primary))
+
+    assert result.structured_content == {"answer": 3}
+    primary_content = result.content[0]
+    awareness = result.content[-1]
+    assert isinstance(primary_content, TextContent)
+    assert isinstance(awareness, TextContent)
+    assert primary_content.text == "PRIMARY"
+    assert "TrackedTasks" in awareness.text
+    assert "AGY worker" in awareness.text
+    assert "working" in awareness.text
+    assert "4:21" in awareness.text
+    assert "TODOS 3/9" in awareness.text
+
+
+def test_tracked_tasks_middleware_failure_preserves_primary_result(monkeypatch) -> None:
+    def fail_awareness(*, limit=None):
+        assert limit == 8
+        raise RuntimeError("task db unavailable")
+
+    monkeypatch.setattr(app, "_task_list", fail_awareness)
+    primary = CallToolResult(
+        content=[TextContent(type="text", text="PRIMARY")],
+        structured_content={"answer": 3},
+    )
+
+    result = asyncio.run(_call_tracked_tasks_middleware("code_mode", primary))
+
+    assert result.structured_content == {"answer": 3}
+    primary_content = result.content[0]
+    awareness = result.content[-1]
+    assert isinstance(primary_content, TextContent)
+    assert isinstance(awareness, TextContent)
+    assert primary_content.text == "PRIMARY"
+    assert "TrackedTasks unavailable" in awareness.text
 
 
 async def _call_periodic_reminder_middleware(
