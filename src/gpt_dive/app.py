@@ -242,7 +242,7 @@ def _read_bootstrap_packet() -> dict[str, Any]:
         "preload_path": str(preload),
         "preloaded_files": preloaded_files,
         "bootstrap_reminders": [
-            {"path": item["path"], "section": item["section"]}
+            {key: value for key, value in item.items() if key != "content"}
             for item in bootstrap_reminders
         ],
         "stdout": "\n\n".join(chunks) + "\n",
@@ -256,8 +256,8 @@ _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
 _PERIODIC_REMINDER_CONFIG = "bootstrap/reminder.json"
 
 
-def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str]]]:
-    """Parse reminder cadence plus ordered Markdown section sources."""
+def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str | None]]]:
+    """Parse reminder cadence plus ordered whole-file or Markdown section sources."""
     try:
         data = json.loads(reminder_text)
     except json.JSONDecodeError as exc:
@@ -273,7 +273,7 @@ def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str
     if not isinstance(raw_files, list) or not raw_files:
         raise ValueError("reminder_files must be a non-empty list")
 
-    files: list[tuple[str, str]] = []
+    files: list[tuple[str, str | None]] = []
     for item in raw_files:
         if not isinstance(item, dict):
             raise TypeError("reminder_files entries must be objects")
@@ -281,13 +281,13 @@ def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str
         section = item.get("section")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("reminder file path must be a non-empty string")
-        if not isinstance(section, str) or not section.strip():
-            raise ValueError("reminder section must be a non-empty string")
+        if section is not None and (not isinstance(section, str) or not section.strip()):
+            raise ValueError("reminder section must be a non-empty string when provided")
         files.append((path, section))
     return interval, files
 
 
-def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str]]]:
+def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str | None]]]:
     path = _wiki_path() / _PERIODIC_REMINDER_CONFIG
     return _parse_reminder_config(path.read_text(errors="replace"))
 
@@ -295,7 +295,7 @@ def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str]]]:
 def _read_reminder_sections(
     *, exclude_paths: set[str] | None = None
 ) -> list[dict[str, str]]:
-    """Read reminder sections in config order, optionally skipping whole source files."""
+    """Read reminder sources in config order, optionally skipping whole source files."""
     wiki = _wiki_path()
     _, files = _read_periodic_reminder_config()
     excluded = exclude_paths or set()
@@ -309,6 +309,9 @@ def _read_reminder_sections(
         except ValueError as exc:
             raise ValueError(f"reminder path escapes trusted wiki: {relative}") from exc
         text = candidate.read_text(errors="replace")
+        if heading is None:
+            sections.append({"path": relative, "content": text.rstrip()})
+            continue
         match = re.search(
             rf"^## {re.escape(heading)}\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
             text,
@@ -351,7 +354,7 @@ def _format_reminder_sections(sections: list[dict[str, str]]) -> str:
 
 
 def _read_periodic_reminder() -> str:
-    """Read every configured reminder section in reminder order."""
+    """Read every configured whole-file or section reminder in order."""
     return _format_reminder_sections(_read_reminder_sections())
 
 

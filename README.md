@@ -12,7 +12,7 @@ ChatGPT Web
        -> wsl2_async     # durable job lifecycle
 ```
 
-Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map emits only `USER_RULES.md` → `## Reminder` every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
+Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and whole-file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map re-emits the full `USER_RULES.md` plus focused GPT Dive / Code Mode sections every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
 
 ## OpenAI Codex subscription compatibility
 

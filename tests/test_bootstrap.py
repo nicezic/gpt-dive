@@ -32,7 +32,7 @@ def _write_test_wiki(tmp_path: Path) -> Path:
             {
                 "interval": 3,
                 "reminder_files": [
-                    {"path": "USER_RULES.md", "section": "Reminder"}
+                    {"path": "USER_RULES.md"}
                 ],
             }
         )
@@ -81,12 +81,15 @@ def test_parse_reminder_config_valid() -> None:
     text = json.dumps(
         {
             "interval": 3,
-            "reminder_files": [{"path": "USER_RULES.md", "section": "Reminder"}],
+            "reminder_files": [
+                {"path": "USER_RULES.md"},
+                {"path": "EXTRA.md", "section": "Reminder"},
+            ],
         }
     )
     assert app_module._parse_reminder_config(text) == (
         3,
-        [("USER_RULES.md", "Reminder")],
+        [("USER_RULES.md", None), ("EXTRA.md", "Reminder")],
     )
 
 
@@ -157,7 +160,7 @@ def test_bootstrap_appends_only_nonpreloaded_reminders_in_order(
             {
                 "interval": 3,
                 "reminder_files": [
-                    {"path": "USER_RULES.md", "section": "Reminder"},
+                    {"path": "USER_RULES.md"},
                     {"path": "REMINDER_ONLY.md", "section": "First"},
                     {"path": "REMINDER_ONLY.md", "section": "Second"},
                 ],
@@ -183,8 +186,7 @@ def test_bootstrap_appends_only_nonpreloaded_reminders_in_order(
     assert "#Second" not in stdout
 
 
-def test_periodic_reminder_reads_only_user_rules_reminder(
-
+def test_periodic_reminder_reads_full_user_rules(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wiki = _write_test_wiki(tmp_path)
@@ -192,8 +194,11 @@ def test_periodic_reminder_reads_only_user_rules_reminder(
 
     reminder = app_module._read_periodic_reminder()
 
-    assert reminder == f"---\n`$ cat {wiki / 'USER_RULES.md'}`\n\n## Reminder\nROUTE\nPREVIEW FIRST"
-    assert "FULL RULES" not in reminder
+    assert reminder == (
+        f"---\n`$ cat {wiki / 'USER_RULES.md'}`\n\n"
+        "# USER_RULES\n\n## Work\nFULL RULES\n\n## Reminder\nROUTE\nPREVIEW FIRST"
+    )
+    assert "FULL RULES" in reminder
     assert "ERROR_CASE" not in reminder
     assert "INTRO" not in reminder
 
