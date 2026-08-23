@@ -40,6 +40,8 @@ Net: `app.py` 1262 → ~950 lines; one canonical owner each for result normaliza
 ## Candidates considered, deferred (for daylight decision)
 
 - `docs/runtime/adr/0001-...md` is 800 lines but structurally sound; per `/docs` it should be judged by information value. User recently reorganized docs themselves — did not rewrite overnight. Possible future split: acceptance evidence → plans/.
+
+**Update (user decision, still awake):** ADR §18+§19 split executed — implementation order + acceptance checklist now live in `plans/runtime/2026-08-24-task-execution-awareness-v1.md`; the ADR keeps the decision body with a pointer section. Behavior change in "Deliberate behavior changes" #1 was reviewed and approved by the user.
 - `ExecutionManager.cleanup()` runs O(n) dir scans on every start/status/result/cancel. Fine at current scale; revisit only if execution dirs grow.
 - Conduit snapshot hardcodes limit 8 (mirrors `render_tracked_tasks` default). Consistent with design intent; a shared constant would be cosmetic.
 
