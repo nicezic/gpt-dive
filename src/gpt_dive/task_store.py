@@ -96,6 +96,44 @@ class TaskStore:
             )
         return record
 
+    def get(self, task_id: str) -> dict[str, Any]:
+        clean_task_id = task_id.strip()
+        if not clean_task_id:
+            raise ValueError("task_id must not be empty")
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT task_id, execution_id, label, state, status_cmd, status, created_at, updated_at
+                FROM tasks
+                WHERE task_id = ?
+                """,
+                (clean_task_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(clean_task_id)
+        return dict(row)
+
+    def update_state(self, task_id: str, state: str) -> dict[str, Any]:
+        if state not in TASK_STATES:
+            raise ValueError(f"unsupported task state: {state}")
+        current = self.get(task_id)
+        if current["state"] == state:
+            return current
+        updated_at = _iso_now()
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "UPDATE tasks SET state = ?, updated_at = ? WHERE task_id = ?",
+                (state, updated_at, current["task_id"]),
+            )
+        current["state"] = state
+        current["updated_at"] = updated_at
+        return current
+
+    def delete(self, task_id: str) -> None:
+        current = self.get(task_id)
+        with closing(self._connect()) as connection, connection:
+            connection.execute("DELETE FROM tasks WHERE task_id = ?", (current["task_id"],))
+
     def list_tasks(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(

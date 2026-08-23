@@ -29,7 +29,7 @@ from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
-from .job_manager import JobManager
+from .job_manager import JobManager, JobNotFoundError
 from .m3_evidence import invoke_m3_evidence
 from .repo_search import search_repo
 from .runtime_diagnostics import request_lifecycle_middleware
@@ -719,8 +719,20 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
     async def task_list() -> dict[str, Any]:
-        """Return complete structured outstanding Task records."""
-        return {"tasks": await asyncio.to_thread(task_store.list_tasks)}
+        """Return complete structured outstanding Task records after local refresh."""
+        return {"tasks": await asyncio.to_thread(_task_list)}
+
+    async def task_collect(task_id: str) -> dict[str, Any]:
+        """Collect retained Task result/evidence without acknowledging it."""
+        return await asyncio.to_thread(_task_collect, task_id)
+
+    async def task_cancel(task_id: str) -> dict[str, Any]:
+        """Forward cancellation to a working Task's backing execution."""
+        return await asyncio.to_thread(_task_cancel, task_id)
+
+    async def task_ack(task_id: str) -> dict[str, Any]:
+        """Remove terminal or lost Task awareness after handling."""
+        return await asyncio.to_thread(_task_ack, task_id)
 
     registry.register("read_file", read_file)
     registry.register("write_file", write_file)
@@ -752,6 +764,9 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)
     registry.register("task_list", task_list)
+    registry.register("task_collect", task_collect)
+    registry.register("task_cancel", task_cancel)
+    registry.register("task_ack", task_ack)
     return registry
 
 
@@ -781,6 +796,77 @@ def _cleanup_code_mode_request(job_id: str) -> None:
         pass
     finally:
         ref.unlink(missing_ok=True)
+
+
+def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
+    if task["state"] == "lost":
+        return task
+
+    task_id = str(task["task_id"])
+    execution_id = str(task["execution_id"])
+    try:
+        execution = jobs.status(execution_id)
+    except JobNotFoundError:
+        return task_store.update_state(task_id, "lost")
+
+    execution_state = str(execution.get("status") or "")
+    if execution_state == "running":
+        return task
+
+    try:
+        normalized = _background_code_mode_result(execution_id)
+    except (JobNotFoundError, FileNotFoundError):
+        return task_store.update_state(task_id, "lost")
+
+    error = normalized.get("error")
+    if isinstance(error, dict):
+        target = "cancelled" if error.get("code") == "background_cancelled" else "failed"
+    else:
+        target = "completed"
+    return task_store.update_state(task_id, target)
+
+
+def _task_list() -> list[dict[str, Any]]:
+    return [_refresh_task(task) for task in task_store.list_tasks()]
+
+
+def _task_collect(task_id: str) -> dict[str, Any]:
+    task = _refresh_task(task_store.get(task_id))
+    if task["state"] == "working":
+        return {"task": task, "ready": False}
+    if task["state"] == "lost":
+        return {"task": task, "ready": False, "unavailable": True}
+
+    execution_id = str(task["execution_id"])
+    try:
+        result = _background_code_mode_result(execution_id)
+    except (JobNotFoundError, FileNotFoundError):
+        task = task_store.update_state(str(task["task_id"]), "lost")
+        return {"task": task, "ready": False, "unavailable": True}
+    return {"task": task, "ready": True, "result": result}
+
+
+def _task_cancel(task_id: str) -> dict[str, Any]:
+    task = _refresh_task(task_store.get(task_id))
+    if task["state"] != "working":
+        return {"task": task}
+
+    execution_id = str(task["execution_id"])
+    try:
+        jobs.cancel(execution_id)
+    except JobNotFoundError:
+        task = task_store.update_state(str(task["task_id"]), "lost")
+        return {"task": task}
+    _cleanup_code_mode_request(execution_id)
+    return {"task": _refresh_task(task_store.get(task_id))}
+
+
+def _task_ack(task_id: str) -> dict[str, Any]:
+    task = _refresh_task(task_store.get(task_id))
+    if task["state"] == "working":
+        raise ValueError("task_ack requires a terminal or lost Task")
+    task_store.delete(task_id)
+    return {"task_id": str(task["task_id"]), "state": str(task["state"]), "acked": True}
 
 
 def _start_background_code_mode(

@@ -4,13 +4,13 @@
 
 **Blocked by:** 01 — Task-aware background Code Mode.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Add `task_collect`, `task_cancel`, and `task_ack`; do not add `task_get`.
-- [ ] Task refresh preserves the existing background Code Mode worker/result interpretation instead of blindly copying low-level process status.
-- [ ] Working work remains `working`; truthful success/failure/cancellation becomes `completed`/`failed`/`cancelled`.
-- [ ] Missing required backing execution/result evidence becomes `lost` with no recovery, reconstruction, provider polling, or automatic retry.
-- [ ] `task_collect` is non-destructive and reports not-ready for working Tasks, retained result/evidence for terminal Tasks when available, and unavailable for lost Tasks.
-- [ ] `task_cancel` forwards cancellation while working and repeated cancellation is harmless.
-- [ ] `task_ack` rejects working Tasks and removes terminal/lost Task awareness without altering execution result retention.
-- [ ] A terminal Task can later become `lost` if normal execution retention removes the needed result before acknowledgement.
+- [x] Add `task_collect`, `task_cancel`, and `task_ack`; do not add `task_get`.
+- [x] Task refresh preserves the existing background Code Mode worker/result interpretation instead of blindly copying low-level process status.
+- [x] Working work remains `working`; truthful success/failure/cancellation becomes `completed`/`failed`/`cancelled`.
+- [x] Missing required backing execution/result evidence becomes `lost` with no recovery, reconstruction, provider polling, or automatic retry.
+- [x] `task_collect` is non-destructive and reports not-ready for working Tasks, retained result/evidence for terminal Tasks when available, and unavailable for lost Tasks.
+- [x] `task_cancel` forwards cancellation while working and repeated cancellation is harmless.
+- [x] `task_ack` rejects working Tasks and removes terminal/lost Task awareness without altering execution result retention.
+- [x] A terminal Task can later become `lost` if normal execution retention removes the needed result before acknowledgement.

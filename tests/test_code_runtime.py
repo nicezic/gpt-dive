@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -128,6 +129,9 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "council_emit",
         "gz64",
         "task_list",
+        "task_collect",
+        "task_cancel",
+        "task_ack",
     }
     assert "offset" in result["read_file"]["signature"]
     assert "expected_hash" in result["write_file"]["signature"]
@@ -615,6 +619,149 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
             code_mode(action="result", job_id=str(started["execution_id"]))
         )
         assert result["result"] == 7
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_task_collect_is_non_destructive_and_ack_preserves_execution_result(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(code_mode('await run_command("sleep 0.1")\n21', background=True, label="collect"))
+        task_id = str(started["task_id"])
+        execution_id = str(started["execution_id"])
+
+        early = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert early["ready"] is False
+        assert early["task"]["state"] == "working"
+        with pytest.raises(MontyRuntimeError, match="terminal or lost"):
+            asyncio.run(code_mode("await task_ack(PAYLOAD)", payload=task_id))
+
+        _wait_code_mode_job(execution_id)
+        first = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        second = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert first["ready"] is True
+        assert first["task"]["state"] == "completed"
+        assert first["result"]["result"] == 21
+        assert second == first
+
+        acked = asyncio.run(code_mode("await task_ack(PAYLOAD)", payload=task_id))["result"]
+        assert acked == {"task_id": task_id, "state": "completed", "acked": True}
+        assert asyncio.run(code_mode("await task_list()"))["result"] == {"tasks": []}
+
+        raw = asyncio.run(code_mode(action="result", job_id=execution_id))
+        assert raw["result"] == 21
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_task_refresh_uses_worker_failure_semantics(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(code_mode('raise ValueError("TASK_FAIL")', background=True, label="failure"))
+        task_id = str(started["task_id"])
+        _wait_code_mode_job(str(started["execution_id"]))
+
+        listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        assert listed[0]["state"] == "failed"
+        collected = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert collected["ready"] is True
+        assert collected["task"]["state"] == "failed"
+        assert collected["result"]["error"]["code"] == "background_execution_error"
+        assert "TASK_FAIL" in collected["result"]["error"]["message"]
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_task_cancel_forwards_and_becomes_cancelled(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(code_mode('await run_command("sleep 30")', background=True, label="cancel"))
+        task_id = str(started["task_id"])
+        execution_id = str(started["execution_id"])
+
+        asyncio.run(code_mode("await task_cancel(PAYLOAD)", payload=task_id))
+        asyncio.run(code_mode("await task_cancel(PAYLOAD)", payload=task_id))
+        _wait_code_mode_job(execution_id)
+
+        listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        assert listed[0]["state"] == "cancelled"
+        collected = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert collected["ready"] is True
+        assert collected["task"]["state"] == "cancelled"
+        assert collected["result"]["error"]["code"] == "background_cancelled"
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(code_mode("42", background=True, label="lost"))
+        task_id = str(started["task_id"])
+        execution_id = str(started["execution_id"])
+        _wait_code_mode_job(execution_id)
+
+        collected = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert collected["task"]["state"] == "completed"
+
+        shutil.rmtree(gpt_dive.jobs.root / execution_id)
+        listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        assert listed[0]["state"] == "lost"
+
+        unavailable = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
+        assert unavailable["ready"] is False
+        assert unavailable["unavailable"] is True
+
+        acked = asyncio.run(code_mode("await task_ack(PAYLOAD)", payload=task_id))["result"]
+        assert acked == {"task_id": task_id, "state": "lost", "acked": True}
     finally:
         app_module.task_store = original_task_store
         gpt_dive.jobs.root = original_root
