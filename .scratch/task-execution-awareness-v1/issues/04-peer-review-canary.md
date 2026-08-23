@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Automatic TrackedTasks and status display.
 
-**Status:** ready-for-agent — Task-aware migration complete; live reviewer canary requires explicit reviewer/subagent permission.
+**Status:** skipped — Task-aware migration is complete; the user explicitly chose not to run the live reviewer canary.
 
 - [x] Peer review launches through the existing background Code Mode Task-aware path with a clear human-readable label.
 - [x] Launch returns immediately so Web SOL can continue independent foreground work instead of waiting synchronously.
