@@ -747,7 +747,7 @@ Native MCP Tasks, structured progress, launch idempotency, and recovery remain o
 ```text
 [ ] after terminology cleanup, runtime code/docs use Execution/execution_id terminology consistently
 [ ] no permanent JobManager/job_id compatibility shim remains
-[ ] no duplicate Conduit Task SSOT remains after migration
+[x] no duplicate Conduit Task SSOT remains after migration
 [ ] long agent skills use the shared background Code Mode Task path rather than separate Task launcher frameworks
 ```
 

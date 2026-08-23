@@ -30,12 +30,17 @@ from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
-from .job_manager import JobManager, JobNotFoundError
+from .job_manager import JobManager
 from .m3_evidence import invoke_m3_evidence
 from .repo_search import search_repo
 from .runtime_diagnostics import request_lifecycle_middleware
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
+from .task_runtime import CODE_MODE_WORKER_PROTOCOL
+from .task_runtime import ack_task as runtime_ack_task
+from .task_runtime import cancel_task as runtime_cancel_task
+from .task_runtime import collect_task as runtime_collect_task
+from .task_runtime import refresh_task as runtime_refresh_task
 from .task_store import TaskStore
 from .tasks_extension import TasksExtension
 
@@ -795,9 +800,6 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     return registry
 
 
-CODE_MODE_WORKER_PROTOCOL = 2
-
-
 def _code_mode_request_dir() -> Path:
     path = jobs.root.parent / "code-mode-inputs"
     path.mkdir(parents=True, exist_ok=True)
@@ -824,31 +826,7 @@ def _cleanup_code_mode_request(job_id: str) -> None:
 
 
 def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
-    if task["state"] == "lost":
-        return task
-
-    task_id = str(task["task_id"])
-    execution_id = str(task["execution_id"])
-    try:
-        execution = jobs.status(execution_id)
-    except JobNotFoundError:
-        return task_store.update_state(task_id, "lost")
-
-    execution_state = str(execution.get("status") or "")
-    if execution_state == "running":
-        return task
-
-    try:
-        normalized = _background_code_mode_result(execution_id)
-    except (JobNotFoundError, FileNotFoundError):
-        return task_store.update_state(task_id, "lost")
-
-    error = normalized.get("error")
-    if isinstance(error, dict):
-        target = "cancelled" if error.get("code") == "background_cancelled" else "failed"
-    else:
-        target = "completed"
-    return task_store.update_state(task_id, target)
+    return runtime_refresh_task(jobs, task_store, task)
 
 
 def _task_status_label(task: dict[str, Any]) -> str | None:
@@ -928,42 +906,15 @@ def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str
 
 
 def _task_collect(task_id: str) -> dict[str, Any]:
-    task = _refresh_task(task_store.get(task_id))
-    if task["state"] == "working":
-        return {"task": task, "ready": False}
-    if task["state"] == "lost":
-        return {"task": task, "ready": False, "unavailable": True}
-
-    execution_id = str(task["execution_id"])
-    try:
-        result = _background_code_mode_result(execution_id)
-    except (JobNotFoundError, FileNotFoundError):
-        task = task_store.update_state(str(task["task_id"]), "lost")
-        return {"task": task, "ready": False, "unavailable": True}
-    return {"task": task, "ready": True, "result": result}
+    return runtime_collect_task(jobs, task_store, task_id)
 
 
 def _task_cancel(task_id: str) -> dict[str, Any]:
-    task = _refresh_task(task_store.get(task_id))
-    if task["state"] != "working":
-        return {"task": task}
-
-    execution_id = str(task["execution_id"])
-    try:
-        jobs.cancel(execution_id)
-    except JobNotFoundError:
-        task = task_store.update_state(str(task["task_id"]), "lost")
-        return {"task": task}
-    _cleanup_code_mode_request(execution_id)
-    return {"task": _refresh_task(task_store.get(task_id))}
+    return runtime_cancel_task(jobs, task_store, task_id)
 
 
 def _task_ack(task_id: str) -> dict[str, Any]:
-    task = _refresh_task(task_store.get(task_id))
-    if task["state"] == "working":
-        raise ValueError("task_ack requires a terminal or lost Task")
-    task_store.delete(task_id)
-    return {"task_id": str(task["task_id"]), "state": str(task["state"]), "acked": True}
+    return runtime_ack_task(jobs, task_store, task_id)
 
 
 def _start_background_code_mode(

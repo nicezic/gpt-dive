@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from pydantic import Field
 
 from ..job_manager import JobManager
+from ..task_store import TaskStore
 from .events import RedisEventPublisher
 from .runtime import ConduitRuntime
 
-jobs = JobManager(Path.home() / ".local" / "state" / "gpt-dive" / "conduit" / "jobs")
-runtime = ConduitRuntime(jobs=jobs, publisher=RedisEventPublisher())
+jobs = JobManager()
+task_store = TaskStore()
+runtime = ConduitRuntime(jobs=jobs, task_store=task_store, publisher=RedisEventPublisher())
 
 mcp = MCPServer(
     name="c",
     title="Conduit",
     description=(
         "Conversation-driven task conduit for ChatGPT Web. Each `c` call performs exactly "
-        "one action and always returns a compact snapshot of active Conduit tasks."
+        "one action and always returns a compact snapshot of outstanding shared GPT Dive Tasks."
     ),
     instructions=(
         "Use start to launch detached work and continue reasoning without waiting. Every call "
@@ -62,7 +63,7 @@ def c(
     ] = 600.0,
     task_id: Annotated[
         str | None,
-        Field(description="Conduit task ID for collect or ack."),
+        Field(description="Shared Task ID for collect or ack."),
     ] = None,
     session_id: Annotated[
         str | None,

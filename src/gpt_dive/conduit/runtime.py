@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from ..job_manager import JobManager, JobNotFoundError
+from ..job_manager import JobManager
+from ..task_runtime import ack_task, collect_task, refresh_task
+from ..task_store import TaskStore
 
 
 class EventPublisher(Protocol):
@@ -12,10 +13,17 @@ class EventPublisher(Protocol):
 
 
 class ConduitRuntime:
-    """Conversation-driven task runtime backed by GPT Dive JobManager."""
+    """Conversation-driven surface over the shared GPT Dive Task registry."""
 
-    def __init__(self, *, jobs: JobManager, publisher: EventPublisher) -> None:
+    def __init__(
+        self,
+        *,
+        jobs: JobManager,
+        task_store: TaskStore,
+        publisher: EventPublisher,
+    ) -> None:
         self.jobs = jobs
+        self.task_store = task_store
         self.publisher = publisher
 
     def call(
@@ -40,12 +48,20 @@ class ConduitRuntime:
             if len(clean_label) > 80:
                 raise ValueError("start label must be 80 characters or fewer")
             started = self.jobs.start(command, cwd=cwd, timeout=timeout)
-            task_id_value = str(started["job_id"])
-            self._write_task_meta(task_id_value, clean_label)
+            execution_id = str(started["job_id"])
+            try:
+                task = self.task_store.create(
+                    execution_id=execution_id,
+                    label=clean_label,
+                )
+            except Exception:
+                self.jobs.cancel(execution_id)
+                raise
             result: dict[str, Any] = {
-                "task_id": task_id_value,
+                "task_id": str(task["task_id"]),
+                "execution_id": execution_id,
                 "label": clean_label,
-                "status": self._map_status(str(started["status"])),
+                "status": self._map_state(str(task["state"])),
             }
         elif action == "sync":
             if text is None or not text.strip():
@@ -54,12 +70,11 @@ class ConduitRuntime:
         elif action == "collect":
             if not task_id or not task_id.strip():
                 raise ValueError("collect requires task_id")
-            result = self.jobs.result(task_id.strip())
-            result["status"] = self._map_status(str(result["status"]))
+            result = self._collect(task_id.strip())
         elif action == "ack":
             if not task_id or not task_id.strip():
                 raise ValueError("ack requires task_id")
-            result = self._ack_task(task_id.strip())
+            result = self._ack(task_id.strip())
         elif action == "emit":
             if text is None or not text.strip():
                 raise ValueError("emit requires text")
@@ -86,64 +101,58 @@ class ConduitRuntime:
 
     def snapshot(self) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        if not self.jobs.root.is_dir():
-            return tasks
-        for job_dir in sorted(self.jobs.root.iterdir()):
-            meta_path = job_dir / "conduit.json"
-            if not meta_path.is_file():
-                continue
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                if meta.get("acked_at"):
-                    continue
-                status = self.jobs.status(job_dir.name)
-            except (OSError, ValueError, json.JSONDecodeError, JobNotFoundError):
-                continue
-            created = datetime.fromisoformat(str(meta["created_at"]))
+        for stored in self.task_store.list_tasks():
+            task = refresh_task(self.jobs, self.task_store, stored)
+            created = datetime.fromisoformat(str(task["created_at"]))
             age_sec = max(0, int((datetime.now(UTC) - created).total_seconds()))
             tasks.append(
                 {
-                    "id": job_dir.name,
-                    "label": str(meta["label"]),
-                    "status": self._map_status(str(status["status"])),
+                    "id": str(task["task_id"]),
+                    "label": str(task["label"]),
+                    "status": self._map_state(str(task["state"])),
                     "age_sec": age_sec,
                 }
             )
         return tasks
 
-    def _ack_task(self, task_id: str) -> dict[str, object]:
-        status = self.jobs.status(task_id)
-        mapped_status = self._map_status(str(status["status"]))
-        if mapped_status not in {"done", "failed", "cancelled"}:
-            raise ValueError("ack requires a terminal task")
+    def _collect(self, task_id: str) -> dict[str, Any]:
+        collected = collect_task(self.jobs, self.task_store, task_id)
+        task = collected["task"]
+        mapped = self._map_state(str(task["state"]))
+        if not collected["ready"]:
+            result: dict[str, Any] = {
+                "task_id": task_id,
+                "status": mapped,
+                "ready": False,
+            }
+            if collected.get("unavailable"):
+                result["unavailable"] = True
+            return result
 
-        meta_path = self.jobs.root / task_id / "conduit.json"
-        if not meta_path.is_file():
-            raise JobNotFoundError(task_id)
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta["acked_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        meta_path.write_text(
-            json.dumps(meta, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        return {"task_id": task_id, "status": mapped_status, "acked": True}
+        result = dict(collected["result"])
+        result["task_id"] = task_id
+        result["status"] = mapped
+        result["ready"] = True
+        return result
 
-    def _write_task_meta(self, task_id: str, label: str) -> None:
-        job_dir = self.jobs.root / task_id
-        payload = {
-            "label": label,
-            "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    def _ack(self, task_id: str) -> dict[str, object]:
+        try:
+            acked = ack_task(self.jobs, self.task_store, task_id)
+        except ValueError as exc:
+            raise ValueError("ack requires a terminal or lost task") from exc
+        return {
+            "task_id": task_id,
+            "status": self._map_state(str(acked["state"])),
+            "acked": True,
         }
-        (job_dir / "conduit.json").write_text(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
 
     @staticmethod
-    def _map_status(status: str) -> str:
-        if status == "completed":
+    def _map_state(state: str) -> str:
+        if state == "working":
+            return "running"
+        if state == "completed":
             return "done"
-        return status
+        return state
 
     @staticmethod
     def _event_result(
@@ -156,6 +165,7 @@ class ConduitRuntime:
         if action == "start":
             return {
                 "task_id": str(result["task_id"]),
+                "execution_id": str(result["execution_id"]),
                 "label": str(result["label"]),
                 "status": str(result["status"]),
             }
@@ -166,7 +176,7 @@ class ConduitRuntime:
                 "acked": bool(result["acked"]),
             }
         return {
-            "task_id": str(result.get("job_id", "")),
+            "task_id": str(result.get("task_id", "")),
             "status": str(result.get("status", "")),
             "ready": bool(result.get("ready", False)),
         }

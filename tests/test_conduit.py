@@ -6,6 +6,7 @@ from pathlib import Path
 
 from gpt_dive.conduit.runtime import ConduitRuntime
 from gpt_dive.job_manager import JobManager
+from gpt_dive.task_store import TaskStore
 
 
 class RecordingPublisher:
@@ -20,8 +21,9 @@ class RecordingPublisher:
 def _runtime(tmp_path: Path) -> tuple[ConduitRuntime, RecordingPublisher]:
     jobs = JobManager(tmp_path / "jobs")
     jobs._systemd_available = False
+    task_store = TaskStore(tmp_path / "tasks.sqlite3")
     publisher = RecordingPublisher()
-    return ConduitRuntime(jobs=jobs, publisher=publisher), publisher
+    return ConduitRuntime(jobs=jobs, task_store=task_store, publisher=publisher), publisher
 
 
 def test_conduit_mcp_surface_is_one_tool() -> None:
@@ -41,7 +43,10 @@ def test_start_returns_compact_snapshot_and_collect_is_non_destructive(tmp_path:
         timeout=3,
     )
     task_id = started["result"]["task_id"]
+    execution_id = started["result"]["execution_id"]
+    assert task_id != execution_id
     assert started["result"]["status"] == "running"
+    assert not (runtime.jobs.root / execution_id / "conduit.json").exists()
     assert started["tasks"] == [
         {
             "id": task_id,
@@ -83,6 +88,7 @@ def test_ack_hides_terminal_task_but_keeps_result_retrievable(tmp_path: Path) ->
         timeout=3,
     )
     task_id = started["result"]["task_id"]
+    execution_id = started["result"]["execution_id"]
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -97,11 +103,14 @@ def test_ack_hides_terminal_task_but_keeps_result_retrievable(tmp_path: Path) ->
     assert acked["result"] == {"task_id": task_id, "status": "done", "acked": True}
     assert acked["tasks"] == []
 
-    after_ack = runtime.call(action="collect", task_id=task_id)
-    assert after_ack["result"]["stdout"] == "ACKME"
-    assert after_ack["tasks"] == []
-    assert publisher.events[-2]["action"] == "ack"
-    assert publisher.events[-1]["action"] == "collect"
+    try:
+        runtime.call(action="collect", task_id=task_id)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("acked Task awareness should be removed")
+    assert runtime.jobs.result(execution_id)["stdout"] == "ACKME"
+    assert publisher.events[-1]["action"] == "ack"
 
 
 def test_ack_rejects_running_task(tmp_path: Path) -> None:
@@ -114,9 +123,86 @@ def test_ack_rejects_running_task(tmp_path: Path) -> None:
     try:
         runtime.call(action="ack", task_id=task_id)
     except ValueError as exc:
-        assert "terminal task" in str(exc)
+        assert "terminal or lost task" in str(exc)
     else:
         raise AssertionError("running task should not be acked")
+
+
+def test_snapshot_includes_other_tasks_from_shared_store(tmp_path: Path) -> None:
+    runtime, _ = _runtime(tmp_path)
+    execution_id = str(runtime.jobs.start("sleep 1", timeout=3)["job_id"])
+    external = runtime.task_store.create(execution_id=execution_id, label="external-task")
+
+    snapshot = runtime.call(action="sync", text="peek")
+
+    assert snapshot["tasks"] == [
+        {
+            "id": external["task_id"],
+            "label": "external-task",
+            "status": "running",
+            "age_sec": snapshot["tasks"][0]["age_sec"],
+        }
+    ]
+    runtime.jobs.cancel(execution_id)
+
+
+def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
+    import gpt_dive
+    import gpt_dive.app as app_module
+
+    jobs_root = tmp_path / "jobs"
+    jobs_root.mkdir()
+    task_db = tmp_path / "tasks.sqlite3"
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = jobs_root
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(task_db)
+
+        conduit_jobs = JobManager(jobs_root)
+        conduit_jobs._systemd_available = False
+        runtime = ConduitRuntime(
+            jobs=conduit_jobs,
+            task_store=TaskStore(task_db),
+            publisher=RecordingPublisher(),
+        )
+
+        conduit_started = runtime.call(
+            action="start",
+            label="from-conduit",
+            command="sleep 0.3; printf CONDUIT",
+            timeout=3,
+        )
+        conduit_task_id = str(conduit_started["result"]["task_id"])
+        conduit_execution_id = str(conduit_started["result"]["execution_id"])
+
+        dive_list = asyncio.run(gpt_dive.code_mode("await task_list()"))["result"]["tasks"]
+        assert conduit_task_id in {str(task["task_id"]) for task in dive_list}
+
+        dive_started = asyncio.run(
+            gpt_dive.code_mode(
+                'await run_command("sleep 0.3")\n{"origin": "dive"}',
+                background=True,
+                label="from-dive",
+            )
+        )
+        dive_task_id = str(dive_started["task_id"])
+
+        conduit_snapshot = runtime.call(action="sync", text="refresh")["tasks"]
+        assert {str(task["id"]) for task in conduit_snapshot} == {
+            conduit_task_id,
+            dive_task_id,
+        }
+
+        runtime.jobs.cancel(conduit_execution_id)
+        asyncio.run(gpt_dive.code_mode("await task_cancel(PAYLOAD)", payload=dive_task_id))
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
 
 
 def test_every_action_returns_task_snapshot(tmp_path: Path) -> None:
