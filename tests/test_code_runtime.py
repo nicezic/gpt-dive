@@ -1139,3 +1139,32 @@ def test_harness_shell_direct_registry_preserves_output_cap() -> None:
     )["result"]
     assert result["length"] == 50_000
     assert result["prefix"].startswith("[... output truncated, showing last ")
+
+
+def test_code_mode_result_passthrough_for_raw_shell_execution(tmp_path: Path) -> None:
+    import time
+
+    import gpt_dive
+
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
+    try:
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
+        started = gpt_dive.executions.start("printf RAW_PASSTHROUGH_OK", timeout=5)
+        execution_id = str(started["execution_id"])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if gpt_dive.executions.status(execution_id)["status"] != "running":
+                break
+            time.sleep(0.02)
+        result = asyncio.run(
+            code_mode(action="result", execution_id=execution_id)
+        )
+        assert result["exit_code"] == 0
+        assert result["stdout"] == "RAW_PASSTHROUGH_OK"
+        assert "error" not in result
+    finally:
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd

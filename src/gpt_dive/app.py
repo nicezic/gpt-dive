@@ -38,8 +38,14 @@ from .subagent_runtime import invoke_subagent
 from .task_runtime import CODE_MODE_WORKER_PROTOCOL
 from .task_runtime import ack_task as runtime_ack_task
 from .task_runtime import cancel_task as runtime_cancel_task
+from .task_runtime import (
+    cleanup_code_mode_request as _runtime_cleanup_code_mode_request,
+)
+from .task_runtime import code_mode_request_dir as _runtime_code_mode_request_dir
+from .task_runtime import code_mode_request_ref as _runtime_code_mode_request_ref
 from .task_runtime import collect_task as runtime_collect_task
 from .task_runtime import project_task as runtime_project_task
+from .task_runtime import read_execution_result as _runtime_read_execution_result
 from .task_runtime import refresh_task as runtime_refresh_task
 from .task_runtime import render_tracked_tasks as runtime_render_tracked_tasks
 from .task_store import TaskStore
@@ -746,28 +752,17 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
 
 
 def _code_mode_request_dir() -> Path:
-    path = executions.root.parent / "code-mode-inputs"
+    path = _runtime_code_mode_request_dir(executions)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _code_mode_request_ref(execution_id: str) -> Path:
-    return executions.root / execution_id / "code_mode_payload.ref"
+    return _runtime_code_mode_request_ref(executions, execution_id)
 
 
 def _cleanup_code_mode_request(execution_id: str) -> None:
-    ref = _code_mode_request_ref(execution_id)
-    if not ref.is_file():
-        return
-    try:
-        raw = ref.read_text().strip()
-        request_path = Path(raw).resolve()
-        request_path.relative_to(_code_mode_request_dir().resolve())
-        request_path.unlink(missing_ok=True)
-    except OSError, ValueError:
-        pass
-    finally:
-        ref.unlink(missing_ok=True)
+    _runtime_cleanup_code_mode_request(executions, execution_id)
 
 
 def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -862,84 +857,11 @@ def _start_background_code_mode(
         raise
 
 
-def _background_error(
-    raw: dict[str, Any],
-    *,
-    code: str,
-    message: str,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "execution_id": raw.get("execution_id"),
-        "status": raw.get("status"),
-        "exit_code": raw.get("exit_code"),
-        "error": {"code": code, "message": message},
-    }
-    stderr = str(raw.get("stderr") or "").strip()
-    if stderr:
-        result["worker_stderr"] = stderr[-2000:]
-    return result
-
-
 def _background_code_mode_result(execution_id: str) -> dict[str, Any]:
-    raw = executions.result(execution_id)
-    if not raw.get("ready"):
+    result = _runtime_read_execution_result(executions, execution_id)
+    if result.get("ready") is False:
         raise RuntimeError(f"code_mode background execution {execution_id!r} is still running")
-    _cleanup_code_mode_request(execution_id)
-    if raw.get("status") == "cancelled":
-        return _background_error(
-            raw,
-            code="background_cancelled",
-            message="Background Code Mode execution was cancelled.",
-        )
-
-    stdout = str(raw.get("stdout") or "").strip()
-    if not stdout:
-        return _background_error(
-            raw,
-            code="worker_protocol_error",
-            message="Background Code Mode worker produced no result envelope.",
-        )
-    try:
-        envelope = json.loads(stdout)
-    except json.JSONDecodeError:
-        return _background_error(
-            raw,
-            code="worker_protocol_error",
-            message="Background Code Mode worker produced invalid JSON.",
-        )
-    if not isinstance(envelope, dict) or envelope.get("v") != CODE_MODE_WORKER_PROTOCOL:
-        return _background_error(
-            raw,
-            code="worker_protocol_error",
-            message="Background Code Mode worker used an unsupported result envelope.",
-        )
-
-    exit_code = raw.get("exit_code")
-    if envelope.get("ok") is True and exit_code == 0:
-        worker_result = envelope.get("result")
-        if not isinstance(worker_result, dict):
-            return _background_error(
-                raw,
-                code="worker_protocol_error",
-                message="Background Code Mode success envelope has no object result.",
-            )
-        return {"execution_id": execution_id, **worker_result}
-
-    error = envelope.get("error")
-    if isinstance(error, dict):
-        error_code = str(error.get("code") or "background_execution_error")
-        error_message = str(
-            error.get("message") or "Background Code Mode execution failed."
-        )
-    else:
-        error_code = "worker_protocol_error"
-        error_message = (
-            "Background Code Mode worker exited without a valid error envelope."
-        )
-    if envelope.get("ok") is True and exit_code != 0:
-        error_code = "worker_protocol_error"
-        error_message = "Worker reported success but exited with a non-zero status."
-    return _background_error(raw, code=error_code, message=error_message)
+    return result
 
 
 async def code_mode(

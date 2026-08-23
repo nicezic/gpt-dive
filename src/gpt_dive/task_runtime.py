@@ -13,22 +13,22 @@ CODE_MODE_WORKER_PROTOCOL = 2
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled"}
 
 
-def _code_mode_request_dir(executions: ExecutionManager) -> Path:
+def code_mode_request_dir(executions: ExecutionManager) -> Path:
     return executions.root.parent / "code-mode-inputs"
 
 
-def _code_mode_request_ref(executions: ExecutionManager, execution_id: str) -> Path:
+def code_mode_request_ref(executions: ExecutionManager, execution_id: str) -> Path:
     return executions.root / execution_id / "code_mode_payload.ref"
 
 
-def _cleanup_code_mode_request(executions: ExecutionManager, execution_id: str) -> None:
-    ref = _code_mode_request_ref(executions, execution_id)
+def cleanup_code_mode_request(executions: ExecutionManager, execution_id: str) -> None:
+    ref = code_mode_request_ref(executions, execution_id)
     if not ref.is_file():
         return
     try:
         raw = ref.read_text().strip()
         request_path = Path(raw).resolve()
-        request_path.relative_to(_code_mode_request_dir(executions).resolve())
+        request_path.relative_to(code_mode_request_dir(executions).resolve())
         request_path.unlink(missing_ok=True)
     except OSError, ValueError:
         pass
@@ -59,7 +59,7 @@ def _is_code_mode_execution(
     execution_id: str,
     envelope: dict[str, Any] | None,
 ) -> bool:
-    if _code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
+    if code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
         return True
     meta_path = executions.root / execution_id / "meta.json"
     try:
@@ -137,7 +137,7 @@ def read_execution_result(executions: ExecutionManager, execution_id: str) -> di
     if not _is_code_mode_execution(executions, execution_id, envelope):
         return raw
 
-    _cleanup_code_mode_request(executions, execution_id)
+    cleanup_code_mode_request(executions, execution_id)
     if raw.get("status") == "cancelled":
         return _background_error(
             raw,
