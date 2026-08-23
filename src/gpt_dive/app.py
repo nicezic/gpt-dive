@@ -35,9 +35,11 @@ from .repo_search import search_repo
 from .runtime_diagnostics import request_lifecycle_middleware
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
+from .task_store import TaskStore
 from .tasks_extension import TasksExtension
 
 jobs = JobManager()
+task_store = TaskStore()
 tasks_extension = TasksExtension(jobs)
 code_runtime = MontyCodeRuntime()
 
@@ -716,6 +718,10 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         command = gzip.decompress(compressed).decode("utf-8")
         return await asyncio.to_thread(_run_command, command, default_cwd, 600.0)
 
+    async def task_list() -> dict[str, Any]:
+        """Return complete structured outstanding Task records."""
+        return {"tasks": await asyncio.to_thread(task_store.list_tasks)}
+
     registry.register("read_file", read_file)
     registry.register("write_file", write_file)
     registry.register("edit_file", edit_file)
@@ -745,6 +751,7 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
     registry.register("gz64", gz64)
+    registry.register("task_list", task_list)
     return registry
 
 
@@ -780,6 +787,7 @@ def _start_background_code_mode(
     code: str,
     cwd: str | None,
     payload: str | None,
+    label: str | None,
 ) -> dict[str, Any]:
     request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
@@ -813,7 +821,20 @@ def _start_background_code_mode(
             jobs.cancel(job_id)
             request_path.unlink(missing_ok=True)
             raise
-        return started
+        if label is None:
+            return started
+        try:
+            task = task_store.create(execution_id=job_id, label=label)
+        except Exception:
+            _cleanup_code_mode_request(job_id)
+            jobs.cancel(job_id)
+            raise
+        return {
+            "task_id": task["task_id"],
+            "execution_id": task["execution_id"],
+            "label": task["label"],
+            "state": task["state"],
+        }
     except Exception:
         if request_path is not None:
             request_path.unlink(missing_ok=True)
@@ -941,6 +962,10 @@ async def code_mode(
         bool,
         Field(description="Detach this Code Mode program as a durable background job."),
     ] = False,
+    label: Annotated[
+        str | None,
+        Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
+    ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(
@@ -955,6 +980,11 @@ async def code_mode(
     """Execute or manage one stateless Monty program."""
     normalized_action = action.strip().lower() if action is not None else None
     has_code = code is not None and bool(code.strip())
+    clean_label = label.strip() if label is not None else None
+    if label is not None and not clean_label:
+        raise ValueError("label must not be empty")
+    if clean_label is not None and len(clean_label) > 80:
+        raise ValueError("label must be 80 characters or fewer")
 
     if normalized_action is None:
         if not has_code:
@@ -965,8 +995,10 @@ async def code_mode(
             raise ValueError("job_id is only valid with a lifecycle action")
         if background:
             return await asyncio.to_thread(
-                _start_background_code_mode, str(code), cwd, payload
+                _start_background_code_mode, str(code), cwd, payload, clean_label
             )
+        if clean_label is not None:
+            raise ValueError("label is only valid with background code")
         return await code_runtime.run(
             str(code), _build_code_registry(cwd), cwd=cwd, payload=payload
         )
@@ -975,6 +1007,8 @@ async def code_mode(
         raise ValueError("code and lifecycle action are mutually exclusive")
     if background:
         raise ValueError("background is only valid when launching code")
+    if clean_label is not None:
+        raise ValueError("label is only valid with background code")
     if cwd is not None:
         raise ValueError("cwd is only valid when launching code")
     if payload is not None:
@@ -1049,6 +1083,10 @@ async def _mcp_code_mode(
         bool,
         Field(description="Detach this Code Mode program as a durable background job; the actual mode is exposed inside Monty as BACKGROUND."),
     ] = False,
+    label: Annotated[
+        str | None,
+        Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
+    ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
@@ -1068,6 +1106,7 @@ async def _mcp_code_mode(
         cwd=cwd,
         payload=payload if action is None else None,
         background=background,
+        label=label,
         action=action,
         job_id=job_id,
     )

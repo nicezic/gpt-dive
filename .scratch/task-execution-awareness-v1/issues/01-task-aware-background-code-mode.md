@@ -4,12 +4,12 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A labeled background Code Mode launch returns immediately with distinct `task_id` and backing execution identity plus label/state.
-- [ ] Task awareness is stored durably in a small SQLite TaskStore and survives reopening without conversation memory.
-- [ ] TaskStore owns only Task awareness fields; execution logs/results/process metadata remain in the existing execution runtime.
-- [ ] `task_list()` returns complete structured outstanding Task objects.
-- [ ] Unlabeled `code_mode(background=True)` preserves the current raw background lifecycle contract during rollout.
-- [ ] If execution starts but Task persistence fails, start fails and best-effort cancellation is attempted without adding an orphan-recovery subsystem.
-- [ ] Existing raw background Code Mode tests remain green.
+- [x] A labeled background Code Mode launch returns immediately with distinct `task_id` and backing execution identity plus label/state.
+- [x] Task awareness is stored durably in a small SQLite TaskStore and survives reopening without conversation memory.
+- [x] TaskStore owns only Task awareness fields; execution logs/results/process metadata remain in the existing execution runtime.
+- [x] `task_list()` returns complete structured outstanding Task objects.
+- [x] Unlabeled `code_mode(background=True)` preserves the current raw background lifecycle contract during rollout.
+- [x] If execution starts but Task persistence fails, start fails and best-effort cancellation is attempted without adding an orphan-recovery subsystem.
+- [x] Existing raw background Code Mode tests remain green.

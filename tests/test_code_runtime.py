@@ -127,6 +127,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "repo_search",
         "council_emit",
         "gz64",
+        "task_list",
     }
     assert "offset" in result["read_file"]["signature"]
     assert "expected_hash" in result["write_file"]["signature"]
@@ -578,6 +579,88 @@ a, b = await asyncio.gather(
             )
             assert all(marker in output for marker, output in zip(("a", "b"), result["result"], strict=True))
     finally:
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        started = asyncio.run(
+            code_mode('await run_command("sleep 0.1")\n7', background=True, label="task canary")
+        )
+
+        assert started["task_id"] != started["execution_id"]
+        assert started["label"] == "task canary"
+        assert started["state"] == "working"
+        tasks = app_module.task_store.list_tasks()
+        assert [task["task_id"] for task in tasks] == [started["task_id"]]
+        assert tasks[0]["execution_id"] == started["execution_id"]
+
+        listed = asyncio.run(code_mode("await task_list()"))["result"]
+        assert listed == {"tasks": tasks}
+
+        _wait_code_mode_job(str(started["execution_id"]))
+        result = asyncio.run(
+            code_mode(action="result", job_id=str(started["execution_id"]))
+        )
+        assert result["result"] == 7
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.jobs.root = original_root
+        gpt_dive.jobs._systemd_available = original_systemd
+
+
+def test_code_mode_task_label_validation() -> None:
+    with pytest.raises(ValueError, match="label must not be empty"):
+        asyncio.run(code_mode("1", background=True, label="   "))
+    with pytest.raises(ValueError, match="label is only valid with background"):
+        asyncio.run(code_mode("1", label="foreground"))
+
+
+def test_code_mode_cancels_execution_when_task_persistence_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gpt_dive
+
+    original_root = gpt_dive.jobs.root
+    original_systemd = gpt_dive.jobs._systemd_available
+    original_task_store = app_module.task_store
+    cancelled: list[str] = []
+
+    class FailingTaskStore:
+        def create(self, **_kwargs):
+            raise OSError("task db unavailable")
+
+    real_cancel = app_module.jobs.cancel
+
+    def record_cancel(job_id: str):
+        cancelled.append(job_id)
+        return real_cancel(job_id)
+
+    try:
+        gpt_dive.jobs.root = tmp_path / "jobs"
+        gpt_dive.jobs.root.mkdir()
+        gpt_dive.jobs._systemd_available = False
+        app_module.task_store = FailingTaskStore()  # type: ignore[assignment]
+        monkeypatch.setattr(app_module.jobs, "cancel", record_cancel)
+
+        with pytest.raises(OSError, match="task db unavailable"):
+            asyncio.run(code_mode('await run_command("sleep 30")', background=True, label="fails"))
+
+        assert len(cancelled) == 1
+    finally:
+        app_module.task_store = original_task_store
         gpt_dive.jobs.root = original_root
         gpt_dive.jobs._systemd_available = original_systemd
 

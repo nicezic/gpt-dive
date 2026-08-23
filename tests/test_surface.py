@@ -50,6 +50,9 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "Never invent capability names, arguments, optional fields, or return shapes" in description
     assert "payload" in tool.input_schema["required"]
     assert tool.input_schema["properties"]["payload"]["type"] == "string"
+    label_variants = tool.input_schema["properties"]["label"]["anyOf"]
+    assert {variant.get("type") for variant in label_variants} >= {"string", "null"}
+    assert any(variant.get("maxLength") == 80 for variant in label_variants)
     action_variants = tool.input_schema["properties"]["action"]["anyOf"]
     assert {tuple(v.get("enum", [])) for v in action_variants} >= {("status", "result", "cancel")}
     assert "input" not in tool.input_schema["properties"]
