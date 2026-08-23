@@ -1,7 +1,24 @@
 # GPT Dive — Current Continuation
 
-> Updated: 2026-08-14
+> Updated: 2026-08-24
 > Purpose: compact fresh-session handoff. Durable Why/history belongs in `docs/`; implementation decisions/evidence belong in `specs/` and `plans/`.
+
+## Completed Runtime Work — Task / Execution / TrackedTasks v1
+
+Implemented and verified on 2026-08-24 (commits `4f7f30d`..`7cdd1a7`): Task-aware background Code Mode, Task lifecycle controls (`task_list/collect/cancel/ack`), automatic TrackedTasks awareness with bounded status probes, peer-review + AGY lifecycle migration, shared Conduit Task domain over one TaskStore/task_runtime projection, and the Job→Execution terminology cleanup with no compatibility shim.
+
+- Decision/design SSOT: `docs/runtime/adr/0001-task-execution-and-trackedtasks-runtime-model.md`
+- Ticket/plan history: `plans/plan-260824-task-execution-awareness-v1.md`, `plans/runtime/`
+- Do not re-introduce `JobManager`/`job_id` naming or a second TrackedTask manager; rejected alternatives are recorded in that ADR.
+
+## Night Sweep 2026-08-24 — branch `improve/260824-night-sweep`
+
+Autonomous opencode improvement branch on top of `3f73998`, **not merged**; all gates green at each commit (pytest / ruff / pyright / git diff --check). Review before merging.
+
+- Background Code Mode result normalization unified into `task_runtime.read_execution_result`; duplicated parser in `app.py` removed. Behavior note: `code_mode action=result` on a raw shell execution now returns the honest raw result instead of a misleading `worker_protocol_error`.
+- Capability registry construction extracted to `code_capabilities.py`; `code_mode_worker` wires its own deps and no longer imports the MCP server module.
+- Lazy package exports (PEP 562) keep worker imports MCP-free (~223 fewer modules).
+- Live-contract docs updated to the new module layout (`code-mode.md`, `architecture.md`, `peer-review.md`, runtime source layout).
 
 ## Completed External Work — GBrain Voyage Guard + Stable Index
 
