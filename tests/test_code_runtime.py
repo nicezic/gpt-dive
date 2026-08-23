@@ -594,7 +594,7 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
     with pytest.raises(ValueError, match="requires job_id"):
         asyncio.run(gpt_dive.code_mode(action="status"))
     with pytest.raises(ValueError, match="unsupported code_mode action"):
-        asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))
+        asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match="payload is only valid"):
         asyncio.run(gpt_dive.code_mode(action="status", job_id="x", payload="payload"))
 
