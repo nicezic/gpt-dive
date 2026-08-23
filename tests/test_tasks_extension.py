@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from gpt_dive.job_manager import JobManager
+from gpt_dive.execution_manager import ExecutionManager
 from gpt_dive.tasks_extension import EXTENSION_ID, TasksExtension
 
 
 def test_extension_identifier_and_methods(tmp_path):
-    extension = TasksExtension(JobManager(tmp_path))
+    extension = TasksExtension(ExecutionManager(tmp_path))
     assert extension.identifier == EXTENSION_ID
     assert {binding.method for binding in extension.methods()} == {
         "tasks/get",
@@ -15,17 +15,17 @@ def test_extension_identifier_and_methods(tmp_path):
 
 
 def test_task_shape_maps_running_job(tmp_path):
-    extension = TasksExtension(JobManager(tmp_path))
-    job = extension.jobs.start("sleep 1", timeout=3)
+    extension = TasksExtension(ExecutionManager(tmp_path))
+    execution = extension.executions.start("sleep 1", timeout=3)
     try:
-        task = extension._create_task(job)
+        task = extension._create_task(execution)
         assert task["resultType"] == "task"
         assert task["status"] == "working"
-        assert task["taskId"] == job["job_id"]
+        assert task["taskId"] == execution["execution_id"]
         assert task["ttlMs"] is None
         assert task["pollIntervalMs"] == 1000
     finally:
-        extension.jobs.cancel(job["job_id"])
+        extension.executions.cancel(execution["execution_id"])
 
 
 def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
@@ -35,7 +35,7 @@ def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
 
     from mcp_types import CallToolRequestParams, ClientCapabilities
 
-    extension = TasksExtension(JobManager(tmp_path))
+    extension = TasksExtension(ExecutionManager(tmp_path))
     ctx = cast(
         Any,
         SimpleNamespace(
@@ -57,11 +57,11 @@ def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
     )
     task = cast(dict[str, Any], asyncio.run(extension.intercept_tool_call(start, ctx, call_next)))
     assert task["resultType"] == "task"
-    extension.jobs.cancel(task["taskId"])
+    extension.executions.cancel(task["taskId"])
 
     status = CallToolRequestParams(
         name="wsl2_async",
-        arguments={"action": "status", "job_id": task["taskId"]},
+        arguments={"action": "status", "execution_id": task["taskId"]},
     )
     assert asyncio.run(extension.intercept_tool_call(status, ctx, call_next)) == {
         "fallback": True

@@ -5,14 +5,14 @@ from typing import Annotated, Any
 from mcp.server import MCPServer
 from pydantic import Field
 
-from ..job_manager import JobManager
+from ..execution_manager import ExecutionManager
 from ..task_store import TaskStore
 from .events import RedisEventPublisher
 from .runtime import ConduitRuntime
 
-jobs = JobManager()
+executions = ExecutionManager()
 task_store = TaskStore()
-runtime = ConduitRuntime(jobs=jobs, task_store=task_store, publisher=RedisEventPublisher())
+runtime = ConduitRuntime(executions=executions, task_store=task_store, publisher=RedisEventPublisher())
 
 mcp = MCPServer(
     name="c",

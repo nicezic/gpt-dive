@@ -25,23 +25,23 @@ nohup bash -lc 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tm
 ```
 
 - `sleep 3` gives the initiating MCP response time to clear the transport.
-- Do not wrap this handoff in `wsl2_async`; its transient systemd job may clean up the detached child before the restart runs.
+- Do not wrap this handoff in `wsl2_async`; its transient systemd execution may clean up the detached child before the restart runs.
 - **Do not automatically verify after dispatch.** Return control to the user and wait for an explicit follow-up before checking PID, bootstrap, schema, or runtime state.
 
-## Durable Jobs
+## Durable Executions
 
-Durable job state and logs live under:
+Durable execution state and logs live under:
 
 ```text
-~/.local/state/gpt-dive/jobs/
+~/.local/state/gpt-dive/executions/
 ```
 
-Completed job logs are retained for 5 days. The normal backend is `systemd --user`; a detached-process fallback exists for environments where user systemd is unavailable.
+Completed execution logs are retained for 5 days. The normal backend is `systemd --user`; a detached-process fallback exists for environments where user systemd is unavailable.
 
 ## Council Browser Bridge
 
 Council v1 routes SOL input through `gpt_dive.council.SolBridge` -> the named `msedge` Playwright CLI session -> the official Playwright Extension -> the user's existing logged-in Edge tab. `SolBridge` reuses an already-open CLI session or attaches it through the stored Extension token, and it gates each send on the ChatGPT composer being READY before inserting text and pressing Enter. Playwright remains input-only; SOL output returns explicitly through `code_mode -> council_emit`.
 
-The historical feasibility experiment used direct Edge CDP plus a Unix-socket bridge and exposed a 600-second generic async-job timeout and stale-socket failure. That transport is historical evidence only. The integrated Council runtime uses the current Extension transport and owns only its `SolBridge` lifecycle; if it created the `msedge` session it detaches it on close, while a pre-existing shared session is left alive. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
+The historical feasibility experiment used direct Edge CDP plus a Unix-socket bridge and exposed a 600-second generic async-execution timeout and stale-socket failure. That transport is historical evidence only. The integrated Council runtime uses the current Extension transport and owns only its `SolBridge` lifecycle; if it created the `msedge` session it detaches it on close, while a pre-existing shared session is left alive. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
 
 Current manual Council startup remains `gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>` until the post-v1 start/reopen capability is implemented. See `docs/council/startup.md`.

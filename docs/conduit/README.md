@@ -20,7 +20,7 @@ ChatGPT Web SOL
              +-- GBrain / later consumers
 ```
 
-Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the backend owner of Code Mode, JobManager, execution policy, and local capabilities; Conduit is the conversation/task plane that can route into those existing components.
+Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the backend owner of Code Mode, ExecutionManager, execution policy, and local capabilities; Conduit is the conversation/task plane that can route into those existing components.
 
 ## Documentation
 
@@ -42,7 +42,7 @@ Conduit
   owns: conversation/task protocol, active-task view, event routing
 
 GPT Dive runtime
-  owns: Code Mode, JobManager, execution policy, local capabilities
+  owns: Code Mode, ExecutionManager, execution policy, local capabilities
 
 Redis
   owns: event transport / fan-out

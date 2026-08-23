@@ -28,8 +28,8 @@ from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .command_runtime import run_command as _run_command
 from .council import emit_sol_response
+from .execution_manager import ExecutionManager
 from .filesystem_policy import harness_denied_patterns
-from .job_manager import JobManager
 from .m3_evidence import invoke_m3_evidence
 from .repo_search import search_repo
 from .runtime_diagnostics import request_lifecycle_middleware
@@ -45,9 +45,9 @@ from .task_runtime import render_tracked_tasks as runtime_render_tracked_tasks
 from .task_store import TaskStore
 from .tasks_extension import TasksExtension
 
-jobs = JobManager()
+executions = ExecutionManager()
 task_store = TaskStore()
-tasks_extension = TasksExtension(jobs)
+tasks_extension = TasksExtension(executions)
 code_runtime = MontyCodeRuntime()
 
 mcp = MCPServer(
@@ -81,8 +81,8 @@ mcp = MCPServer(
         "external and current. Use /grill-me only when deeper "
         "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke, "
         "explicit user requests, exceptional WSL/Win11 maintenance, or cases where Code Mode is genuinely inapplicable; use "
-        "wsl2_async for durable background job "
-        "lifecycle operations. Background jobs survive MCP server restarts and completed job "
+        "wsl2_async for durable background execution "
+        "lifecycle operations. Background executions survive MCP server restarts and completed execution "
         "logs are retained for 5 days. When the client negotiates "
         "io.modelcontextprotocol/tasks, wsl2_async start can use the standard MCP Tasks "
         "lifecycle."
@@ -410,7 +410,7 @@ _DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance;
         "Execute a short shell command synchronously inside the user's local WSL2 and return "
         "its result immediately. This is an exceptional direct-shell path for transport/smoke or "
         "special WSL/Win11 maintenance; use code_mode for normal local work and wsl2_async for "
-        "durable background jobs. Keep timeout only slightly above the expected runtime."
+        "durable background executions. Keep timeout only slightly above the expected runtime."
     ),
 )
 def wsl2_sync(
@@ -746,17 +746,17 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
 
 
 def _code_mode_request_dir() -> Path:
-    path = jobs.root.parent / "code-mode-inputs"
+    path = executions.root.parent / "code-mode-inputs"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _code_mode_request_ref(job_id: str) -> Path:
-    return jobs.root / job_id / "code_mode_payload.ref"
+def _code_mode_request_ref(execution_id: str) -> Path:
+    return executions.root / execution_id / "code_mode_payload.ref"
 
 
-def _cleanup_code_mode_request(job_id: str) -> None:
-    ref = _code_mode_request_ref(job_id)
+def _cleanup_code_mode_request(execution_id: str) -> None:
+    ref = _code_mode_request_ref(execution_id)
     if not ref.is_file():
         return
     try:
@@ -771,7 +771,7 @@ def _cleanup_code_mode_request(job_id: str) -> None:
 
 
 def _refresh_task(task: dict[str, Any]) -> dict[str, Any]:
-    return runtime_refresh_task(jobs, task_store, task)
+    return runtime_refresh_task(executions, task_store, task)
 
 
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
@@ -786,15 +786,15 @@ def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str
 
 
 def _task_collect(task_id: str) -> dict[str, Any]:
-    return runtime_collect_task(jobs, task_store, task_id)
+    return runtime_collect_task(executions, task_store, task_id)
 
 
 def _task_cancel(task_id: str) -> dict[str, Any]:
-    return runtime_cancel_task(jobs, task_store, task_id)
+    return runtime_cancel_task(executions, task_store, task_id)
 
 
 def _task_ack(task_id: str) -> dict[str, Any]:
-    return runtime_ack_task(jobs, task_store, task_id)
+    return runtime_ack_task(executions, task_store, task_id)
 
 
 def _start_background_code_mode(
@@ -829,26 +829,26 @@ def _start_background_code_mode(
         command = (
             f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {request_arg}"
         )
-        started = jobs.start(command, cwd, 600.0)
-        job_id = str(started["job_id"])
+        started = executions.start(command, cwd, 600.0)
+        execution_id = str(started["execution_id"])
         try:
-            _code_mode_request_ref(job_id).write_text(str(request_path) + "\n")
+            _code_mode_request_ref(execution_id).write_text(str(request_path) + "\n")
         except OSError:
-            jobs.cancel(job_id)
+            executions.cancel(execution_id)
             request_path.unlink(missing_ok=True)
             raise
         if label is None:
             return started
         try:
             task = task_store.create(
-                execution_id=job_id,
+                execution_id=execution_id,
                 label=label,
                 status_cmd=status_cmd,
                 status=status,
             )
         except Exception:
-            _cleanup_code_mode_request(job_id)
-            jobs.cancel(job_id)
+            _cleanup_code_mode_request(execution_id)
+            executions.cancel(execution_id)
             raise
         return {
             "task_id": task["task_id"],
@@ -869,7 +869,7 @@ def _background_error(
     message: str,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "job_id": raw.get("job_id"),
+        "execution_id": raw.get("execution_id"),
         "status": raw.get("status"),
         "exit_code": raw.get("exit_code"),
         "error": {"code": code, "message": message},
@@ -880,16 +880,16 @@ def _background_error(
     return result
 
 
-def _background_code_mode_result(job_id: str) -> dict[str, Any]:
-    raw = jobs.result(job_id)
+def _background_code_mode_result(execution_id: str) -> dict[str, Any]:
+    raw = executions.result(execution_id)
     if not raw.get("ready"):
-        raise RuntimeError(f"code_mode background job {job_id!r} is still running")
-    _cleanup_code_mode_request(job_id)
+        raise RuntimeError(f"code_mode background execution {execution_id!r} is still running")
+    _cleanup_code_mode_request(execution_id)
     if raw.get("status") == "cancelled":
         return _background_error(
             raw,
             code="background_cancelled",
-            message="Background Code Mode job was cancelled.",
+            message="Background Code Mode execution was cancelled.",
         )
 
     stdout = str(raw.get("stdout") or "").strip()
@@ -923,7 +923,7 @@ def _background_code_mode_result(job_id: str) -> dict[str, Any]:
                 code="worker_protocol_error",
                 message="Background Code Mode success envelope has no object result.",
             )
-        return {"job_id": job_id, **worker_result}
+        return {"execution_id": execution_id, **worker_result}
 
     error = envelope.get("error")
     if isinstance(error, dict):
@@ -981,7 +981,7 @@ async def code_mode(
     ] = None,
     background: Annotated[
         bool,
-        Field(description="Detach this Code Mode program as a durable background job."),
+        Field(description="Detach this Code Mode program as a durable background execution."),
     ] = False,
     label: Annotated[
         str | None,
@@ -998,12 +998,12 @@ async def code_mode(
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(
-            description="Lifecycle action for a background Code Mode job: status, result, or cancel."
+            description="Lifecycle action for a background Code Mode execution: status, result, or cancel."
         ),
     ] = None,
-    job_id: Annotated[
+    execution_id: Annotated[
         str | None,
-        Field(description="Background Code Mode job ID for lifecycle actions."),
+        Field(description="Background Code Mode execution ID for lifecycle actions."),
     ] = None,
 ) -> dict[str, Any]:
     """Execute or manage one stateless Monty program."""
@@ -1022,10 +1022,10 @@ async def code_mode(
     if normalized_action is None:
         if not has_code:
             raise ValueError(
-                "code_mode requires code unless action + job_id are provided"
+                "code_mode requires code unless action + execution_id are provided"
             )
-        if job_id is not None:
-            raise ValueError("job_id is only valid with a lifecycle action")
+        if execution_id is not None:
+            raise ValueError("execution_id is only valid with a lifecycle action")
         if background:
             return await asyncio.to_thread(
                 _start_background_code_mode,
@@ -1054,18 +1054,18 @@ async def code_mode(
         raise ValueError("cwd is only valid when launching code")
     if payload is not None:
         raise ValueError("payload is only valid when launching code")
-    if job_id is None or not job_id.strip():
-        raise ValueError(f"code_mode action={normalized_action!r} requires job_id")
+    if execution_id is None or not execution_id.strip():
+        raise ValueError(f"code_mode action={normalized_action!r} requires execution_id")
     if normalized_action == "status":
-        state = await asyncio.to_thread(jobs.status, job_id)
+        state = await asyncio.to_thread(executions.status, execution_id)
         if state.get("status") != "running":
-            await asyncio.to_thread(_cleanup_code_mode_request, job_id)
+            await asyncio.to_thread(_cleanup_code_mode_request, execution_id)
         return state
     if normalized_action == "result":
-        return await asyncio.to_thread(_background_code_mode_result, job_id)
+        return await asyncio.to_thread(_background_code_mode_result, execution_id)
     if normalized_action == "cancel":
-        state = await asyncio.to_thread(jobs.cancel, job_id)
-        await asyncio.to_thread(_cleanup_code_mode_request, job_id)
+        state = await asyncio.to_thread(executions.cancel, execution_id)
+        await asyncio.to_thread(_cleanup_code_mode_request, execution_id)
         return state
     raise ValueError("unsupported code_mode action; choose status, result, or cancel")
 
@@ -1084,7 +1084,7 @@ async def code_mode(
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
         "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
         "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
-        "- Use background=True only for detached Code Mode jobs."
+        "- Use background=True only for detached Code Mode executions."
     ),
 )
 async def _mcp_code_mode(
@@ -1122,7 +1122,7 @@ async def _mcp_code_mode(
     ] = None,
     background: Annotated[
         bool,
-        Field(description="Detach this Code Mode program as a durable background job; the actual mode is exposed inside Monty as BACKGROUND."),
+        Field(description="Detach this Code Mode program as a durable background execution; the actual mode is exposed inside Monty as BACKGROUND."),
     ] = False,
     label: Annotated[
         str | None,
@@ -1138,11 +1138,11 @@ async def _mcp_code_mode(
     ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
-        Field(description="Lifecycle action for a background Code Mode job: status, result, or cancel."),
+        Field(description="Lifecycle action for a background Code Mode execution: status, result, or cancel."),
     ] = None,
-    job_id: Annotated[
+    execution_id: Annotated[
         str | None,
-        Field(description="Background Code Mode job ID for lifecycle actions."),
+        Field(description="Background Code Mode execution ID for lifecycle actions."),
     ] = None,
 ) -> dict[str, Any]:
     """Model-facing Code Mode wrapper with an explicit payload/PAYLOAD contract."""
@@ -1159,29 +1159,29 @@ async def _mcp_code_mode(
         status_cmd=status_cmd,
         status=status,
         action=action,
-        job_id=job_id,
+        execution_id=execution_id,
     )
 
 
-def _required_job_id(action: str, job_id: str | None) -> str:
-    if job_id is None or not job_id.strip():
-        raise ValueError(f"wsl2_async action={action!r} requires job_id")
-    return job_id
+def _required_execution_id(action: str, execution_id: str | None) -> str:
+    if execution_id is None or not execution_id.strip():
+        raise ValueError(f"wsl2_async action={action!r} requires execution_id")
+    return execution_id
 
 
 @mcp.tool(
-    title="Asynchronous WSL2 Jobs",
+    title="Asynchronous WSL2 Executions",
     description=(
-        "Operate durable asynchronous WSL2 jobs through one stable action-based interface. "
+        "Operate durable asynchronous WSL2 executions through one stable action-based interface. "
         "Use action='capabilities' to discover the actions supported by the current backend. "
-        "Long-running jobs survive MCP server restarts; completed logs are retained for 5 days."
+        "Long-running executions survive MCP server restarts; completed logs are retained for 5 days."
     ),
 )
 def wsl2_async(
     action: Annotated[
         str,
         Field(
-            description="Async-job action; use 'capabilities' to list supported actions."
+            description="Async-execution action; use 'capabilities' to list supported actions."
         ),
     ],
     command: Annotated[
@@ -1192,15 +1192,15 @@ def wsl2_async(
         str | None,
         Field(
             description=(
-                "Required exact harness declaration for direct WSL job start: "
+                "Required exact harness declaration for direct WSL execution start: "
                 f"{_DIRECT_WSL_PERMISSION}"
             )
         ),
     ] = None,
-    job_id: Annotated[
+    execution_id: Annotated[
         str | None,
         Field(
-            description="Job ID for status/result/cancel."
+            description="Execution ID for status/result/cancel."
         ),
     ] = None,
     cwd: Annotated[
@@ -1215,15 +1215,15 @@ def wsl2_async(
         ),
     ] = 600.0,
 ) -> dict[str, Any]:
-    """Dispatch a durable WSL2 job lifecycle action."""
+    """Dispatch a durable WSL2 execution lifecycle action."""
     normalized = action.strip().lower()
     if normalized == "capabilities":
         return {
             "actions": {
                 "start": {"requires": ["command", "permission"], "optional": ["cwd", "timeout"]},
-                "status": {"requires": ["job_id"]},
-                "result": {"requires": ["job_id"]},
-                "cancel": {"requires": ["job_id"]},
+                "status": {"requires": ["execution_id"]},
+                "result": {"requires": ["execution_id"]},
+                "cancel": {"requires": ["execution_id"]},
             }
         }
     if normalized == "start":
@@ -1233,13 +1233,13 @@ def wsl2_async(
             raise ValueError(
                 "wsl2_async permission mismatch; use the exact harness declaration from the live schema"
             )
-        return jobs.start(command, cwd, timeout)
+        return executions.start(command, cwd, timeout)
     if normalized == "status":
-        return jobs.status(_required_job_id(normalized, job_id))
+        return executions.status(_required_execution_id(normalized, execution_id))
     if normalized == "result":
-        return jobs.result(_required_job_id(normalized, job_id))
+        return executions.result(_required_execution_id(normalized, execution_id))
     if normalized == "cancel":
-        return jobs.cancel(_required_job_id(normalized, job_id))
+        return executions.cancel(_required_execution_id(normalized, execution_id))
     raise ValueError(
         f"unsupported wsl2_async action: {action!r}; use action='capabilities' to discover actions"
     )

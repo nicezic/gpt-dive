@@ -39,7 +39,7 @@ Conduit implementation commit:
 Current v0:
 
 - `@c` is the permanent Conduit app/namespace.
-- `start` launches detached work through GPT Dive `JobManager`.
+- `start` launches detached work through GPT Dive `ExecutionManager`.
 - `sync` is the short synchronous canary action.
 - `collect` reads task results non-destructively.
 - `ack` marks a terminal task as handled so it disappears from automatic snapshots while its retained result remains collectable.
@@ -107,9 +107,9 @@ Do not reopen without new evidence:
    - grounded in the 2026-08-16 fresh-session `start → SOL reasoning → sync` acceptance plus the non-destructive collect/retention check.
 
 3. **First post-canary protocol slice — local PASS**
-   - real pressure observed: retained terminal tasks accumulate in every automatic snapshot for the JobManager retention window;
+   - real pressure observed: retained terminal tasks accumulate in every automatic snapshot for the ExecutionManager retention window;
    - added `ack(task_id)` as the minimal lifecycle action;
-   - `ack` is terminal-task-only, removes the task from later automatic snapshots, and does not delete the retained JobManager result;
+   - `ack` is terminal-task-only, removes the task from later automatic snapshots, and does not delete the retained ExecutionManager result;
    - local validation: Conduit tests 6 passed, full pytest 125 passed, ruff PASS, pyright 0 errors / 0 warnings.
 
 4. **TrackedTasks / Opportunistic Evidence Pickup direction — ACCEPTED**

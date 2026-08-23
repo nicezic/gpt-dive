@@ -42,7 +42,7 @@ The pattern is **runner-agnostic**. A search scout is only one example. The same
 - `/agy-worker`;
 - `/m3-worker`;
 - background Code Mode;
-- arbitrary durable WSL2 commands or Jobs;
+- arbitrary durable WSL2 commands or executions;
 - future workers or runners that can be represented as tracked asynchronous work.
 
 The common course is:
@@ -54,7 +54,7 @@ launch -> do not wait -> keep working -> encounter refreshed TrackedTasks
 
 ### Worker integration boundary
 
-Workers do not need to share one implementation, runtime, or transport. `/agy-worker`, `/m3-worker`, background Code Mode, shell Jobs, and future runners may remain independent behind their existing execution paths.
+Workers do not need to share one implementation, runtime, or transport. `/agy-worker`, `/m3-worker`, background Code Mode, shell executions, and future runners may remain independent behind their existing execution paths.
 
 Only the **response/status boundary** needs enough alignment for Conduit to represent the work consistently: identify the tracked item, expose a compact lifecycle state, and make the terminal result retrievable when Web SOL chooses to pick it up. Conduit should adapt heterogeneous worker responses at this boundary rather than forcing every worker into one internal protocol.
 
@@ -151,11 +151,11 @@ TrackedTasks is the ChatGPT Web-facing awareness mechanism for the environment w
 - Web SOL can keep useful foreground momentum while detached work runs concurrently.
 - Background latency is removed from the critical path unless Web SOL explicitly chooses to wait.
 - Normal `@dive` activity becomes a semi-forced task-awareness channel, reducing forgotten background work without a push subsystem.
-- The same asynchronous workflow applies uniformly to AI workers, research scouts, Code Mode, shell Jobs, and future runners.
+- The same asynchronous workflow applies uniformly to AI workers, research scouts, Code Mode, shell executions, and future runners.
 - Worker implementations stay independent; only a small compatible response/status boundary is required for TrackedTasks and later result pickup.
 - Cheap or noisy workers can be used more aggressively because their results are optional candidate evidence.
-- TrackedTask semantics remain distinct from the low-level Job/JobManager execution primitive.
-- `wsl2_async` naming and future low-level Job surface design remain separate follow-up work.
+- TrackedTask semantics remain distinct from the low-level Execution/ExecutionManager execution primitive.
+- `wsl2_async` naming and future low-level Execution surface design remain separate follow-up work.
 
 ## Non-goals
 

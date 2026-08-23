@@ -32,7 +32,7 @@ Server push is not required for the target workflow. Lack of ChatGPT Web negotia
 
 ## Context
 
-GPT Dive already owns durable local execution through JobManager. Conduit is the Web-facing conversation/task plane and should reuse that runtime rather than recreate it.
+GPT Dive already owns durable local execution through ExecutionManager. Conduit is the Web-facing conversation/task plane and should reuse that runtime rather than recreate it.
 
 The design goal is to preserve one productive ChatGPT Web SOL reasoning flow while detached local or external work continues concurrently. The user's next conversation turn is an acceptable and intentional refresh boundary.
 

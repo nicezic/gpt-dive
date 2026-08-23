@@ -55,6 +55,8 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert any(variant.get("maxLength") == 80 for variant in label_variants)
     assert "status_cmd" in tool.input_schema["properties"]
     assert "status" in tool.input_schema["properties"]
+    assert "execution_id" in tool.input_schema["properties"]
+    assert "job_id" not in tool.input_schema["properties"]
     action_variants = tool.input_schema["properties"]["action"]["anyOf"]
     assert {tuple(v.get("enum", [])) for v in action_variants} >= {("status", "result", "cancel")}
     assert "input" not in tool.input_schema["properties"]
@@ -271,32 +273,32 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
     calls: list[tuple] = []
 
     monkeypatch.setattr(
-        gpt_dive.jobs,
+        gpt_dive.executions,
         "start",
         lambda command, cwd, timeout: (
-            calls.append(("start", command, cwd, timeout)) or {"job_id": "j1"}
+            calls.append(("start", command, cwd, timeout)) or {"execution_id": "j1"}
         ),
     )
     monkeypatch.setattr(
-        gpt_dive.jobs,
+        gpt_dive.executions,
         "status",
-        lambda job_id: (
-            calls.append(("status", job_id)) or {"job_id": job_id, "status": "running"}
+        lambda execution_id: (
+            calls.append(("status", execution_id)) or {"execution_id": execution_id, "status": "running"}
         ),
     )
     monkeypatch.setattr(
-        gpt_dive.jobs,
+        gpt_dive.executions,
         "result",
-        lambda job_id: (
-            calls.append(("result", job_id)) or {"job_id": job_id, "ready": True}
+        lambda execution_id: (
+            calls.append(("result", execution_id)) or {"execution_id": execution_id, "ready": True}
         ),
     )
     monkeypatch.setattr(
-        gpt_dive.jobs,
+        gpt_dive.executions,
         "cancel",
-        lambda job_id: (
-            calls.append(("cancel", job_id))
-            or {"job_id": job_id, "status": "cancelled"}
+        lambda execution_id: (
+            calls.append(("cancel", execution_id))
+            or {"execution_id": execution_id, "status": "cancelled"}
         ),
     )
 
@@ -307,12 +309,12 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
             cwd="/tmp",
             timeout=11,
             permission=app._DIRECT_WSL_PERMISSION,
-        )["job_id"]
+        )["execution_id"]
         == "j1"
     )
-    assert gpt_dive.wsl2_async("status", job_id="j1")["status"] == "running"
-    assert gpt_dive.wsl2_async("result", job_id="j1")["ready"] is True
-    assert gpt_dive.wsl2_async("cancel", job_id="j1")["status"] == "cancelled"
+    assert gpt_dive.wsl2_async("status", execution_id="j1")["status"] == "running"
+    assert gpt_dive.wsl2_async("result", execution_id="j1")["ready"] is True
+    assert gpt_dive.wsl2_async("cancel", execution_id="j1")["status"] == "cancelled"
     assert calls == [
         ("start", "cmd", "/tmp", 11),
         ("status", "j1"),
@@ -328,7 +330,7 @@ def test_wsl2_async_validates_action_specific_fields() -> None:
         gpt_dive.wsl2_async("start", command="cmd")
     with pytest.raises(ValueError, match="permission mismatch"):
         gpt_dive.wsl2_async("start", command="cmd", permission="wrong")
-    with pytest.raises(ValueError, match="requires job_id"):
+    with pytest.raises(ValueError, match="requires execution_id"):
         gpt_dive.wsl2_async("status")
     with pytest.raises(ValueError, match="capabilities"):
         gpt_dive.wsl2_async("future-action")
@@ -352,6 +354,8 @@ def test_wsl2_async_permission_is_exposed_in_live_schema() -> None:
     assert "permission" in schema["properties"]
     assert "permission" not in schema.get("required", [])
     assert app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+    assert "execution_id" in schema["properties"]
+    assert "job_id" not in schema["properties"]
 
 
 def test_wsl2_sync_allows_intentional_root_inspection() -> None:
@@ -384,11 +388,11 @@ def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
 def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> None:
     import time
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path
+        gpt_dive.executions._systemd_available = False
         started = gpt_dive.wsl2_async(
             "start",
             command="python --version",
@@ -398,28 +402,28 @@ def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> Non
         deadline = time.monotonic() + 3
         state = started
         while time.monotonic() < deadline:
-            state = gpt_dive.wsl2_async("status", job_id=started["job_id"])
+            state = gpt_dive.wsl2_async("status", execution_id=started["execution_id"])
             if state["status"] != "running":
                 break
             time.sleep(0.03)
-        result = gpt_dive.wsl2_async("result", job_id=started["job_id"])
+        result = gpt_dive.wsl2_async("result", execution_id=started["execution_id"])
         assert result["ready"] is True
         assert result["exit_code"] == 0
         assert "Python 3.14" in result["stdout"]
         assert "auto-reroute" in result["stderr"]
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
     import time
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path
+        gpt_dive.executions._systemd_available = False
         started = gpt_dive.wsl2_async(
             "start",
             command="pytest --version",
@@ -429,14 +433,14 @@ def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
         deadline = time.monotonic() + 3
         state = started
         while time.monotonic() < deadline:
-            state = gpt_dive.wsl2_async("status", job_id=started["job_id"])
+            state = gpt_dive.wsl2_async("status", execution_id=started["execution_id"])
             if state["status"] != "running":
                 break
             time.sleep(0.03)
-        result = gpt_dive.wsl2_async("result", job_id=started["job_id"])
+        result = gpt_dive.wsl2_async("result", execution_id=started["execution_id"])
         assert result["ready"] is True
         assert result["exit_code"] == 2
         assert "Direct 'pytest' execution is prohibited" in result["stderr"]
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd

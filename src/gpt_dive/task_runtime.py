@@ -6,29 +6,29 @@ from pathlib import Path
 from typing import Any
 
 from .command_runtime import run_command
-from .job_manager import JobManager, JobNotFoundError
+from .execution_manager import ExecutionManager, ExecutionNotFoundError
 from .task_store import TaskStore
 
 CODE_MODE_WORKER_PROTOCOL = 2
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled"}
 
 
-def _code_mode_request_dir(jobs: JobManager) -> Path:
-    return jobs.root.parent / "code-mode-inputs"
+def _code_mode_request_dir(executions: ExecutionManager) -> Path:
+    return executions.root.parent / "code-mode-inputs"
 
 
-def _code_mode_request_ref(jobs: JobManager, execution_id: str) -> Path:
-    return jobs.root / execution_id / "code_mode_payload.ref"
+def _code_mode_request_ref(executions: ExecutionManager, execution_id: str) -> Path:
+    return executions.root / execution_id / "code_mode_payload.ref"
 
 
-def _cleanup_code_mode_request(jobs: JobManager, execution_id: str) -> None:
-    ref = _code_mode_request_ref(jobs, execution_id)
+def _cleanup_code_mode_request(executions: ExecutionManager, execution_id: str) -> None:
+    ref = _code_mode_request_ref(executions, execution_id)
     if not ref.is_file():
         return
     try:
         raw = ref.read_text().strip()
         request_path = Path(raw).resolve()
-        request_path.relative_to(_code_mode_request_dir(jobs).resolve())
+        request_path.relative_to(_code_mode_request_dir(executions).resolve())
         request_path.unlink(missing_ok=True)
     except OSError, ValueError:
         pass
@@ -43,7 +43,7 @@ def _background_error(
     message: str,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "job_id": raw.get("job_id"),
+        "execution_id": raw.get("execution_id"),
         "status": raw.get("status"),
         "exit_code": raw.get("exit_code"),
         "error": {"code": code, "message": message},
@@ -55,13 +55,13 @@ def _background_error(
 
 
 def _is_code_mode_execution(
-    jobs: JobManager,
+    executions: ExecutionManager,
     execution_id: str,
     envelope: dict[str, Any] | None,
 ) -> bool:
-    if _code_mode_request_ref(jobs, execution_id).is_file() or envelope is not None:
+    if _code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
         return True
-    meta_path = jobs.root / execution_id / "meta.json"
+    meta_path = executions.root / execution_id / "meta.json"
     try:
         meta = json.loads(meta_path.read_text())
     except (OSError, ValueError, json.JSONDecodeError):
@@ -99,7 +99,7 @@ def _normalize_code_mode_result(
         return _background_error(
             raw,
             code="background_cancelled",
-            message="Background Code Mode job was cancelled.",
+            message="Background Code Mode execution was cancelled.",
         )
 
     exit_code = raw.get("exit_code")
@@ -111,7 +111,7 @@ def _normalize_code_mode_result(
                 code="worker_protocol_error",
                 message="Background Code Mode success envelope has no object result.",
             )
-        return {"job_id": execution_id, **worker_result}
+        return {"execution_id": execution_id, **worker_result}
 
     error = envelope.get("error")
     if isinstance(error, dict):
@@ -128,21 +128,21 @@ def _normalize_code_mode_result(
     return _background_error(raw, code=error_code, message=error_message)
 
 
-def read_execution_result(jobs: JobManager, execution_id: str) -> dict[str, Any]:
-    raw = jobs.result(execution_id)
+def read_execution_result(executions: ExecutionManager, execution_id: str) -> dict[str, Any]:
+    raw = executions.result(execution_id)
     if not raw.get("ready"):
         return raw
 
     envelope = _parse_code_mode_envelope(raw)
-    if not _is_code_mode_execution(jobs, execution_id, envelope):
+    if not _is_code_mode_execution(executions, execution_id, envelope):
         return raw
 
-    _cleanup_code_mode_request(jobs, execution_id)
+    _cleanup_code_mode_request(executions, execution_id)
     if raw.get("status") == "cancelled":
         return _background_error(
             raw,
             code="background_cancelled",
-            message="Background Code Mode job was cancelled.",
+            message="Background Code Mode execution was cancelled.",
         )
     if envelope is None:
         return _background_error(
@@ -242,7 +242,7 @@ def render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
 
 
 def refresh_task(
-    jobs: JobManager, task_store: TaskStore, task: dict[str, Any]
+    executions: ExecutionManager, task_store: TaskStore, task: dict[str, Any]
 ) -> dict[str, Any]:
     if task["state"] == "lost":
         return task
@@ -250,8 +250,8 @@ def refresh_task(
     task_id = str(task["task_id"])
     execution_id = str(task["execution_id"])
     try:
-        execution = jobs.status(execution_id)
-    except JobNotFoundError:
+        execution = executions.status(execution_id)
+    except ExecutionNotFoundError:
         return task_store.update_state(task_id, "lost")
 
     if str(execution.get("status") or "") == "running":
@@ -260,8 +260,8 @@ def refresh_task(
         return task
 
     try:
-        result = read_execution_result(jobs, execution_id)
-    except (JobNotFoundError, FileNotFoundError):
+        result = read_execution_result(executions, execution_id)
+    except (ExecutionNotFoundError, FileNotFoundError):
         return task_store.update_state(task_id, "lost")
     if not result.get("ready", True):
         return task
@@ -269,9 +269,9 @@ def refresh_task(
 
 
 def collect_task(
-    jobs: JobManager, task_store: TaskStore, task_id: str
+    executions: ExecutionManager, task_store: TaskStore, task_id: str
 ) -> dict[str, Any]:
-    task = refresh_task(jobs, task_store, task_store.get(task_id))
+    task = refresh_task(executions, task_store, task_store.get(task_id))
     if task["state"] == "working":
         return {"task": task, "ready": False}
     if task["state"] == "lost":
@@ -279,33 +279,33 @@ def collect_task(
 
     execution_id = str(task["execution_id"])
     try:
-        result = read_execution_result(jobs, execution_id)
-    except (JobNotFoundError, FileNotFoundError):
+        result = read_execution_result(executions, execution_id)
+    except (ExecutionNotFoundError, FileNotFoundError):
         task = task_store.update_state(str(task["task_id"]), "lost")
         return {"task": task, "ready": False, "unavailable": True}
     return {"task": task, "ready": True, "result": result}
 
 
 def cancel_task(
-    jobs: JobManager, task_store: TaskStore, task_id: str
+    executions: ExecutionManager, task_store: TaskStore, task_id: str
 ) -> dict[str, Any]:
-    task = refresh_task(jobs, task_store, task_store.get(task_id))
+    task = refresh_task(executions, task_store, task_store.get(task_id))
     if task["state"] != "working":
         return {"task": task}
 
     execution_id = str(task["execution_id"])
     try:
-        jobs.cancel(execution_id)
-    except JobNotFoundError:
+        executions.cancel(execution_id)
+    except ExecutionNotFoundError:
         task = task_store.update_state(str(task["task_id"]), "lost")
         return {"task": task}
-    return {"task": refresh_task(jobs, task_store, task_store.get(task_id))}
+    return {"task": refresh_task(executions, task_store, task_store.get(task_id))}
 
 
 def ack_task(
-    jobs: JobManager, task_store: TaskStore, task_id: str
+    executions: ExecutionManager, task_store: TaskStore, task_id: str
 ) -> dict[str, Any]:
-    task = refresh_task(jobs, task_store, task_store.get(task_id))
+    task = refresh_task(executions, task_store, task_store.get(task_id))
     if task["state"] == "working":
         raise ValueError("task_ack requires a terminal or lost Task")
     task_store.delete(task_id)

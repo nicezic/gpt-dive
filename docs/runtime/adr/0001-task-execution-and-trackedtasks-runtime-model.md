@@ -274,9 +274,7 @@ Execution
 execution_id
 ```
 
-The current `JobManager` / `job_id` implementation may remain internally during the first functional rollout. After the Task lifecycle is proven, it may be renamed/refactored to Execution terminology as cleanup. That rename is **not a prerequisite** for Task awareness and must not grow into a second execution framework.
-
-No permanent dual Job/Execution compatibility layer or old-state migration reader is required once that cleanup happens.
+The first functional rollout used `JobManager` / `job_id` internally while the Task lifecycle was being proven. After Task awareness, AGY, and the shared Conduit Task domain were validated, the current runtime implementation was cleaned up to `ExecutionManager` / `execution_id` with the durable state root at `~/.local/state/gpt-dive/executions`. No compatibility alias or old-state migration reader remains, and the cleanup did not introduce a second execution framework.
 
 ### 5.1 One normalized Execution outcome
 
@@ -668,7 +666,7 @@ v1 implementation must preserve these rules:
 14. Ack removes Task awareness and does not manage result retention.
 15. Normal Execution retention may cause an ignored Task/result to become lost.
 16. No start-key/idempotency, structured progress, runner registry, or recovery subsystem exists in v1.
-17. Job→Execution terminology cleanup happens after the Task lifecycle is proven and does not require a permanent compatibility layer.
+17. Current runtime code and public lifecycle identity use Execution / `execution_id`; no permanent Job compatibility layer remains.
 
 ---
 
@@ -685,7 +683,7 @@ v1 implementation must preserve these rules:
 8. Convert /peer-review to the Task-backed background Code Mode path using a cheap Haiku-class canary.
 9. Convert long AGY workflows to the same path.
 10. Point Conduit at the shared TaskStore and remove duplicate tracking metadata.
-11. After the lifecycle is proven, clean Job terminology into Execution terminology and update runtime/skill/CAPABILITIES docs without permanent compatibility aliases.
+11. Completed: clean Job terminology into Execution terminology and update current runtime/API/docs without permanent compatibility aliases.
 ```
 
 Native MCP Tasks, structured progress, launch idempotency, and recovery remain outside this v1 implementation sequence.
@@ -745,10 +743,10 @@ Native MCP Tasks, structured progress, launch idempotency, and recovery remain o
 ### Migration cleanliness
 
 ```text
-[ ] after terminology cleanup, runtime code/docs use Execution/execution_id terminology consistently
-[ ] no permanent JobManager/job_id compatibility shim remains
+[x] after terminology cleanup, current runtime code/docs use Execution/execution_id terminology consistently
+[x] no permanent JobManager/job_id compatibility shim remains
 [x] no duplicate Conduit Task SSOT remains after migration
-[ ] long agent skills use the shared background Code Mode Task path rather than separate Task launcher frameworks
+[x] long agent skills use the shared background Code Mode Task path rather than separate Task launcher frameworks
 ```
 
 ---

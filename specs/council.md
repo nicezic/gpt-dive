@@ -28,7 +28,7 @@ GPT Dive v1-v2 is stable:
 
 - four Web-facing MCP tools: `bootstrap`, `code_mode`, `wsl2_sync`, `wsl2_async`;
 - `code_mode` is the primary programmable Pydantic Monty-backed harness;
-- durable jobs reuse `JobManager`;
+- durable executions reuse `ExecutionManager`;
 - `subagent_call` and `gz64` are registered capabilities behind Code Mode;
 - current local suite: 39 tests passing before this spec.
 
@@ -581,7 +581,7 @@ Acceptance evidence from the throwaway Council repo showed the USER turn at `fad
 ### Meaningful implementation discoveries / deviations
 
 1. **Opus Pydantic calls are stateless across worker invocations.** Git cursor semantics remain authoritative, while the Opus adapter reconstructs previously synchronized transcript context plus the new unread suffix for each call. No separate conversation database was added.
-2. **The SOL bridge is Council-owned rather than a generic 600-second background job.** `SolBridge` has explicit start/close lifecycle, reuses a healthy shared `msedge` Playwright CLI session when present, and otherwise attaches through the official Extension. This removes the direct-CDP/socket lifetime from production while leaving a pre-existing shared browser session alive on close.
+2. **The SOL bridge is Council-owned rather than a generic 600-second background execution.** `SolBridge` has explicit start/close lifecycle, reuses a healthy shared `msedge` Playwright CLI session when present, and otherwise attaches through the official Extension. This removes the direct-CDP/socket lifetime from production while leaving a pre-existing shared browser session alive on close.
 3. **SOL output gained an `expected_head` guard.** `council_emit` remains backward compatible, while integrated SOL turns use compare-and-swap-style HEAD validation so late or duplicate responses cannot silently attach to the wrong Council state.
 4. **Retries preserve the original USER event.** OPUS and SOL retry paths reuse unchanged unread context instead of committing duplicate USER turns; a late SOL commit can be reconciled before reconnecting the browser.
 5. **The UI transport is simple REST, not WebSocket.** Starlette + Uvicorn is sufficient for the single-room v1 because one user-triggered turn can await its participant result while the Python process owns the persistent SOL bridge.

@@ -361,29 +361,29 @@ def test_council_emit_is_registry_capability(monkeypatch, tmp_path: Path) -> Non
     assert calls == [(str(tmp_path), "SOL_OK", "deadbeef")]
 
 
-def _wait_code_mode_job(job_id: str, timeout: float = 4.0) -> dict[str, object]:
+def _wait_code_mode_job(execution_id: str, timeout: float = 4.0) -> dict[str, object]:
     import time
 
     import gpt_dive
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        state = asyncio.run(gpt_dive.code_mode(action="status", job_id=job_id))
+        state = asyncio.run(gpt_dive.code_mode(action="status", execution_id=execution_id))
         if state["status"] != "running":
             return state
         time.sleep(0.03)
-    raise AssertionError("background Code Mode job did not finish")
+    raise AssertionError("background Code Mode execution did not finish")
 
 
 def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(
             gpt_dive.code_mode(
@@ -394,49 +394,49 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
         assert started["status"] == "running"
         assert "result" not in started
 
-        state = _wait_code_mode_job(str(started["job_id"]))
+        state = _wait_code_mode_job(str(started["execution_id"]))
         assert state["status"] == "completed"
         result = asyncio.run(
-            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
         )
-        assert result["job_id"] == started["job_id"]
+        assert result["execution_id"] == started["execution_id"]
         assert result["result"] == 3
         assert result["stdout"] == "BG_STDOUT\n"
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_background_exposes_background_flag(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(gpt_dive.code_mode("BACKGROUND", background=True))
-        _wait_code_mode_job(str(started["job_id"]))
+        _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
-            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
         )
         assert result["result"] is True
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_background_preserves_payload(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         payload = "BG_PAYLOAD ' \" ` $() <<EOF\n"
         started = asyncio.run(
@@ -446,14 +446,14 @@ def test_code_mode_background_preserves_payload(tmp_path: Path) -> None:
                 background=True,
             )
         )
-        _wait_code_mode_job(str(started["job_id"]))
+        _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
-            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
         )
         assert result["result"] == payload
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> None:
@@ -464,10 +464,10 @@ def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> Non
     failure = {"ok": False, "model": "luna", "error": "SUBAGENT_FAILED"}
     envelope = {"v": app_module.CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": {"result": failure}}
     monkeypatch.setattr(
-        app_module.jobs,
+        app_module.executions,
         "result",
-        lambda _job_id: {
-            "job_id": "job",
+        lambda _execution_id: {
+            "execution_id": "execution",
             "ready": True,
             "status": "completed",
             "exit_code": 0,
@@ -475,67 +475,67 @@ def test_background_result_preserves_nested_subagent_failure(monkeypatch) -> Non
             "stderr": "",
         },
     )
-    monkeypatch.setattr(app_module, "_cleanup_code_mode_request", lambda _job_id: None)
+    monkeypatch.setattr(app_module, "_cleanup_code_mode_request", lambda _execution_id: None)
 
-    assert app_module._background_code_mode_result("job")["result"] == failure
+    assert app_module._background_code_mode_result("execution")["result"] == failure
 
 
 def test_code_mode_background_exception_is_structured(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(
             gpt_dive.code_mode('raise ValueError("BG_BOOM")', background=True)
         )
-        _wait_code_mode_job(str(started["job_id"]))
+        _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
-            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
         )
         assert result["exit_code"] != 0
         assert result["error"]["code"] == "background_execution_error"
         assert "BG_BOOM" in result["error"]["message"]
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_background_rejects_non_json_result(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(gpt_dive.code_mode('float("nan")', background=True))
-        _wait_code_mode_job(str(started["job_id"]))
+        _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
-            gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+            gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
         )
         assert result["exit_code"] != 0
         assert result["error"]["code"] == "non_json_result"
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_background_cancel(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(
             gpt_dive.code_mode(
@@ -543,25 +543,25 @@ def test_code_mode_background_cancel(tmp_path: Path) -> None:
                 background=True,
             )
         )
-        asyncio.run(gpt_dive.code_mode(action="cancel", job_id=str(started["job_id"])))
-        state = _wait_code_mode_job(str(started["job_id"]))
+        asyncio.run(gpt_dive.code_mode(action="cancel", execution_id=str(started["execution_id"])))
+        state = _wait_code_mode_job(str(started["execution_id"]))
         assert state["status"] == "cancelled"
-        payload_dir = gpt_dive.jobs.root.parent / "code-mode-inputs"
+        payload_dir = gpt_dive.executions.root.parent / "code-mode-inputs"
         assert not list(payload_dir.glob("*.json"))
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_background_jobs_and_internal_gather_overlap(tmp_path: Path) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         code = """
 import asyncio
 a, b = await asyncio.gather(
@@ -573,32 +573,32 @@ a, b = await asyncio.gather(
         first = asyncio.run(gpt_dive.code_mode(code, background=True))
         second = asyncio.run(gpt_dive.code_mode(code, background=True))
         first_while_second_running = asyncio.run(
-            gpt_dive.code_mode(action="status", job_id=str(first["job_id"]))
+            gpt_dive.code_mode(action="status", execution_id=str(first["execution_id"]))
         )
         assert first_while_second_running["status"] == "running"
-        _wait_code_mode_job(str(first["job_id"]))
-        _wait_code_mode_job(str(second["job_id"]))
+        _wait_code_mode_job(str(first["execution_id"]))
+        _wait_code_mode_job(str(second["execution_id"]))
         for started in (first, second):
             result = asyncio.run(
-                gpt_dive.code_mode(action="result", job_id=str(started["job_id"]))
+                gpt_dive.code_mode(action="result", execution_id=str(started["execution_id"]))
             )
             assert all(marker in output for marker, output in zip(("a", "b"), result["result"], strict=True))
     finally:
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
@@ -621,26 +621,26 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
 
         _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
-            code_mode(action="result", job_id=str(started["execution_id"]))
+            code_mode(action="result", execution_id=str(started["execution_id"]))
         )
         assert result["result"] == 7
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_task_collect_is_non_destructive_and_ack_preserves_execution_result(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(code_mode('await run_command("sleep 0.1")\n21', background=True, label="collect"))
@@ -665,25 +665,25 @@ def test_task_collect_is_non_destructive_and_ack_preserves_execution_result(tmp_
         assert acked == {"task_id": task_id, "state": "completed", "acked": True}
         assert asyncio.run(code_mode("await task_list()"))["result"] == {"tasks": []}
 
-        raw = asyncio.run(code_mode(action="result", job_id=execution_id))
+        raw = asyncio.run(code_mode(action="result", execution_id=execution_id))
         assert raw["result"] == 21
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_task_refresh_uses_worker_failure_semantics(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(code_mode('raise ValueError("TASK_FAIL")', background=True, label="failure"))
@@ -699,21 +699,21 @@ def test_task_refresh_uses_worker_failure_semantics(tmp_path: Path) -> None:
         assert "TASK_FAIL" in collected["result"]["error"]["message"]
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_task_cancel_forwards_and_becomes_cancelled(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(code_mode('await run_command("sleep 30")', background=True, label="cancel"))
@@ -732,21 +732,21 @@ def test_task_cancel_forwards_and_becomes_cancelled(tmp_path: Path) -> None:
         assert collected["result"]["error"]["code"] == "background_cancelled"
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(code_mode("42", background=True, label="lost"))
@@ -757,7 +757,7 @@ def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) ->
         collected = asyncio.run(code_mode("await task_collect(PAYLOAD)", payload=task_id))["result"]
         assert collected["task"]["state"] == "completed"
 
-        shutil.rmtree(gpt_dive.jobs.root / execution_id)
+        shutil.rmtree(gpt_dive.executions.root / execution_id)
         listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
         assert listed[0]["state"] == "lost"
 
@@ -769,21 +769,21 @@ def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) ->
         assert acked == {"task_id": task_id, "state": "lost", "acked": True}
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
     import gpt_dive
     from gpt_dive.task_store import TaskStore
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
@@ -811,8 +811,8 @@ def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
         asyncio.run(code_mode("await task_cancel(PAYLOAD)", payload=task_id))
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_task_status_display_falls_back_without_changing_state(
@@ -868,8 +868,8 @@ def test_code_mode_cancels_execution_when_task_persistence_fails(
 ) -> None:
     import gpt_dive
 
-    original_root = gpt_dive.jobs.root
-    original_systemd = gpt_dive.jobs._systemd_available
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
     original_task_store = app_module.task_store
     cancelled: list[str] = []
 
@@ -877,18 +877,18 @@ def test_code_mode_cancels_execution_when_task_persistence_fails(
         def create(self, **_kwargs):
             raise OSError("task db unavailable")
 
-    real_cancel = app_module.jobs.cancel
+    real_cancel = app_module.executions.cancel
 
-    def record_cancel(job_id: str):
-        cancelled.append(job_id)
-        return real_cancel(job_id)
+    def record_cancel(execution_id: str):
+        cancelled.append(execution_id)
+        return real_cancel(execution_id)
 
     try:
-        gpt_dive.jobs.root = tmp_path / "jobs"
-        gpt_dive.jobs.root.mkdir()
-        gpt_dive.jobs._systemd_available = False
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
         app_module.task_store = FailingTaskStore()  # type: ignore[assignment]
-        monkeypatch.setattr(app_module.jobs, "cancel", record_cancel)
+        monkeypatch.setattr(app_module.executions, "cancel", record_cancel)
 
         with pytest.raises(OSError, match="task db unavailable"):
             asyncio.run(code_mode('await run_command("sleep 30")', background=True, label="fails"))
@@ -896,8 +896,8 @@ def test_code_mode_cancels_execution_when_task_persistence_fails(
         assert len(cancelled) == 1
     finally:
         app_module.task_store = original_task_store
-        gpt_dive.jobs.root = original_root
-        gpt_dive.jobs._systemd_available = original_systemd
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_validates_background_lifecycle_fields() -> None:
@@ -908,13 +908,13 @@ def test_code_mode_validates_background_lifecycle_fields() -> None:
     with pytest.raises(ValueError, match="requires code"):
         asyncio.run(gpt_dive.code_mode())
     with pytest.raises(ValueError, match="mutually exclusive"):
-        asyncio.run(gpt_dive.code_mode("1 + 2", action="status", job_id="x"))
-    with pytest.raises(ValueError, match="requires job_id"):
+        asyncio.run(gpt_dive.code_mode("1 + 2", action="status", execution_id="x"))
+    with pytest.raises(ValueError, match="requires execution_id"):
         asyncio.run(gpt_dive.code_mode(action="status"))
     with pytest.raises(ValueError, match="unsupported code_mode action"):
-        asyncio.run(gpt_dive.code_mode(action="future", job_id="x"))  # pyright: ignore[reportArgumentType]
+        asyncio.run(gpt_dive.code_mode(action="future", execution_id="x"))  # pyright: ignore[reportArgumentType]
     with pytest.raises(ValueError, match="payload is only valid"):
-        asyncio.run(gpt_dive.code_mode(action="status", job_id="x", payload="payload"))
+        asyncio.run(gpt_dive.code_mode(action="status", execution_id="x", payload="payload"))
 
 
 def test_harness_filesystem_capabilities_work_at_code_mode_seam() -> None:

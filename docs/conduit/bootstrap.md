@@ -30,7 +30,7 @@ A user conversation turn therefore becomes the natural polling cadence for detac
 
 The user uses ChatGPT Web GPT-5.6 Sol as the primary engineer and conductor. Web SOL has been observed to have a comparatively generous quota and, through GPT Dive, can directly inspect and operate the user's WSL2 environment.
 
-The practical pain is that long-running local work, external workers, tests, or shell jobs can block the reasoning flow when every tool call waits synchronously. MCP Tasks (`io.modelcontextprotocol/tasks`, informally called “MCP 2.0 Tasks” in the project discussion) would solve part of this at the protocol level, but ChatGPT Web has not negotiated that extension in the verified environment.
+The practical pain is that long-running local work, external workers, tests, or shell executions can block the reasoning flow when every tool call waits synchronously. MCP Tasks (`io.modelcontextprotocol/tasks`, informally called “MCP 2.0 Tasks” in the project discussion) would solve part of this at the protocol level, but ChatGPT Web has not negotiated that extension in the verified environment.
 
 Conduit aims to recover most of the useful async workflow without requiring server-initiated wake-up:
 
@@ -60,11 +60,11 @@ Current Web SOL execution path:
 ChatGPT Web
   → Secure MCP Tunnel
   → GPT Dive MCP
-  → code_mode / JobManager / local capabilities
+  → code_mode / ExecutionManager / local capabilities
   → WSL2
 ```
 
-GPT Dive already has durable detached execution through JobManager and background Code Mode. Conduit should reuse execution/runtime machinery rather than recreate it.
+GPT Dive already has durable detached execution through ExecutionManager and background Code Mode. Conduit should reuse execution/runtime machinery rather than recreate it.
 
 ### Council precedent
 
@@ -111,7 +111,7 @@ Current operating reality:
 
 - **ChatGPT Web GPT-5.6 Sol**: primary engineer/conductor; observed Web quota is generous enough that Web-first engineering is economically preferred.
 - **OpenAI Codex pool (Sol/Terra/Luna)**: comparatively scarce on the user's ChatGPT Plus subscription; preserve this pool for cases where Codex-native execution or independent review adds real value.
-- **Google Antigravity / Gemini 3.7 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode -> agy_worker()`; long detached work can use the durable shell/job path.
+- **Google Antigravity / Gemini 3.7 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode -> agy_worker()`; long detached work can use the durable shell/execution path.
 - **Opus-5 through third-party providers**: paid/selective independent reviewer. Useful for consequential peer review, not the default worker.
 - **MiniMax M3**: abundant purchased quota but lower trust for difficult reasoning; not a design authority.
 
@@ -131,7 +131,7 @@ In particular, Web SOL should intervene when:
 - fuzzy language would let two incompatible designs appear equivalent;
 - a concrete edge case reveals that the current vocabulary cannot describe the system precisely.
 
-Do not silently reinterpret the user's words to make them fit. Surface the conflict concretely, explain which statements cannot all be true at once, propose the smallest useful split/merge/rename, and let the user decide the domain meaning. **Facts are Web SOL's job to investigate; domain decisions are the user's.** Once a term is resolved, capture it immediately in `docs/conduit/CONTEXT.md` rather than batching terminology cleanup for later. Keep that glossary free of implementation detail.
+Do not silently reinterpret the user's words to make them fit. Surface the conflict concretely, explain which statements cannot all be true at once, propose the smallest useful split/merge/rename, and let the user decide the domain meaning. **Facts are Web SOL's execution to investigate; domain decisions are the user's.** Once a term is resolved, capture it immediately in `docs/conduit/CONTEXT.md` rather than batching terminology cleanup for later. Keep that glossary free of implementation detail.
 
 `/grill-with-docs` therefore means what the Matt Pocock upstream workflow intends: `/grilling` plus active `/domain-modeling`. Web SOL should keep challenging vocabulary throughout the design tree, not merely read the glossary at session start.
 
@@ -167,8 +167,8 @@ Before judging Conduit, assume the following facts unless live evidence supersed
 
 - The primary intelligence is the existing **ChatGPT Web GPT-5.6 Sol**, not a locally instantiated equivalent.
 - Web SOL is economically favored because its observed quota is generous; scarce Codex usage should not be substituted casually.
-- The user wants to preserve a productive single SOL reasoning flow while detached workers/jobs run.
-- GPT Dive already connects ChatGPT Web to the real WSL2 machine and already provides durable background jobs.
+- The user wants to preserve a productive single SOL reasoning flow while detached workers/executions run.
+- GPT Dive already connects ChatGPT Web to the real WSL2 machine and already provides durable background executions.
 - ChatGPT Web has not negotiated MCP Tasks (`io.modelcontextprotocol/tasks`) in the verified environment.
 - The design does **not** require server-initiated wake-up. The user's next conversation turn is an acceptable and intentional status-refresh boundary.
 - Council already proved input-only browser transport plus tool-based SOL output.

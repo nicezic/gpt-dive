@@ -61,22 +61,22 @@ Council registers `council_emit` behind Code Mode as the explicit Web SOL output
 
 ## Durable Execution
 
-`JobManager` is GPT Dive's process lifecycle manager. It is reused by both the low-level async interface and background Code Mode.
+`ExecutionManager` is GPT Dive's process lifecycle manager. It is reused by both the low-level async interface and background Code Mode.
 
-- per-job `job_id`
+- per-execution `execution_id`
 - status / result / cancel
-- concurrent jobs
+- concurrent executions
 - timeout enforcement
 - completed logs retained for 5 days
 - transient `systemd --user` services when available
 - guarded detached-process fallback when user systemd is unavailable
 
-Background Code Mode launches a worker process through `JobManager`. The worker rebuilds a fresh Monty runtime and capability registry, then returns a strict structured result envelope. The registry itself is not serialized across the process boundary.
+Background Code Mode launches a worker process through `ExecutionManager`. The worker rebuilds a fresh Monty runtime and capability registry, then returns a strict structured result envelope. The registry itself is not serialized across the process boundary.
 
 Model-visible asynchronous work is tracked separately from process execution:
 
 ```text
-JobManager execution
+ExecutionManager execution
       ↓ execution_id
 SQLite TaskStore
       ↓
@@ -85,7 +85,7 @@ shared Task runtime + TrackedTasks projection
       └─ @c Conduit snapshot
 ```
 
-Task state, acknowledgement, optional `status_cmd`/static status display, and derived elapsed time are Runtime-owned. Conduit uses the same JobManager root, TaskStore, lifecycle normalization, and projection rather than maintaining `conduit.json` or a separate task-tracking SSOT. Execution results keep their normal retention policy; acknowledgement removes Task awareness without pinning the backing result.
+Task state, acknowledgement, optional `status_cmd`/static status display, and derived elapsed time are Runtime-owned. Conduit uses the same ExecutionManager root, TaskStore, lifecycle normalization, and projection rather than maintaining `conduit.json` or a separate task-tracking SSOT. Execution results keep their normal retention policy; acknowledgement removes Task awareness without pinning the backing result.
 
 ## Harness and Subagents
 
@@ -114,7 +114,7 @@ src/gpt_dive/
 ├── code_runtime.py
 ├── code_mode_worker.py
 ├── command_runtime.py
-├── job_manager.py
+├── execution_manager.py
 ├── task_store.py
 ├── task_runtime.py
 ├── conduit/
