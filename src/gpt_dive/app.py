@@ -498,16 +498,10 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
     )
 
     home = _code_mode_home_root()
-    read_denied_patterns = harness_denied_patterns(root=Path("/"), home=home)
-    write_denied_patterns = harness_denied_patterns(root=Path("/"), home=home)
-    read_toolset = FileSystem(
+    denied_patterns = harness_denied_patterns(root=Path("/"), home=home)
+    filesystem_toolset: Any = FileSystem(
         root_dir="/",
-        denied_patterns=read_denied_patterns,
-        protected_patterns=[],
-    ).get_toolset()
-    write_toolset = FileSystem(
-        root_dir="/",
-        denied_patterns=write_denied_patterns,
+        denied_patterns=denied_patterns,
         protected_patterns=[],
     ).get_toolset()
 
@@ -517,52 +511,43 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
             return expanded.resolve()
         return (workspace / expanded).resolve()
 
-    def select_read_toolset(path: str) -> tuple[Any, str]:
-        absolute = resolve_path(path)
-        return read_toolset, str(absolute.relative_to(Path("/")))
-
-    def select_write_toolset(path: str) -> tuple[Any, str]:
-        absolute = resolve_path(path)
-        return write_toolset, str(absolute.relative_to(Path("/")))
-
-
     async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
         """Read a text file with line numbers. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        toolset, relative = select_read_toolset(path)
-        return await toolset.read_file(relative, offset=offset, limit=limit)
+        return await filesystem_toolset.read_file(
+            str(resolve_path(path)), offset=offset, limit=limit
+        )
 
     async def list_directory(path: str = ".") -> str:
         """List a directory. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        toolset, relative = select_read_toolset(path)
-        return await toolset.list_directory(relative)
+        return await filesystem_toolset.list_directory(str(resolve_path(path)))
 
     async def search_files(
         pattern: str, *, path: str = ".", include_glob: str | None = None
     ) -> str:
         """Search file contents by regex. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        _reject_broad_search_root(resolve_path(path), operation="search_files")
-        toolset, relative = select_read_toolset(path)
-        return await toolset.search_files(
-            pattern, path=relative, include_glob=include_glob
+        resolved = resolve_path(path)
+        _reject_broad_search_root(resolved, operation="search_files")
+        return await filesystem_toolset.search_files(
+            pattern, path=str(resolved), include_glob=include_glob
         )
 
     async def find_files(pattern: str, *, path: str = ".") -> str:
         """Find files by glob. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        _reject_broad_search_root(resolve_path(path), operation="find_files")
-        toolset, relative = select_read_toolset(path)
-        return await toolset.find_files(pattern, path=relative)
+        resolved = resolve_path(path)
+        _reject_broad_search_root(resolved, operation="find_files")
+        return await filesystem_toolset.find_files(pattern, path=str(resolved))
 
     async def file_info(path: str) -> str:
         """Get file or directory metadata. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        toolset, relative = select_read_toolset(path)
-        return await toolset.file_info(relative)
+        return await filesystem_toolset.file_info(str(resolve_path(path)))
 
     async def write_file(
         path: str, content: str, *, expected_hash: str | None = None
     ) -> str:
         """Create or overwrite a file with conflict detection. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
-        toolset, relative = select_write_toolset(path)
-        return await toolset.write_file(relative, content, expected_hash=expected_hash)
+        return await filesystem_toolset.write_file(
+            str(resolve_path(path)), content, expected_hash=expected_hash
+        )
 
     async def edit_file(
         path: str,
@@ -572,15 +557,13 @@ def _build_code_registry(default_cwd: str | None) -> CallableRegistry:
         expected_hash: str | None = None,
     ) -> str:
         """Edit a file by exact replacement with conflict detection. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
-        toolset, relative = select_write_toolset(path)
-        return await toolset.edit_file(
-            relative, old_text, new_text, expected_hash=expected_hash
+        return await filesystem_toolset.edit_file(
+            str(resolve_path(path)), old_text, new_text, expected_hash=expected_hash
         )
 
     async def create_directory(path: str) -> str:
         """Create a directory and parents. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
-        toolset, relative = select_write_toolset(path)
-        return await toolset.create_directory(relative)
+        return await filesystem_toolset.create_directory(str(resolve_path(path)))
 
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
     shell_denied_env_patterns = (

@@ -655,6 +655,18 @@ def test_code_mode_reads_anywhere_outside_home(tmp_path: Path) -> None:
     assert direct == "visible\n"
 
 
+def test_code_mode_missing_tilde_path_reports_resolved_target() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as td:
+        workspace = Path(td)
+        missing = workspace / "missing.txt"
+        requested = f"~/{missing.relative_to(Path.home())}"
+
+        with pytest.raises(Exception) as exc_info:
+            asyncio.run(code_mode(f"await read_file({requested!r})"))
+
+        assert str(missing.resolve()) in str(exc_info.value)
+
+
 def test_code_mode_writes_outside_home(tmp_path: Path) -> None:
     harness_target = tmp_path / "outside-write.txt"
     direct_target = tmp_path / "outside-direct-write.txt"
