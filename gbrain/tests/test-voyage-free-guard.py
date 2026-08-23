@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -98,7 +98,7 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn("access-secret", repr(result))
 
     def test_local_status_warns_at_80_percent_but_passes(self):
-        now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 15, tzinfo=UTC)
         snapshot = mod.make_snapshot(total=200_000_000, used=160_000_000, source="dashboard", verified=True, now=now)
         mod.write_snapshot(snapshot)
         status = mod.status_payload(snapshot, now=now + timedelta(days=1))
@@ -107,7 +107,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(status["guard"], "PASS")
 
     def test_ledger_adds_only_events_after_baseline(self):
-        now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 15, tzinfo=UTC)
         snapshot = mod.make_snapshot(total=200_000_000, used=10_000_000, source="dashboard", verified=True, now=now)
         mod.write_snapshot(snapshot)
         self.ledger.write_text(
@@ -120,7 +120,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(status["usedToken"], 10_001_234)
 
     def test_snapshot_requires_reauth_at_30_days(self):
-        now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 15, tzinfo=UTC)
         snapshot = mod.make_snapshot(total=200_000_000, used=1, source="dashboard", verified=True, now=now)
         status = mod.status_payload(snapshot, now=now + timedelta(days=30))
         self.assertTrue(status["reauthRequired"])
@@ -157,7 +157,7 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(payload["reauthRequired"])
 
     def test_expired_default_guard_exits_70(self):
-        old = datetime.now(timezone.utc) - timedelta(days=31)
+        old = datetime.now(UTC) - timedelta(days=31)
         mod.write_snapshot(mod.make_snapshot(total=200_000_000, used=1, source="dashboard", verified=True, now=old))
         with (
             patch.object(sys, "argv", [str(SCRIPT), "--json"]),
