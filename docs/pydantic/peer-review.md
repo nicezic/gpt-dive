@@ -23,7 +23,7 @@ The `bare` name is transitional. Internal `invoke_bare(..., peer_review=False)` 
 ## Implementation ownership
 
 ```text
-src/gpt_dive/app.py             Code Mode-facing bare(...) capability
+src/gpt_dive/code_capabilities.py  Code Mode-facing bare(...) capability
 src/gpt_dive/bare.py            worker, reviewer instruction, capabilities, subprocess, usage
 src/gpt_dive/model_registry.py  provider/model routing + model output-token metadata
 ```

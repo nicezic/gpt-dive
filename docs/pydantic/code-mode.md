@@ -4,7 +4,7 @@
 
 ## Construction
 
-`_build_code_registry(default_cwd)` in `src/gpt_dive/app.py` constructs one `CallableRegistry` per Code Mode run.
+`build_code_registry(default_cwd, *, run_command, task_list, task_collect, task_cancel, task_ack)` in `src/gpt_dive/code_capabilities.py` constructs one `CallableRegistry` per Code Mode run. `src/gpt_dive/app.py` injects the MCP-side singletons; the background worker (`code_mode_worker.py`) injects its own wiring and imports this module instead of the MCP server.
 
 The effective workspace is:
 

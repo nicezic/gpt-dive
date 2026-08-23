@@ -43,7 +43,7 @@ Local MCP bridge
 - Large intermediate data can be reduced locally before returning to Web SOL.
 - Reusable behavior can grow behind one stable top-level contract.
 
-Primary implementation: `src/gpt_dive/app.py`, `src/gpt_dive/code_runtime.py`.
+Primary implementation: `src/gpt_dive/code_capabilities.py`, `src/gpt_dive/app.py`, `src/gpt_dive/code_runtime.py`.
 
 ### 3. Explicit local model primitive
 
