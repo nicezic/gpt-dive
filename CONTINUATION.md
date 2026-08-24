@@ -19,6 +19,9 @@ Autonomous opencode improvement branch on top of `3f73998`, **not merged**; all 
 - Capability registry construction extracted to `code_capabilities.py`; `code_mode_worker` wires its own deps and no longer imports the MCP server module.
 - Lazy package exports (PEP 562) keep worker imports MCP-free (~223 fewer modules).
 - Live-contract docs updated to the new module layout (`code-mode.md`, `architecture.md`, `peer-review.md`, runtime source layout).
+- Worker lifecycle unified in `worker_subprocess.run_bounded_worker` (agy/bare/subagent); cancellation now terminates all worker classes, not just agy.
+- `bare` renamed: `model_call` primitive (`invoke_model_call`, `model_call_worker`) + Code Mode `peer_review(...)` capability; registry lane `peer_review`.
+- `PROVIDER_ROUTES` table is the provider connection SSOT; exact peer models are soft-verified against the provider `/v1/models` listing inside the credentialed worker, failing fast with `available_models`. Verified live against aiapiflow.
 
 ## Completed External Work — GBrain Voyage Guard + Stable Index
 

@@ -57,3 +57,15 @@ git log main..HEAD --oneline              # 6 commits to review
 ```
 
 Merge decision is yours; nothing was pushed or merged.
+
+
+## Addendum — user-directed session (still awake)
+
+User approved B-depth rename and requested provider verification. New commits:
+
+- `7ef1596` S1: `worker_subprocess.run_bounded_worker` — one bounded detached-process lifecycle (shield+grace, SIGTERM on timeout with partial output, cancel-safe group termination) adopted by agy/bare/subagent. Fixes real leak: only agy previously survived caller cancellation.
+- `f75831f` S2: bare → `model_call` primitive + `peer_review` capability; lane renamed; mechanical, no behavior change.
+- `a2f9557` S3: `PROVIDER_ROUTES` SSOT; adding an Anthropic-compatible provider is now one dict entry (+creds key), no alias sacrifice.
+- `436424a` S4: exact peer models soft-verified via provider `/v1/models` inside the credentialed worker (host-side check impossible: creds inject keys per-spawn by design). Unknown id → fail-fast with real `available_models`; listing failure never blocks.
+
+Live evidence: wrong model on aiapiflow returns clean error with 17-model catalog; correct haiku passes verification and returns S4_OK. Wiki synced (`f39684b`). Final gates: 228 tests / ruff / pyright / diff --check green.
