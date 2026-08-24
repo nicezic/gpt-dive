@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import gpt_dive.agy_worker as agy_worker_module
+import gpt_dive.worker_subprocess as worker_subprocess_module
 from gpt_dive.agy_worker import (
     DEFAULT_MODEL,
     _build_command,
@@ -130,11 +131,12 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
 
     class FakeProcess:
         pid = 4242
+        returncode: int | None = None
 
         def __init__(self) -> None:
-            self.done = agy_worker_module.asyncio.Event()
+            self.done = worker_subprocess_module.asyncio.Event()
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
             await self.done.wait()
             return stdout, b"partial stderr"
 
@@ -151,12 +153,12 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
         proc.done.set()
 
     monkeypatch.setattr(
-        agy_worker_module.asyncio,
+        worker_subprocess_module.asyncio,
         "create_subprocess_exec",
         fake_create_subprocess_exec,
     )
-    monkeypatch.setattr(agy_worker_module.asyncio, "wait_for", fake_wait_for)
-    monkeypatch.setattr(agy_worker_module.os, "killpg", fake_killpg)
+    monkeypatch.setattr(worker_subprocess_module.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(worker_subprocess_module.os, "killpg", fake_killpg)
 
     result = asyncio.run(invoke_agy_worker(task="research", timeout=120.0))
 
@@ -180,11 +182,11 @@ def test_invoke_agy_worker_cancellation_terminates_and_reaps(
         returncode: int | None = None
 
         def __init__(self) -> None:
-            self.started = agy_worker_module.asyncio.Event()
-            self.done = agy_worker_module.asyncio.Event()
+            self.started = worker_subprocess_module.asyncio.Event()
+            self.done = worker_subprocess_module.asyncio.Event()
             self.reaped = False
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
             self.started.set()
             await self.done.wait()
             self.reaped = True
@@ -202,11 +204,11 @@ def test_invoke_agy_worker_cancellation_terminates_and_reaps(
         proc.done.set()
 
     monkeypatch.setattr(
-        agy_worker_module.asyncio,
+        worker_subprocess_module.asyncio,
         "create_subprocess_exec",
         fake_create_subprocess_exec,
     )
-    monkeypatch.setattr(agy_worker_module.os, "killpg", fake_killpg)
+    monkeypatch.setattr(worker_subprocess_module.os, "killpg", fake_killpg)
 
     async def scenario() -> None:
         task = asyncio.create_task(invoke_agy_worker(task="research", timeout=120.0))

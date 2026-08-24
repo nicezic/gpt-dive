@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import signal
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +18,7 @@ from .model_registry import (
     resolve_model,
 )
 from .runtime_env import build_runtime_path
+from .worker_subprocess import run_bounded_worker, stderr_tail
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
@@ -225,40 +224,29 @@ async def invoke_bare(
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
+    outcome = await run_bounded_worker(
+        command,
+        stdin_payload=payload,
         env=env,
+        timeout=timeout,
+        log_label="BARE",
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(payload), timeout=timeout
-        )
-    except TimeoutError:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        await proc.wait()
+    stdout_text = outcome["stdout_text"]
+    stderr_text = outcome["stderr_text"]
+    if outcome["timed_out"]:
         return {
             "ok": False,
             "model": model_label,
             "provider": provider_label,
             "error": f"bare call timed out after {timeout} seconds",
         }
-
-    stdout_text = stdout.decode(errors="replace").strip()
-    stderr_text = stderr.decode(errors="replace").strip()
-    if proc.returncode != 0:
+    if outcome["returncode"] != 0:
         return {
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"bare worker exited with code {proc.returncode}",
-            "stderr": stderr_text[-2000:],
+            "error": f"bare worker exited with code {outcome['returncode']}",
+            "stderr": stderr_tail(stderr_text),
         }
 
     try:

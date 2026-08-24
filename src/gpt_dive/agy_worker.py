@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import math
-import os
-import signal
 from pathlib import Path
 from typing import Any
+
+from .worker_subprocess import run_bounded_worker
 
 AGY = Path.home() / ".local" / "bin" / "agy"
 DEFAULT_MODEL = "gemini-3.7-flash-high"
 _PROVIDER = "antigravity"
-logger = logging.getLogger("gpt_dive.runtime")
 
 
 def _build_command(
@@ -107,25 +104,6 @@ def _extract_stream_metadata(
     return conversation_id, terminal
 
 
-async def _terminate_and_reap(
-    proc: Any,
-    communicate_task: asyncio.Task[tuple[bytes, bytes]],
-) -> tuple[bytes, bytes]:
-    """Terminate one AGY process group and reap its stdio task."""
-    logger.warning("AGY TERMINATE pid=%s", proc.pid)
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        logger.info("AGY TERMINATE SKIP pid=%s reason=already-exited", proc.pid)
-    stdout, stderr = await communicate_task
-    logger.info(
-        "AGY CLEANUP DONE pid=%s returncode=%s",
-        proc.pid,
-        getattr(proc, "returncode", None),
-    )
-    return stdout, stderr
-
-
 async def invoke_agy_worker(
     *,
     task: str,
@@ -159,12 +137,11 @@ async def invoke_agy_worker(
     )
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *command,
+        outcome = await run_bounded_worker(
+            command,
             cwd=run_cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
+            timeout=timeout,
+            log_label="AGY",
         )
     except OSError as exc:
         return {
@@ -174,17 +151,9 @@ async def invoke_agy_worker(
             "error": f"failed to launch agy: {exc}",
         }
 
-    logger.info("AGY START pid=%s model=%s", proc.pid, model)
-    communicate_task = asyncio.create_task(proc.communicate())
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            asyncio.shield(communicate_task), timeout=timeout + 2.0
-        )
-    except TimeoutError:
-        logger.warning("AGY TIMEOUT pid=%s timeout=%.1f", proc.pid, timeout)
-        stdout, stderr = await _terminate_and_reap(proc, communicate_task)
-        stdout_text = stdout.decode(errors="replace").strip()
-        stderr_text = stderr.decode(errors="replace").strip()
+    stdout_text = outcome["stdout_text"]
+    stderr_text = outcome["stderr_text"]
+    if outcome["timed_out"]:
         conversation_id, terminal = _extract_stream_metadata(stdout_text)
         payload: dict[str, Any] = {
             "ok": False,
@@ -204,20 +173,13 @@ async def invoke_agy_worker(
         if stderr_text:
             payload["stderr"] = stderr_text[-2000:]
         return payload
-    except asyncio.CancelledError:
-        logger.warning("AGY CANCELLED pid=%s", proc.pid)
-        await _terminate_and_reap(proc, communicate_task)
-        raise
 
-    logger.info("AGY DONE pid=%s returncode=%s", proc.pid, proc.returncode)
-    stdout_text = stdout.decode(errors="replace").strip()
-    stderr_text = stderr.decode(errors="replace").strip()
-    if proc.returncode != 0:
+    if outcome["returncode"] != 0:
         return {
             "ok": False,
             "provider": _PROVIDER,
             "model_name": model,
-            "error": f"agy exited with code {proc.returncode}",
+            "error": f"agy exited with code {outcome['returncode']}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_text[-2000:],
         }
