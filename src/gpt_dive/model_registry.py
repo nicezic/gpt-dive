@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -11,6 +11,23 @@ _MODEL_OUTPUT_TOKENS_LIMITS: dict[str, int] = {
     "claude-opus-5": 128_000,
     "claude-sonnet-5": 128_000,
     "claude-haiku-4-5-20251001": 64_000,
+}
+
+
+class ProviderRoute(NamedTuple):
+    """Connection route for one Anthropic-compatible provider."""
+
+    credential_env: str
+    base_url: str
+
+
+# Single source of truth for exact-model provider routing (peer review and any
+# future direct-model caller). Adding a provider is one entry here plus its
+# environment key; see docs/pydantic/providers.md for the recipe.
+PROVIDER_ROUTES: dict[str, ProviderRoute] = {
+    "aiapiflow": ProviderRoute("AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com"),
+    "kunavo": ProviderRoute("KUNAVO_API_KEY", "https://api.kunavo.com"),
+    "minimax": ProviderRoute("MINIMAX_API_KEY", "https://api.minimax.io/anthropic"),
 }
 
 
@@ -32,8 +49,6 @@ class ModelAlias(StrEnum):
         provider: str,
         model_name: str,
         transport: str,
-        credential_env: str | None = None,
-        base_url: str | None = None,
         peer_review: bool = True,
         subagent: bool = True,
     ):
@@ -42,39 +57,28 @@ class ModelAlias(StrEnum):
         obj.provider = provider
         obj.model_name = model_name
         obj.transport = transport
-        obj.credential_env = credential_env
-        obj.base_url = base_url
+        if transport == "anthropic-compatible":
+            route = PROVIDER_ROUTES.get(provider)
+            obj.credential_env = route.credential_env if route else None
+            obj.base_url = route.base_url if route else None
+        else:
+            obj.credential_env = None
+            obj.base_url = None
         obj.peer_review = peer_review
         obj.subagent = subagent
         obj.output_tokens_limit = _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)
         return obj
 
-    OPUS5 = (
-        "opus5",
-        "aiapiflow",
-        "claude-opus-5",
-        "anthropic-compatible",
-        "AIAPIFLOW_CLAUDE_KEY",
-        "https://aiapiflow.com",
-    )
+    OPUS5 = ("opus5", "aiapiflow", "claude-opus-5", "anthropic-compatible")
     KUNAVO_OPUS5 = (
         "kunavo-opus5",
         "kunavo",
         "claude-opus-5",
         "anthropic-compatible",
-        "KUNAVO_API_KEY",
-        "https://api.kunavo.com",
         True,
         False,
     )
-    M3 = (
-        "m3",
-        "minimax",
-        "MiniMax-M3",
-        "anthropic-compatible",
-        "MINIMAX_API_KEY",
-        "https://api.minimax.io/anthropic",
-    )
+    M3 = ("m3", "minimax", "MiniMax-M3", "anthropic-compatible")
     SOL = ("sol", "openai-codex", "gpt-5.6-sol", "codex-subscription")
     TERRA = ("terra", "openai-codex", "gpt-5.6-terra", "codex-subscription")
     LUNA = ("luna", "openai-codex", "gpt-5.6-luna", "codex-subscription")
@@ -133,16 +137,10 @@ def build_model(value: str | ModelAlias) -> Any:
 
 def build_provider_model(provider: str, model_name: str) -> Any:
     """Build an exact model name on a registered Anthropic-compatible provider route."""
-    route = next(
-        (
-            alias
-            for alias in ModelAlias
-            if alias.provider == provider and alias.transport == "anthropic-compatible"
-        ),
-        None,
-    )
-    if route is None or not route.credential_env or not route.base_url:
-        raise ValueError(f"unknown peer provider {provider!r}")
+    route = PROVIDER_ROUTES.get(provider)
+    if route is None:
+        known = ", ".join(sorted(PROVIDER_ROUTES))
+        raise ValueError(f"unknown peer provider {provider!r}; registered providers: {known}")
     return AnthropicModel(
         model_name,
         provider=AnthropicProvider(
