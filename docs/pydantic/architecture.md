@@ -49,14 +49,14 @@ Primary implementation: `src/gpt_dive/code_capabilities.py`, `src/gpt_dive/app.p
 
 **Change**
 - Added `subagent_call(model, task, ...)` behind Code Mode rather than exposing each model/provider as a top-level MCP tool.
-- Added the underlying `invoke_bare(...)` primitive for deliberately tool-less model calls, then upgraded the outer Code Mode `bare(...)` route into a draft independent peer reviewer with read-only Harness `FileSystem + CodeMode`. Tool-less mode remains available internally for callers such as `m3_evidence()`.
+- Added the underlying `invoke_model_call(...)` primitive for deliberately tool-less model calls, then upgraded the outer Code Mode `peer_review(...)` route into a draft independent peer reviewer with read-only Harness `FileSystem + CodeMode`. Tool-less mode remains available internally for callers such as `m3_evidence()`.
 - Added `agy_worker(task, model=...)` as a separate external-worker capability for Google Antigravity through the official `agy` CLI; it defaults to `gemini-3.7-flash-high`, uses `stream-json`, and launches in read-only `plan` mode with headless tool approvals auto-approved so bounded investigation does not stall on permission prompts.
 
 **Why**
 - Web SOL often already knows which model or worker to consult and does not need an extra local parent-agent turn.
 - Provider details stay behind the central model registry for Pydantic models. `agy` stays separate because it is already an external agent runtime, not a Pydantic `Model`, and Google authentication/entitlement remain owned by the official CLI.
 
-Primary implementation: `src/gpt_dive/subagent_runtime.py`, `src/gpt_dive/subagent_worker.py`, `src/gpt_dive/bare.py`, `src/gpt_dive/model_registry.py`, `src/gpt_dive/agy_worker.py`. Peer-review details: `docs/pydantic/peer-review.md`.
+Primary implementation: `src/gpt_dive/subagent_runtime.py`, `src/gpt_dive/subagent_worker.py`, `src/gpt_dive/model_call.py`, `src/gpt_dive/model_registry.py`, `src/gpt_dive/agy_worker.py`. Peer-review details: `docs/pydantic/peer-review.md`.
 
 ### 4. Harness coding-worker bundle
 

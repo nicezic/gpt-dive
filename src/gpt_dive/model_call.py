@@ -16,6 +16,7 @@ from .model_registry import (
     build_provider_model,
     model_output_tokens_limit,
     resolve_model,
+    verify_provider_model,
 )
 from .runtime_env import build_runtime_path
 from .worker_subprocess import run_bounded_worker, stderr_tail
@@ -101,11 +102,23 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         model_name = str(payload["model"])
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
+        if not workspace_dir:
+            raise ValueError("workspace_dir is required for peer-review mode")
+
+        verification = await verify_provider_model(provider, model_name)
+        if verification["checked"] and not verification["exists"]:
+            return {
+                "ok": False,
+                "mode": "peer-review",
+                "model": model_name,
+                "provider": provider,
+                "error": f"model {model_name!r} is not offered by provider {provider!r}",
+                "available_models": sorted(verification["available"]),
+            }
+
         output_tokens_limit = model_output_tokens_limit(model_name)
         if output_tokens_limit is None:
             raise ValueError(f"model {model_name!r} has no output_tokens_limit metadata")
-        if not workspace_dir:
-            raise ValueError("workspace_dir is required for peer-review mode")
         agent = Agent(
             build_provider_model(provider, model_name),
             instructions=_PEER_REVIEW_INSTRUCTIONS,

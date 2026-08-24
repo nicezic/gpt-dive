@@ -177,3 +177,32 @@ def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> 
     assert result["finish_reason"] == "length"
     assert result["provider_finish_reason"] == "max_tokens"
     assert result["truncated"] is True
+
+
+def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> None:
+
+    def _fail_agent(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Agent must not be built for an unknown model")
+
+    async def _fake_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+        return {"checked": True, "exists": False, "available": ["claude-opus-5"]}
+
+    monkeypatch.setattr(model_call_module, "Agent", _fail_agent)
+    monkeypatch.setattr(model_call_module, "verify_provider_model", _fake_verify)
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": "nope-1",
+                "prompt": "review this",
+                "workspace_dir": "/tmp/opencode",
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["mode"] == "peer-review"
+    assert "not offered by provider" in result["error"]
+    assert result["available_models"] == ["claude-opus-5"]

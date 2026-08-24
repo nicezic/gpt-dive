@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from enum import StrEnum
 from typing import Any, NamedTuple
@@ -148,6 +149,37 @@ def build_provider_model(provider: str, model_name: str) -> Any:
             base_url=route.base_url,
         ),
     )
+
+
+def _async_client_for_route(route: ProviderRoute) -> Any:
+    from anthropic import AsyncAnthropic
+
+    return AsyncAnthropic(api_key=os.environ[route.credential_env], base_url=route.base_url)
+
+
+async def verify_provider_model(
+    provider: str, model_name: str, *, timeout: float = 10.0
+) -> dict[str, Any]:
+    """Soft-verify one exact model name against the provider's models list.
+
+    Returns ``{checked, exists, available}``. ``checked=False`` means the
+    models endpoint could not be consulted (unsupported, unauthorized, slow);
+    callers must then proceed as before. ``available`` carries the provider's
+    model ids whenever the listing succeeded.
+    """
+    route = PROVIDER_ROUTES.get(provider)
+    if route is None:
+        return {"checked": False, "exists": False, "available": []}
+    try:
+        client = _async_client_for_route(route)
+
+        async def _list_ids() -> list[str]:
+            return [model.id async for model in client.models.list()]
+
+        available: list[str] = await asyncio.wait_for(_list_ids(), timeout=timeout)
+    except Exception:  # noqa: BLE001 - verification must never block a call
+        return {"checked": False, "exists": False, "available": []}
+    return {"checked": True, "exists": model_name in available, "available": available}
 
 
 def model_output_tokens_limit(model_name: str) -> int | None:

@@ -6,25 +6,25 @@
 
 ## Purpose
 
-GPT Dive exposes outer Code Mode `bare(...)` as the current peer-review lane:
+GPT Dive exposes outer Code Mode `peer_review(...)` as the current peer-review lane:
 
 ```text
 Web SOL
   -> code_mode(background=True, label="Peer review: …")
        -> Task / TrackedTasks awareness
-       -> bare(provider, model, prompt, timeout, cwd)
-            -> invoke_bare(peer_review=True)
+       -> peer_review(provider, model, prompt, timeout, cwd)
+            -> invoke_model_call(peer_review=True)
                  -> Pydantic Agent
                  -> independent review
 ```
 
-The `bare` name is transitional. Internal `invoke_bare(..., peer_review=False)` remains a tool-less primitive because `m3_evidence()` uses it.
+Internal `invoke_model_call(..., peer_review=False)` remains a tool-less primitive because `m3_evidence()` uses it. Exact model ids are soft-verified against the provider `/v1/models` listing inside the credentialed worker before inference.
 
 ## Implementation ownership
 
 ```text
-src/gpt_dive/code_capabilities.py  Code Mode-facing bare(...) capability
-src/gpt_dive/bare.py            worker, reviewer instruction, capabilities, subprocess, usage
+src/gpt_dive/code_capabilities.py  Code Mode-facing peer_review(...) capability
+src/gpt_dive/model_call.py      worker, reviewer instruction, capabilities, subprocess, usage
 src/gpt_dive/model_registry.py  provider/model routing + model output-token metadata
 ```
 
@@ -57,7 +57,7 @@ Normal path:
 ```text
 host local read peer_packet.md
         ↓
-bare(provider=<approved>, model=<exact ID>, prompt=<complete packet>, timeout=<explicit seconds>)
+peer_review(provider=<approved>, model=<exact ID>, prompt=<complete packet>, timeout=<explicit seconds>)
         ↓
 peer final review text
         ↓
@@ -112,7 +112,7 @@ This is the current acceptance evidence for the two-file transport.
 
 ## Output-token limit
 
-Peer review does not accept a caller-supplied `output_tokens_limit` through outer `bare(...)`.
+Peer review does not accept a caller-supplied `output_tokens_limit` through outer `peer_review(...)`.
 
 ```text
 selected alias
@@ -161,7 +161,7 @@ packet = (Path(CWD) / "peer_packet.md").read_text()
 if not packet.strip():
     raise RuntimeError("peer_packet.md is empty")
 
-result = await bare(
+result = await peer_review(
     provider=review_provider,
     model=review_model,
     prompt=packet,
@@ -173,13 +173,13 @@ if result.get("ok"):
     await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-The actual paid route runs only in outer Task-aware `code_mode(background=True, label="Peer review: …")` after the skill's provider/model preflight and explicit user approval gate. The outer call returns a `task_id` immediately; Web SOL continues foreground work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. Result collection uses `task_collect(task_id)` non-destructively, cancellation uses `task_cancel(task_id)`, and explicit handling ends with `task_ack(task_id)`. No peer-review-specific tracker or execution runtime is added. `bare` has no timeout default; each review call supplies its timeout explicitly.
+The actual paid route runs only in outer Task-aware `code_mode(background=True, label="Peer review: …")` after the skill's provider/model preflight and explicit user approval gate. The outer call returns a `task_id` immediately; Web SOL continues foreground work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. Result collection uses `task_collect(task_id)` non-destructively, cancellation uses `task_cancel(task_id)`, and explicit handling ends with `task_ack(task_id)`. No peer-review-specific tracker or execution runtime is added. `peer_review` has no timeout default; each review call supplies its timeout explicitly.
 
 ## Failure semantics
 
 - No provider/model fallback.
 - No synchronous fallback for `/peer-review`.
-- Preserve full failure diagnostics from `bare(...)`.
+- Preserve full failure diagnostics from `peer_review(...)`.
 - `finish_reason == "length"` is reported as truncated / unsuccessful.
 - Secret/credential paths remain denied inside the peer FileSystem.
 - Missing evidence should normally become a focused next-packet request rather than an automatic exploratory premium loop.
