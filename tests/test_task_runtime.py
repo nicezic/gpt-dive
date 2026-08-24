@@ -61,3 +61,31 @@ def test_missing_execution_becomes_lost_and_can_be_acked(tmp_path: Path) -> None
     acked = ack_task(executions, store, str(task["task_id"]))
     assert acked == {"task_id": task["task_id"], "state": "lost", "acked": True}
     assert store.list_tasks() == []
+
+
+def test_probe_status_labels_runs_concurrently(tmp_path: Path) -> None:
+    import time as time_module
+
+    from gpt_dive.task_runtime import probe_status_labels
+
+    executions = ExecutionManager(tmp_path / "executions")
+    executions._systemd_available = False
+    store = TaskStore(tmp_path / "tasks.sqlite3")
+
+    for index in range(4):
+        execution_id = str(
+            executions.start("sleep 0.1", timeout=5)["execution_id"]
+        )
+        store.create(
+            execution_id=execution_id,
+            label=f"task-{index}",
+            status_cmd="sleep 0.5 && echo slow-probe",
+        )
+
+    started = time_module.monotonic()
+    labels = probe_status_labels(store.list_tasks())
+    elapsed = time_module.monotonic() - started
+
+    assert all(label == "slow-probe" for label in labels.values()), labels
+    assert len(labels) == 4
+    assert elapsed < 1.4, f"probes appear serialized: {elapsed:.2f}s"

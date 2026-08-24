@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -199,11 +200,37 @@ def task_elapsed_seconds(task: dict[str, Any]) -> int:
     return max(0, int((end - created).total_seconds()))
 
 
-def project_task(task: dict[str, Any]) -> dict[str, Any]:
+_UNSET_STATUS_LABEL = object()
+
+
+def project_task(
+    task: dict[str, Any], *, status_label: Any = _UNSET_STATUS_LABEL
+) -> dict[str, Any]:
     projected = dict(task)
-    projected["status_label"] = task_status_label(task)
+    projected["status_label"] = (
+        task_status_label(task) if status_label is _UNSET_STATUS_LABEL else status_label
+    )
     projected["elapsed_seconds"] = task_elapsed_seconds(task)
     return projected
+
+
+def probe_status_labels(tasks: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Run bounded status_cmd probes concurrently so wall time stays near one probe.
+
+    Only working Tasks with a status_cmd need a probe; every other projected
+    row keeps its static fallback (or no decoration). Returns a map keyed by
+    task_id for tasks that were probed.
+    """
+    candidates = [task for task in tasks if task["state"] == "working"]
+    if not candidates:
+        return {}
+    workers = min(len(candidates), 8)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            str(task["task_id"]): pool.submit(task_status_label, task)
+            for task in candidates
+        }
+        return {task_id: future.result() for task_id, future in futures.items()}
 
 
 def list_projected_tasks(
@@ -216,7 +243,12 @@ def list_projected_tasks(
     tasks = task_store.list_tasks()
     if limit is not None:
         tasks = tasks[:limit]
-    return [project_task(refresh_task(executions, task_store, task)) for task in tasks]
+    refreshed = [refresh_task(executions, task_store, task) for task in tasks]
+    labels = probe_status_labels(refreshed)
+    return [
+        project_task(task, status_label=labels.get(str(task["task_id"])))
+        for task in refreshed
+    ]
 
 
 _TASK_STATE_MARKERS = {
