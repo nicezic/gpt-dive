@@ -16,19 +16,24 @@ _MODEL_OUTPUT_TOKENS_LIMITS: dict[str, int] = {
 
 
 class ProviderRoute(NamedTuple):
-    """Connection route for one Anthropic-compatible provider."""
+    """Connection route plus default model for one Anthropic-compatible provider."""
 
     credential_env: str
     base_url: str
+    default_model: str
 
 
 # Single source of truth for exact-model provider routing (peer review and any
 # future direct-model caller). Adding a provider is one entry here plus its
 # environment key; see docs/pydantic/providers.md for the recipe.
 PROVIDER_ROUTES: dict[str, ProviderRoute] = {
-    "aiapiflow": ProviderRoute("AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com"),
-    "kunavo": ProviderRoute("KUNAVO_API_KEY", "https://api.kunavo.com"),
-    "minimax": ProviderRoute("MINIMAX_API_KEY", "https://api.minimax.io/anthropic"),
+    "aiapiflow": ProviderRoute(
+        "AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com", "claude-haiku-4-5-20251001"
+    ),
+    "kunavo": ProviderRoute("KUNAVO_API_KEY", "https://api.kunavo.com", "claude-opus-5"),
+    "minimax": ProviderRoute(
+        "MINIMAX_API_KEY", "https://api.minimax.io/anthropic", "MiniMax-M3"
+    ),
 }
 
 

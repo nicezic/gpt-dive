@@ -200,12 +200,12 @@ def build_code_registry(
     async def peer_review(
         *,
         provider: str,
-        model: str,
+        model: str | None = None,
         prompt: str,
         timeout: float,
         cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Call an independent peer reviewer using a provider and exact model name."""
+        """Call an independent peer reviewer; omit model to use the provider's default."""
         return await invoke_model_call(
             provider=provider,
             model=model,

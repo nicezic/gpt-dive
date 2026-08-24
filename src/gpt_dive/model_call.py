@@ -11,6 +11,7 @@ from pydantic_ai_harness import CodeMode, FileSystem
 
 from .filesystem_policy import harness_denied_patterns, is_secret_path
 from .model_registry import (
+    PROVIDER_ROUTES,
     ModelAlias,
     build_model,
     build_provider_model,
@@ -26,6 +27,7 @@ CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
 
 _PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
+_PEER_DEFAULT_OUTPUT_TOKENS_LIMIT = 8_192
 
 _PEER_REVIEW_INSTRUCTIONS = (
     "Act as an independent peer reviewer. Use the supplied packet as the primary evidence path. "
@@ -99,26 +101,39 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
 
     if peer_review:
         provider = str(payload["provider"])
-        model_name = str(payload["model"])
+        route = PROVIDER_ROUTES.get(provider)
+        if route is None:
+            known = ", ".join(sorted(PROVIDER_ROUTES))
+            return {
+                "ok": False,
+                "mode": "peer-review",
+                "provider": provider,
+                "error": f"unknown peer provider {provider!r}; registered providers: {known}",
+            }
+        explicit_model = bool(payload.get("model") and str(payload["model"]).strip())
+        model_name = str(payload["model"]).strip() if explicit_model else route.default_model
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
 
-        verification = await verify_provider_model(provider, model_name)
-        if verification["checked"] and not verification["exists"]:
-            return {
-                "ok": False,
-                "mode": "peer-review",
-                "model": model_name,
-                "provider": provider,
-                "error": f"model {model_name!r} is not offered by provider {provider!r}",
-                "available_models": sorted(verification["available"]),
-            }
+        if explicit_model:
+            verification = await verify_provider_model(provider, model_name)
+            if verification["checked"] and not verification["exists"]:
+                return {
+                    "ok": False,
+                    "mode": "peer-review",
+                    "model": model_name,
+                    "provider": provider,
+                    "error": (
+                        f"model {model_name!r} is not offered by provider {provider!r}"
+                    ),
+                    "available_models": sorted(verification["available"]),
+                }
 
-        output_tokens_limit = model_output_tokens_limit(model_name)
-        if output_tokens_limit is None:
-            raise ValueError(f"model {model_name!r} has no output_tokens_limit metadata")
+        output_tokens_limit = (
+            model_output_tokens_limit(model_name) or _PEER_DEFAULT_OUTPUT_TOKENS_LIMIT
+        )
         agent = Agent(
             build_provider_model(provider, model_name),
             instructions=_PEER_REVIEW_INSTRUCTIONS,
@@ -176,7 +191,7 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def invoke_model_call(
     *,
-    model: str | ModelAlias,
+    model: str | ModelAlias | None,
     prompt: str,
     timeout: float,
     output_tokens_limit: int = 4096,
@@ -194,11 +209,13 @@ async def invoke_model_call(
     if peer_review:
         if not provider:
             raise ValueError("provider is required for peer-review mode")
-        model_label = str(model)
         provider_label = provider
-        payload_model = model_label
+        payload_model = str(model).strip() if model is not None and str(model).strip() else None
+        model_label = payload_model or ""
         requested_output_tokens_limit = None
     else:
+        if model is None:
+            raise ValueError("model is required for alias-based model calls")
         alias = _validate(model, prompt, timeout, output_tokens_limit)
         model_label = alias.value
         provider_label = alias.provider

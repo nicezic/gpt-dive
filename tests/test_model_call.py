@@ -206,3 +206,77 @@ def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> 
     assert result["mode"] == "peer-review"
     assert "not offered by provider" in result["error"]
     assert result["available_models"] == ["claude-opus-5"]
+
+
+def test_peer_review_worker_resolves_provider_default_model(monkeypatch, tmp_path) -> None:
+    sentinel_model = object()
+    listing_calls: list[str] = []
+
+    async def _fail_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+        listing_calls.append(model_name)
+        return {"checked": True, "exists": True, "available": []}
+
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(model_call_module, "verify_provider_model", _fail_verify)
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": None,
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["model_name"] == "claude-haiku-4-5-20251001"
+    assert listing_calls == []
+
+
+def test_peer_review_worker_falls_back_to_default_output_tokens_limit(
+    monkeypatch, tmp_path
+) -> None:
+    sentinel_model = object()
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": "brand-new-model-1",
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
+    assert usage_limits.output_tokens_limit == 8_192
+
+
+def test_peer_review_worker_rejects_unknown_provider(tmp_path) -> None:
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "not-a-provider",
+                "model": None,
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert "registered providers" in result["error"]
