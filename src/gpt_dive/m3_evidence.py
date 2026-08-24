@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from .bare import invoke_bare
+from .model_call import invoke_model_call
 
 _REQUIRED_LIST_FIELDS = ("known", "missing", "conflicts", "queries")
 _EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
@@ -173,25 +173,25 @@ async def invoke_m3_evidence(
     last_error: Exception | None = None
     validation_errors: list[str] = []
     last_raw = ""
-    last_bare: dict[str, Any] = {}
+    last_call: dict[str, Any] = {}
 
     for attempt in range(1, 3):
-        bare = await invoke_bare(
+        call = await invoke_model_call(
             model="m3",
             prompt=prompt,
             timeout=timeout,
             output_tokens_limit=output_tokens_limit,
             anthropic_thinking="disabled",
         )
-        last_bare = bare
-        if not bare.get("ok"):
-            return bare
+        last_call = call
+        if not call.get("ok"):
+            return call
 
-        for key, value in bare.get("usage", {}).items():
+        for key, value in call.get("usage", {}).items():
             if isinstance(value, (int, float)):
                 usage[key] = usage.get(key, 0) + value
 
-        raw = str(bare.get("output", ""))
+        raw = str(call.get("output", ""))
         last_raw = raw
         try:
             parsed = _parse_json_output(raw)
@@ -213,8 +213,8 @@ async def invoke_m3_evidence(
 
         return {
             "ok": True,
-            "model": bare.get("model", "m3"),
-            "provider": bare.get("provider", "minimax"),
+            "model": call.get("model", "m3"),
+            "provider": call.get("provider", "minimax"),
             **validated,
             "usage": usage,
             "attempts": attempt,
@@ -224,8 +224,8 @@ async def invoke_m3_evidence(
     assert last_error is not None
     return {
         "ok": False,
-        "model": last_bare.get("model", "m3"),
-        "provider": last_bare.get("provider", "minimax"),
+        "model": last_call.get("model", "m3"),
+        "provider": last_call.get("provider", "minimax"),
         "error": "invalid m3 evidence JSON" if isinstance(last_error, json.JSONDecodeError) else str(last_error),
         "raw_output": last_raw,
         "usage": usage,

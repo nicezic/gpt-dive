@@ -125,7 +125,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "stop_command",
         "agy_worker",
         "subagent_call",
-        "bare",
+        "peer_review",
         "m3_evidence",
         "repo_search",
         "council_emit",
@@ -239,18 +239,18 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
     }]
 
 
-def test_bare_is_registry_capability(monkeypatch) -> None:
+def test_peer_review_is_registry_capability(monkeypatch) -> None:
     import gpt_dive
 
     calls: list[dict[str, object]] = []
 
-    async def fake_invoke_bare(**kwargs):
+    async def fake_invoke_model_call(**kwargs):
         calls.append(kwargs)
         return {"ok": True, "model": kwargs["model"], "output": "BARE_OK"}
 
-    monkeypatch.setattr(code_capabilities_module, "invoke_bare", fake_invoke_bare)
+    monkeypatch.setattr(code_capabilities_module, "invoke_model_call", fake_invoke_model_call)
     code = (
-        "result = await bare(provider='aiapiflow', model='claude-opus-5', "
+        "result = await peer_review(provider='aiapiflow', model='claude-opus-5', "
         "prompt='think', timeout=180.0); result['output']"
     )
     assert asyncio.run(gpt_dive.code_mode(code, cwd="/tmp/ignored")) == {

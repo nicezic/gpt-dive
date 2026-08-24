@@ -16,11 +16,11 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
-from .bare import invoke_bare
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .m3_evidence import invoke_m3_evidence
+from .model_call import invoke_model_call
 from .repo_search import search_repo
 from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
@@ -197,7 +197,7 @@ def build_code_registry(
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
-    async def bare(
+    async def peer_review(
         *,
         provider: str,
         model: str,
@@ -206,7 +206,7 @@ def build_code_registry(
         cwd: str | None = None,
     ) -> dict[str, Any]:
         """Call an independent peer reviewer using a provider and exact model name."""
-        return await invoke_bare(
+        return await invoke_model_call(
             provider=provider,
             model=model,
             prompt=prompt,
@@ -320,7 +320,7 @@ def build_code_registry(
     registry.add_async_cleanup(shell_toolset.__aexit__)
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
-    registry.register("bare", bare)
+    registry.register("peer_review", peer_review)
     registry.register("m3_evidence", m3_evidence)
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)

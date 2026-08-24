@@ -80,7 +80,7 @@ def _validate(
     timeout: float,
     output_tokens_limit: int | None,
 ) -> ModelAlias:
-    alias = resolve_model(model, lane="bare")
+    alias = resolve_model(model, lane="peer_review")
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
     if timeout <= 0:
@@ -153,7 +153,7 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         "provider": provider if peer_review else alias.provider,
         "model_name": model_name if peer_review else alias.model_name,
         "output": str(result.output),
-        "mode": "peer-review" if peer_review else "bare",
+        "mode": "peer-review" if peer_review else "model-call",
         "finish_reason": finish_reason,
         "provider_finish_reason": provider_finish_reason,
         "truncated": truncated,
@@ -161,7 +161,7 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def invoke_bare(
+async def invoke_model_call(
     *,
     model: str | ModelAlias,
     prompt: str,
@@ -218,7 +218,7 @@ async def invoke_bare(
         "3.14",
         "python",
         "-m",
-        "gpt_dive.bare_worker",
+        "gpt_dive.model_call_worker",
         "--worker",
     ]
     env = os.environ.copy()
@@ -229,7 +229,7 @@ async def invoke_bare(
         stdin_payload=payload,
         env=env,
         timeout=timeout,
-        log_label="BARE",
+        log_label="MODEL_CALL",
     )
     stdout_text = outcome["stdout_text"]
     stderr_text = outcome["stderr_text"]
@@ -238,14 +238,14 @@ async def invoke_bare(
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"bare call timed out after {timeout} seconds",
+            "error": f"model call timed out after {timeout} seconds",
         }
     if outcome["returncode"] != 0:
         return {
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"bare worker exited with code {outcome['returncode']}",
+            "error": f"model call worker exited with code {outcome['returncode']}",
             "stderr": stderr_tail(stderr_text),
         }
 
@@ -256,7 +256,7 @@ async def invoke_bare(
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"invalid bare worker JSON: {exc}",
+            "error": f"invalid model call worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_text[-2000:],
         }

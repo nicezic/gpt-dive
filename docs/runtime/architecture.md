@@ -46,7 +46,7 @@ Shell
   run_command / start_command / check_command / stop_command
 
 Model / orchestration
-  subagent_call / agy_worker / bare / m3_evidence / council_emit
+  subagent_call / agy_worker / peer_review / m3_evidence / council_emit
 
 Task awareness
   task_list / task_collect / task_cancel / task_ack

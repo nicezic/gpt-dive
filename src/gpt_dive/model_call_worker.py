@@ -4,7 +4,7 @@ import asyncio
 import json
 import sys
 
-from .bare import _run_worker
+from .model_call import _run_worker
 
 
 def main() -> None:

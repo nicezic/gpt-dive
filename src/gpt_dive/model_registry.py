@@ -22,7 +22,7 @@ class ModelAlias(StrEnum):
     transport: str
     credential_env: str | None
     base_url: str | None
-    bare: bool
+    peer_review: bool
     subagent: bool
     output_tokens_limit: int | None
 
@@ -34,7 +34,7 @@ class ModelAlias(StrEnum):
         transport: str,
         credential_env: str | None = None,
         base_url: str | None = None,
-        bare: bool = True,
+        peer_review: bool = True,
         subagent: bool = True,
     ):
         obj = str.__new__(cls, alias)
@@ -44,7 +44,7 @@ class ModelAlias(StrEnum):
         obj.transport = transport
         obj.credential_env = credential_env
         obj.base_url = base_url
-        obj.bare = bare
+        obj.peer_review = peer_review
         obj.subagent = subagent
         obj.output_tokens_limit = _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)
         return obj
@@ -84,7 +84,7 @@ class ModelAlias(StrEnum):
             "provider": self.provider,
             "model": self.model_name,
             "transport": self.transport,
-            "bare": self.bare,
+            "peer_review": self.peer_review,
             "subagent": self.subagent,
             "output_tokens_limit": self.output_tokens_limit,
         }
@@ -104,7 +104,7 @@ def resolve_model(value: str | ModelAlias, *, lane: str | None = None) -> ModelA
         raise ValueError(f"unknown model alias {value!r}; choose one of: {choices}") from exc
 
     if lane is not None:
-        if lane not in {"bare", "subagent"}:
+        if lane not in {"peer_review", "subagent"}:
             raise ValueError(f"unknown model lane: {lane!r}")
         if not bool(getattr(alias, lane)):
             raise ValueError(f"model {alias.value!r} is not enabled for {lane}")
