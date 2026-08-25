@@ -41,7 +41,9 @@ class ExecutionManager:
     def __init__(
         self, root: Path | None = None, *, retention_days: int = RETENTION_DAYS
     ) -> None:
-        self.root = root or (Path.home() / ".local" / "state" / "gpt-dive" / "executions")
+        self.root = root or (
+            Path.home() / ".local" / "state" / "gpt-dive" / "executions"
+        )
         self.retention_days = retention_days
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -85,7 +87,11 @@ class ExecutionManager:
             )
 
             backend = "systemd" if self._systemd_available else "popen"
-            unit = f"gpt-dive-execution-{execution_id}.service" if backend == "systemd" else None
+            unit = (
+                f"gpt-dive-execution-{execution_id}.service"
+                if backend == "systemd"
+                else None
+            )
             pid: int | None = None
             pid_start_ticks: int | None = None
 
@@ -179,8 +185,12 @@ class ExecutionManager:
                 )
                 return payload
             payload["ready"] = True
-            payload["stdout"] = (execution_dir / "stdout.log").read_text(errors="replace")
-            payload["stderr"] = (execution_dir / "stderr.log").read_text(errors="replace")
+            payload["stdout"] = (execution_dir / "stdout.log").read_text(
+                errors="replace"
+            )
+            payload["stderr"] = (execution_dir / "stderr.log").read_text(
+                errors="replace"
+            )
             return payload
 
     def cancel(self, execution_id: str) -> dict[str, Any]:
@@ -378,7 +388,9 @@ class ExecutionManager:
         return {"state": rest[0], "start_ticks": int(rest[19])}
 
     def _load(self, execution_id: str) -> tuple[Path, dict[str, Any]]:
-        if not execution_id or any(ch not in "0123456789abcdef" for ch in execution_id.lower()):
+        if not execution_id or any(
+            ch not in "0123456789abcdef" for ch in execution_id.lower()
+        ):
             raise ExecutionNotFoundError(execution_id)
         execution_dir = self.root / execution_id
         if not execution_dir.is_dir():

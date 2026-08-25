@@ -26,7 +26,9 @@ def test_raw_shell_task_success_and_failure_share_runtime(tmp_path: Path) -> Non
 
     ok_execution = str(executions.start("printf OK", timeout=3)["execution_id"])
     ok = store.create(execution_id=ok_execution, label="raw-ok")
-    failed_execution = str(executions.start("printf BAD; exit 7", timeout=3)["execution_id"])
+    failed_execution = str(
+        executions.start("printf BAD; exit 7", timeout=3)["execution_id"]
+    )
     failed = store.create(execution_id=failed_execution, label="raw-fail")
 
     _wait_terminal(executions, ok_execution)
@@ -42,11 +44,15 @@ def test_raw_shell_task_success_and_failure_share_runtime(tmp_path: Path) -> Non
     assert collected["result"]["stdout"] == "OK"
 
     text_execution = str(
-        executions.start("printf '%s' '-m gpt_dive.code_mode_worker'", timeout=3)["execution_id"]
+        executions.start("printf '%s' '-m gpt_dive.code_mode_worker'", timeout=3)[
+            "execution_id"
+        ]
     )
     text_task = store.create(execution_id=text_execution, label="raw-text")
     _wait_terminal(executions, text_execution)
-    text_collected = collect_task(TaskRuntime(executions, store), str(text_task["task_id"]))
+    text_collected = collect_task(
+        TaskRuntime(executions, store), str(text_task["task_id"])
+    )
     assert text_collected["task"]["state"] == "completed"
     assert text_collected["result"]["stdout"] == "-m gpt_dive.code_mode_worker"
 
@@ -75,9 +81,7 @@ def test_probe_status_labels_runs_concurrently(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.sqlite3")
 
     for index in range(4):
-        execution_id = str(
-            executions.start("sleep 0.1", timeout=5)["execution_id"]
-        )
+        execution_id = str(executions.start("sleep 0.1", timeout=5)["execution_id"])
         store.create(
             execution_id=execution_id,
             label=f"task-{index}",

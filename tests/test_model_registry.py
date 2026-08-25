@@ -55,7 +55,11 @@ def test_verify_provider_model_reports_missing_model(monkeypatch) -> None:
 
         return _Client()
 
-    monkeypatch.setattr(registry, "_async_client_for_route", lambda route: _fake_client(["claude-opus-5", "claude-haiku-4-5-20251001"]))
+    monkeypatch.setattr(
+        registry,
+        "_async_client_for_route",
+        lambda route: _fake_client(["claude-opus-5", "claude-haiku-4-5-20251001"]),
+    )
 
     present = asyncio.run(registry.verify_provider_model("aiapiflow", "claude-opus-5"))
     assert present == {

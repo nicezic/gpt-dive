@@ -142,7 +142,9 @@ class ConduitAcpCanary:
                 count=16,
                 block=1000,
             )
-            entries = cast(list[tuple[str, list[tuple[str, dict[str, str]]]]], raw_entries)
+            entries = cast(
+                list[tuple[str, list[tuple[str, dict[str, str]]]]], raw_entries
+            )
             for _, rows in entries:
                 for redis_id, fields in rows:
                     cursor = str(redis_id)
@@ -150,12 +152,17 @@ class ConduitAcpCanary:
                     if not isinstance(raw, str):
                         continue
                     event = json.loads(raw)
-                    if event.get("action") != "emit" or event.get("session_id") != session_id:
+                    if (
+                        event.get("action") != "emit"
+                        or event.get("session_id") != session_id
+                    ):
                         continue
                     result = event.get("result")
                     if isinstance(result, dict) and isinstance(result.get("text"), str):
                         return result["text"]
-        raise TimeoutError(f"timed out waiting for Conduit emit for session {session_id}")
+        raise TimeoutError(
+            f"timed out waiting for Conduit emit for session {session_id}"
+        )
 
     @staticmethod
     def _result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -183,12 +190,17 @@ async def serve(*, url: str | None, timeout: float) -> None:
             else:
                 if not isinstance(message, dict):
                     responses = [
-                        ConduitAcpCanary._error(None, -32600, "JSON-RPC message must be an object")
+                        ConduitAcpCanary._error(
+                            None, -32600, "JSON-RPC message must be an object"
+                        )
                     ]
                 else:
                     responses = await agent.handle(message)
             for response in responses:
-                sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
+                sys.stdout.write(
+                    json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+                    + "\n"
+                )
                 sys.stdout.flush()
     finally:
         await agent.close()

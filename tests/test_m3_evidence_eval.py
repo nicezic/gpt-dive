@@ -21,10 +21,24 @@ def test_load_cases_has_representative_fixed_set() -> None:
 
 
 def test_score_result_checks_expected_shape() -> None:
-    case = {"expect": {"done": True, "missing_empty": True, "queries_empty": True, "known_min": 1}}
+    case = {
+        "expect": {
+            "done": True,
+            "missing_empty": True,
+            "queries_empty": True,
+            "known_min": 1,
+        }
+    }
     passed, errors = eval_module.score_result(
         case,
-        {"ok": True, "done": True, "known": ["fact"], "missing": [], "conflicts": [], "queries": []},
+        {
+            "ok": True,
+            "done": True,
+            "known": ["fact"],
+            "missing": [],
+            "conflicts": [],
+            "queries": [],
+        },
     )
     assert passed is True
     assert errors == []
@@ -34,7 +48,14 @@ def test_score_result_reports_semantic_contract_failure() -> None:
     case = {"expect": {"done": True, "missing_empty": True}}
     passed, errors = eval_module.score_result(
         case,
-        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": []},
+        {
+            "ok": True,
+            "done": False,
+            "known": [],
+            "missing": ["x"],
+            "conflicts": [],
+            "queries": [],
+        },
     )
     assert passed is False
     assert len(errors) == 2
@@ -123,7 +144,10 @@ def test_run_cases_repeat_reports_per_case_stability(monkeypatch) -> None:
     assert report["retry_cases"] == 1
     assert report["flaky_cases"] == ["x"]
     assert [
-        {key: stat[key] for key in ("run", "passed", "failed", "pass_rate", "retry_samples")}
+        {
+            key: stat[key]
+            for key in ("run", "passed", "failed", "pass_rate", "retry_samples")
+        }
         for stat in report["run_stats"]
     ] == [
         {"run": 1, "passed": 1, "failed": 0, "pass_rate": 1.0, "retry_samples": 0},

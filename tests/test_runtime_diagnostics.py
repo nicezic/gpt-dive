@@ -15,14 +15,19 @@ def test_request_lifecycle_middleware_is_registered() -> None:
     assert request_lifecycle_middleware in mcp.middleware
 
 
-def test_request_lifecycle_logs_nested_exception_group(caplog: pytest.LogCaptureFixture) -> None:
-    ctx = SimpleNamespace(method="tools/call", request_id="req-7", params={"name": "agy_worker"})
+def test_request_lifecycle_logs_nested_exception_group(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = SimpleNamespace(
+        method="tools/call", request_id="req-7", params={"name": "agy_worker"}
+    )
 
     async def call_next(_ctx: object) -> object:
         raise ExceptionGroup("outer failure", [ValueError("root needle")])
 
-    with caplog.at_level(logging.INFO, logger="gpt_dive.runtime"), pytest.raises(
-        ExceptionGroup
+    with (
+        caplog.at_level(logging.INFO, logger="gpt_dive.runtime"),
+        pytest.raises(ExceptionGroup),
     ):
         asyncio.run(request_lifecycle_middleware(ctx, call_next))
 
@@ -33,14 +38,19 @@ def test_request_lifecycle_logs_nested_exception_group(caplog: pytest.LogCapture
     assert "root needle" in caplog.text
 
 
-def test_request_lifecycle_logs_and_reraises_cancellation(caplog: pytest.LogCaptureFixture) -> None:
-    ctx = SimpleNamespace(method="tools/call", request_id="req-cancel", params={"name": "agy_worker"})
+def test_request_lifecycle_logs_and_reraises_cancellation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = SimpleNamespace(
+        method="tools/call", request_id="req-cancel", params={"name": "agy_worker"}
+    )
 
     async def call_next(_ctx: object) -> object:
         raise asyncio.CancelledError
 
-    with caplog.at_level(logging.INFO, logger="gpt_dive.runtime"), pytest.raises(
-        asyncio.CancelledError
+    with (
+        caplog.at_level(logging.INFO, logger="gpt_dive.runtime"),
+        pytest.raises(asyncio.CancelledError),
     ):
         asyncio.run(request_lifecycle_middleware(ctx, call_next))
 
@@ -48,13 +58,16 @@ def test_request_lifecycle_logs_and_reraises_cancellation(caplog: pytest.LogCapt
     assert "request=req-cancel" in caplog.text
 
 
-def test_run_mcp_server_logs_start_versions_and_exception_tree(caplog: pytest.LogCaptureFixture) -> None:
+def test_run_mcp_server_logs_start_versions_and_exception_tree(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class FakeServer:
         def run(self) -> None:
             raise ExceptionGroup("server group", [RuntimeError("server root needle")])
 
-    with caplog.at_level(logging.INFO, logger="gpt_dive.runtime"), pytest.raises(
-        ExceptionGroup
+    with (
+        caplog.at_level(logging.INFO, logger="gpt_dive.runtime"),
+        pytest.raises(ExceptionGroup),
     ):
         run_mcp_server(FakeServer())
 

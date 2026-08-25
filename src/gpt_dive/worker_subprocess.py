@@ -64,7 +64,9 @@ async def _terminate_and_reap(
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
-        logger.info("%s TERMINATE SKIP pid=%s reason=already-exited", log_label, proc.pid)
+        logger.info(
+            "%s TERMINATE SKIP pid=%s reason=already-exited", log_label, proc.pid
+        )
     stdout, stderr = await communicate_task
     logger.info(
         "%s CLEANUP DONE pid=%s returncode=%s",

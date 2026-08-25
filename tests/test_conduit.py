@@ -23,7 +23,9 @@ def _runtime(tmp_path: Path) -> tuple[ConduitRuntime, RecordingPublisher]:
     executions._systemd_available = False
     task_store = TaskStore(tmp_path / "tasks.sqlite3")
     publisher = RecordingPublisher()
-    return ConduitRuntime(executions=executions, task_store=task_store, publisher=publisher), publisher
+    return ConduitRuntime(
+        executions=executions, task_store=task_store, publisher=publisher
+    ), publisher
 
 
 def test_conduit_mcp_surface_is_one_tool() -> None:
@@ -33,7 +35,9 @@ def test_conduit_mcp_surface_is_one_tool() -> None:
     assert [tool.name for tool in tools] == ["c"]
 
 
-def test_start_returns_compact_snapshot_and_collect_is_non_destructive(tmp_path: Path) -> None:
+def test_start_returns_compact_snapshot_and_collect_is_non_destructive(
+    tmp_path: Path,
+) -> None:
     runtime, publisher = _runtime(tmp_path)
 
     started = runtime.call(
@@ -130,8 +134,12 @@ def test_ack_rejects_running_task(tmp_path: Path) -> None:
 
 def test_snapshot_includes_other_tasks_from_shared_store(tmp_path: Path) -> None:
     runtime, _ = _runtime(tmp_path)
-    execution_id = str(runtime.rt.executions.start("sleep 1", timeout=3)["execution_id"])
-    external = runtime.rt.task_store.create(execution_id=execution_id, label="external-task")
+    execution_id = str(
+        runtime.rt.executions.start("sleep 1", timeout=3)["execution_id"]
+    )
+    external = runtime.rt.task_store.create(
+        execution_id=execution_id, label="external-task"
+    )
 
     snapshot = runtime.call(action="sync", text="peek")
 
@@ -179,7 +187,9 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
         conduit_task_id = str(conduit_started["result"]["task_id"])
         conduit_execution_id = str(conduit_started["result"]["execution_id"])
 
-        dive_list = asyncio.run(gpt_dive.code_mode("await task_list()"))["result"]["tasks"]
+        dive_list = asyncio.run(gpt_dive.code_mode("await task_list()"))["result"][
+            "tasks"
+        ]
         assert conduit_task_id in {str(task["task_id"]) for task in dive_list}
 
         dive_started = asyncio.run(
@@ -197,11 +207,15 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
             conduit_task_id,
             dive_task_id,
         }
-        dive_snapshot = next(task for task in conduit_snapshot if task["id"] == dive_task_id)
+        dive_snapshot = next(
+            task for task in conduit_snapshot if task["id"] == dive_task_id
+        )
         assert dive_snapshot["status_label"] == "TODOS 3/9"
 
         runtime.rt.executions.cancel(conduit_execution_id)
-        asyncio.run(gpt_dive.code_mode("await task_cancel(PAYLOAD)", payload=dive_task_id))
+        asyncio.run(
+            gpt_dive.code_mode("await task_cancel(PAYLOAD)", payload=dive_task_id)
+        )
     finally:
         app_module.task_store = original_task_store
         gpt_dive.executions.root = original_root

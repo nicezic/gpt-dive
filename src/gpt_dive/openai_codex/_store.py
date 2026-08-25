@@ -24,16 +24,17 @@ async def run_in_executor(function, /, *args, **kwargs):
     """Run blocking credential-store work without depending on Pydantic AI private helpers."""
     return await run_sync_in_worker(partial(function, *args, **kwargs))
 
+
 _AUTH_FILE_VERSION = 1
-_PROVIDER_KEY = 'openai-codex'
+_PROVIDER_KEY = "openai-codex"
 _LOCK_TIMEOUT = 60
 _LOCK_POLL_INTERVAL = 0.05
 # Windows has no `O_NOFOLLOW`; it also has no symbolic links an unprivileged user can plant here.
-_O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 class _StoredOpenAICodexCredentials(BaseModel):
-    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     access_token: str
     refresh_token: str
@@ -44,7 +45,9 @@ class _StoredOpenAICodexCredentials(BaseModel):
     account_is_fedramp: bool = False
 
     @classmethod
-    def from_credentials(cls, credentials: OpenAICodexCredentials) -> _StoredOpenAICodexCredentials:
+    def from_credentials(
+        cls, credentials: OpenAICodexCredentials
+    ) -> _StoredOpenAICodexCredentials:
         return cls(
             access_token=credentials.access_token.get_secret_value(),
             refresh_token=credentials.refresh_token.get_secret_value(),
@@ -68,7 +71,7 @@ class _StoredOpenAICodexCredentials(BaseModel):
 
 
 class _AuthFile(BaseModel):
-    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     version: Literal[1] = _AUTH_FILE_VERSION
     providers: dict[str, JsonValue] = Field(default_factory=dict)
@@ -79,8 +82,8 @@ class OpenAICodexFileCredentialStore:
 
     def __init__(self, path: Path | None = None) -> None:
         self._uses_default_path = path is None
-        self.path = path or Path.home() / '.pydantic-ai' / 'auth.json'
-        self._lock_path = self.path.with_name(f'{self.path.name}.lock')
+        self.path = path or Path.home() / ".pydantic-ai" / "auth.json"
+        self._lock_path = self.path.with_name(f"{self.path.name}.lock")
 
     @asynccontextmanager
     async def exclusive(self) -> AsyncGenerator[None]:
@@ -91,9 +94,9 @@ class OpenAICodexFileCredentialStore:
             from filelock import FileLock, Timeout
         except ImportError as _import_error:  # pragma: no cover
             raise ImportError(
-                'Please install the `filelock` package to use the default OpenAI Codex credential store, '
+                "Please install the `filelock` package to use the default OpenAI Codex credential store, "
                 'you can use the `openai-codex` optional group — `pip install "pydantic-ai-slim[openai-codex]"`. '
-                'Applications that supply their own `OpenAICodexCredentialStore` do not need it.'
+                "Applications that supply their own `OpenAICodexCredentialStore` do not need it."
             ) from _import_error
 
         lock = FileLock(self._lock_path, mode=0o600, thread_local=False)
@@ -110,17 +113,21 @@ class OpenAICodexFileCredentialStore:
                         break
         except TimeoutError:
             raise OpenAICodexCredentialsError(
-                'Timed out waiting for exclusive access to OpenAI Codex credentials.'
+                "Timed out waiting for exclusive access to OpenAI Codex credentials."
             ) from None
         except OSError as error:
-            raise OpenAICodexCredentialsError('Unable to lock the OpenAI Codex credential store.') from error
+            raise OpenAICodexCredentialsError(
+                "Unable to lock the OpenAI Codex credential store."
+            ) from error
 
         try:
-            if os.name != 'nt':  # pragma: no branch
+            if os.name != "nt":  # pragma: no branch
                 try:
                     await run_in_executor(self._harden_lock_file)
                 except OSError as error:
-                    raise OpenAICodexCredentialsError('Unable to lock the OpenAI Codex credential store.') from error
+                    raise OpenAICodexCredentialsError(
+                        "Unable to lock the OpenAI Codex credential store."
+                    ) from error
             yield
         finally:
             with anyio.CancelScope(shield=True):
@@ -132,15 +139,23 @@ class OpenAICodexFileCredentialStore:
         except OpenAICodexCredentialsError:
             raise
         except OSError as error:
-            raise OpenAICodexCredentialsError('Unable to read the OpenAI Codex credential store.') from error
+            raise OpenAICodexCredentialsError(
+                "Unable to read the OpenAI Codex credential store."
+            ) from error
 
-    async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
+    async def save(
+        self, credentials: OpenAICodexCredentials, *, expected_revision: str | None
+    ) -> bool:
         try:
-            return await run_in_executor(self._save_sync, credentials, expected_revision)
+            return await run_in_executor(
+                self._save_sync, credentials, expected_revision
+            )
         except OpenAICodexCredentialsError:
             raise
         except OSError as error:
-            raise OpenAICodexCredentialsError('Unable to write the OpenAI Codex credential store.') from error
+            raise OpenAICodexCredentialsError(
+                "Unable to write the OpenAI Codex credential store."
+            ) from error
 
     async def delete(self, *, expected_revision: str | None) -> bool:
         try:
@@ -148,7 +163,9 @@ class OpenAICodexFileCredentialStore:
         except OpenAICodexCredentialsError:
             raise
         except OSError as error:
-            raise OpenAICodexCredentialsError('Unable to update the OpenAI Codex credential store.') from error
+            raise OpenAICodexCredentialsError(
+                "Unable to update the OpenAI Codex credential store."
+            ) from error
 
     def _harden_lock_file(self) -> None:
         # Hardening the descriptor rather than the path, for the reason spelled out in
@@ -164,14 +181,16 @@ class OpenAICodexFileCredentialStore:
     def _prepare_directory(self) -> None:
         parent_existed = self.path.parent.exists()
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if (self._uses_default_path or not parent_existed) and os.name != 'nt':
+        if (self._uses_default_path or not parent_existed) and os.name != "nt":
             os.chmod(self.path.parent, 0o700)
 
     def _load_sync(self) -> OpenAICodexCredentials | None:
         document = self._load_document()
         return self._get_record(document)
 
-    def _save_sync(self, credentials: OpenAICodexCredentials, expected_revision: str | None) -> bool:
+    def _save_sync(
+        self, credentials: OpenAICodexCredentials, expected_revision: str | None
+    ) -> bool:
         document = self._load_document()
         current = self._get_record(document)
         current_revision = current.revision if current is not None else None
@@ -179,7 +198,9 @@ class OpenAICodexFileCredentialStore:
             return False
 
         providers = dict(document.providers)
-        providers[_PROVIDER_KEY] = _StoredOpenAICodexCredentials.from_credentials(credentials).model_dump(mode='json')
+        providers[_PROVIDER_KEY] = _StoredOpenAICodexCredentials.from_credentials(
+            credentials
+        ).model_dump(mode="json")
         self._atomic_write(_AuthFile(version=_AUTH_FILE_VERSION, providers=providers))
         return True
 
@@ -215,10 +236,10 @@ class OpenAICodexFileCredentialStore:
             if error.errno not in (errno.ELOOP, errno.EMLINK):
                 raise
             raise OpenAICodexCredentialsError(
-                'The OpenAI Codex credential store path must not be a symbolic link.'
+                "The OpenAI Codex credential store path must not be a symbolic link."
             ) from None
-        with os.fdopen(descriptor, 'rb') as handle:
-            if os.name != 'nt':  # pragma: no branch
+        with os.fdopen(descriptor, "rb") as handle:
+            if os.name != "nt":  # pragma: no branch
                 os.fchmod(descriptor, 0o600)
             return handle.read()
 
@@ -227,14 +248,14 @@ class OpenAICodexFileCredentialStore:
         if content is None:
             return _AuthFile()
         try:
-            raw = json.loads(content.decode('utf-8'))
+            raw = json.loads(content.decode("utf-8"))
             document = _AuthFile.model_validate(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
+        except json.JSONDecodeError, UnicodeDecodeError, ValidationError:
             pass
         else:
             return document
         raise OpenAICodexCredentialsError(
-            'The OpenAI Codex credential store is malformed or uses an unsupported schema version.'
+            "The OpenAI Codex credential store is malformed or uses an unsupported schema version."
         ) from None
 
     def _get_record(self, document: _AuthFile) -> OpenAICodexCredentials | None:
@@ -250,24 +271,29 @@ class OpenAICodexFileCredentialStore:
         # Raised outside the `except` block on purpose: `from None` only clears `__cause__`,
         # while `__context__` would still hold the `ValidationError` whose payload carries the
         # plaintext credential document. Raising here leaves `__context__` empty.
-        raise OpenAICodexCredentialsError('The stored OpenAI Codex credential record is malformed.') from None
+        raise OpenAICodexCredentialsError(
+            "The stored OpenAI Codex credential record is malformed."
+        ) from None
 
     def _atomic_write(self, document: _AuthFile) -> None:
         self._prepare_directory()
-        content = json.dumps(document.model_dump(mode='json'), indent=2, sort_keys=True) + '\n'
+        content = (
+            json.dumps(document.model_dump(mode="json"), indent=2, sort_keys=True)
+            + "\n"
+        )
         file_descriptor, temporary_name = tempfile.mkstemp(
             dir=self.path.parent,
-            prefix=f'.{self.path.name}.',
-            suffix='.tmp',
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
         )
         temporary_path = Path(temporary_name)
         try:
             # `os.fdopen` takes ownership of the descriptor, so whatever can fail ahead of it has to
             # close the raw descriptor itself; otherwise every failed save leaks one.
             try:
-                if os.name != 'nt':  # pragma: no branch
+                if os.name != "nt":  # pragma: no branch
                     os.fchmod(file_descriptor, 0o600)
-                temporary_file = os.fdopen(file_descriptor, 'w', encoding='utf-8')
+                temporary_file = os.fdopen(file_descriptor, "w", encoding="utf-8")
             except BaseException:
                 os.close(file_descriptor)
                 raise
@@ -285,10 +311,12 @@ class OpenAICodexFileCredentialStore:
         # store no longer holds. Neither step is load-bearing — `os.replace` carries over the mode
         # `fchmod` already set, and the directory `fsync` only makes the rename durable — so the one
         # thing they must not do is undo a committed write.
-        if os.name != 'nt':  # pragma: no branch
+        if os.name != "nt":  # pragma: no branch
             with suppress(OSError):
                 os.chmod(self.path, 0o600)
-                directory_descriptor = os.open(self.path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+                directory_descriptor = os.open(
+                    self.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                )
                 try:
                     os.fsync(directory_descriptor)
                 finally:

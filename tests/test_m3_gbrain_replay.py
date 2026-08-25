@@ -8,7 +8,9 @@ from pathlib import Path
 import gpt_dive.m3_gbrain_replay as replay_module
 
 
-def test_gbrain_runtime_root_defaults_to_installed_bun_package(monkeypatch, tmp_path: Path) -> None:
+def test_gbrain_runtime_root_defaults_to_installed_bun_package(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     assert replay_module.gbrain_runtime_root({}) == (
         tmp_path / ".bun" / "install" / "global" / "node_modules" / "gbrain"
@@ -17,7 +19,10 @@ def test_gbrain_runtime_root_defaults_to_installed_bun_package(monkeypatch, tmp_
 
 def test_gbrain_runtime_root_preserves_explicit_override(tmp_path: Path) -> None:
     override = tmp_path / "gbrain-dev"
-    assert replay_module.gbrain_runtime_root({"GPT_DIVE_GBRAIN_REPO": str(override)}) == override
+    assert (
+        replay_module.gbrain_runtime_root({"GPT_DIVE_GBRAIN_REPO": str(override)})
+        == override
+    )
 
 
 def test_load_capture_rows_reads_ndjson(tmp_path: Path) -> None:
@@ -62,9 +67,12 @@ def test_empty_chunk_hashes_are_legacy_provenance(tmp_path: Path) -> None:
         '{"schema_version":1,"id":1,"tool_name":"query","query":"q1","source_ids":["pydantic-ai"],"retrieved_slugs":["docs/a"],"retrieved_chunk_ids":[11],"retrieved_chunk_hashes":[],"created_at":"2026-08-16T16:10:20.070Z","as_of_ts":null}\n'
     )
     row = replay_module.load_capture_rows(path)[0]
-    assert replay_module.verify_captured_chunk_hashes(
-        row, [{"id": 11, "chunk_text": "current"}], chunk_limit=4
-    ) is False
+    assert (
+        replay_module.verify_captured_chunk_hashes(
+            row, [{"id": 11, "chunk_text": "current"}], chunk_limit=4
+        )
+        is False
+    )
 
 
 def test_build_evidence_packet_labels_captured_chunks() -> None:
@@ -92,7 +100,7 @@ def test_build_evidence_packet_labels_captured_chunks() -> None:
     )
     assert packet == (
         '[E1] chunk_id=11 source=pydantic-ai slug=docs/agent title="Agent API" '
-        'effective_date=2026-08-15 effective_date_source=published\nalpha\n\n'
+        "effective_date=2026-08-15 effective_date_source=published\nalpha\n\n"
         '[E2] chunk_id=22 source=pydantic-ai-harness slug=docs/harness title="Harness Guide"\nbeta'
     )
 
@@ -124,7 +132,9 @@ def test_verify_captured_chunk_hashes_accepts_exact_text() -> None:
         ],
     }
     chunks = [{"id": 11, "chunk_text": "alpha"}, {"id": 22, "chunk_text": "beta"}]
-    assert replay_module.verify_captured_chunk_hashes(row, chunks, chunk_limit=4) is True
+    assert (
+        replay_module.verify_captured_chunk_hashes(row, chunks, chunk_limit=4) is True
+    )
 
 
 def test_verify_captured_chunk_hashes_rejects_text_drift() -> None:
@@ -206,7 +216,20 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     report = asyncio.run(
         replay_module.run_replay(
-            [{"schema_version": 1, "id": 7, "tool_name": "query", "query": "How does X work?", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [hashlib.sha256(b"fact").hexdigest()], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}],
+            [
+                {
+                    "schema_version": 1,
+                    "id": 7,
+                    "tool_name": "query",
+                    "query": "How does X work?",
+                    "source_ids": ["pydantic-ai"],
+                    "retrieved_slugs": ["s"],
+                    "retrieved_chunk_ids": [31],
+                    "retrieved_chunk_hashes": [hashlib.sha256(b"fact").hexdigest()],
+                    "created_at": "2026-08-16T16:10:29.252Z",
+                    "as_of_ts": None,
+                }
+            ],
             timeout=30.0,
             chunk_limit=4,
         )
@@ -217,8 +240,29 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["retry_rows"] == 1
     assert report["proposed_queries"] == 1
     assert report["controller_failures"] == 0
-    assert report["validation_error_counts"] == {"missing must be empty when done is true": 1}
-    assert report["capture_stability"] == [{"capture_id": 7, "samples": 1, "successful_samples": 1, "done_true": 0, "done_false": 1, "completion_stable": True, "known_evidence_label_sets": [["[E1]"]], "known_evidence_coverage_stable": True, "critical_evidence_labels": [], "critical_evidence_scored_runs": 0, "critical_evidence_recall_range": None, "critical_evidence_omission_runs": 0, "known_count_range": [1, 1], "missing_count_range": [1, 1], "query_count_range": [1, 1], "decision_shape_stable": True}]
+    assert report["validation_error_counts"] == {
+        "missing must be empty when done is true": 1
+    }
+    assert report["capture_stability"] == [
+        {
+            "capture_id": 7,
+            "samples": 1,
+            "successful_samples": 1,
+            "done_true": 0,
+            "done_false": 1,
+            "completion_stable": True,
+            "known_evidence_label_sets": [["[E1]"]],
+            "known_evidence_coverage_stable": True,
+            "critical_evidence_labels": [],
+            "critical_evidence_scored_runs": 0,
+            "critical_evidence_recall_range": None,
+            "critical_evidence_omission_runs": 0,
+            "known_count_range": [1, 1],
+            "missing_count_range": [1, 1],
+            "query_count_range": [1, 1],
+            "decision_shape_stable": True,
+        }
+    ]
     assert report["results"][0]["capture_id"] == 7
     assert report["results"][0]["chunk_count"] == 1
     assert report["results"][0]["excluded_future_chunks"] == 0
@@ -226,30 +270,50 @@ def test_run_replay_reports_controller_metrics(monkeypatch) -> None:
     assert report["results"][0]["chunk_hashes_checked"] is True
 
 
-def test_validation_error_counts_group_dynamic_messages_by_invariant(monkeypatch) -> None:
+def test_validation_error_counts_group_dynamic_messages_by_invariant(
+    monkeypatch,
+) -> None:
     async def fake_read(row, *, chunk_limit):
-        return [{
-            "id": row["retrieved_chunk_ids"][0],
-            "source_id": "pydantic-ai",
-            "slug": "s",
-            "page_updated_at": "2026-08-16T15:00:00+00:00",
-            "effective_date": None,
-            "effective_date_source": None,
-            "chunk_text": "fact",
-        }]
+        return [
+            {
+                "id": row["retrieved_chunk_ids"][0],
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact",
+            }
+        ]
 
-    outputs = iter([
-        {
-            "ok": True, "done": True, "known": ["a [E1]"], "missing": [],
-            "conflicts": [], "queries": [], "attempts": 2,
-            "validation_errors": ["known item must cite an evidence label: 'first fact'"],
-        },
-        {
-            "ok": True, "done": True, "known": ["b [E1]"], "missing": [],
-            "conflicts": [], "queries": [], "attempts": 2,
-            "validation_errors": ["known item must cite an evidence label: 'different fact'"],
-        },
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": True,
+                "known": ["a [E1]"],
+                "missing": [],
+                "conflicts": [],
+                "queries": [],
+                "attempts": 2,
+                "validation_errors": [
+                    "known item must cite an evidence label: 'first fact'"
+                ],
+            },
+            {
+                "ok": True,
+                "done": True,
+                "known": ["b [E1]"],
+                "missing": [],
+                "conflicts": [],
+                "queries": [],
+                "attempts": 2,
+                "validation_errors": [
+                    "known item must cite an evidence label: 'different fact'"
+                ],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
@@ -258,35 +322,44 @@ def test_validation_error_counts_group_dynamic_messages_by_invariant(monkeypatch
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
     rows = [
         {
-            "schema_version": 1, "id": i, "tool_name": "query", "query": f"q{i}",
-            "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"],
-            "retrieved_chunk_ids": [i], "retrieved_chunk_hashes": [],
-            "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None,
+            "schema_version": 1,
+            "id": i,
+            "tool_name": "query",
+            "query": f"q{i}",
+            "source_ids": ["pydantic-ai"],
+            "retrieved_slugs": ["s"],
+            "retrieved_chunk_ids": [i],
+            "retrieved_chunk_hashes": [],
+            "created_at": "2026-08-16T16:10:29.252Z",
+            "as_of_ts": None,
         }
         for i in (1, 2)
     ]
     report = asyncio.run(replay_module.run_replay(rows, timeout=30.0))
 
-    assert report["validation_error_counts"] == {"known item must cite an evidence label": 2}
+    assert report["validation_error_counts"] == {
+        "known item must cite an evidence label": 2
+    }
     assert report["results"][0]["controller"]["validation_errors"] == [
         "known item must cite an evidence label: 'first fact'"
     ]
-
 
 
 def test_run_replay_repeat_reports_serving_window_stats(monkeypatch) -> None:
     calls = 0
 
     async def fake_read(row, *, chunk_limit):
-        return [{
-            "id": row["retrieved_chunk_ids"][0],
-            "source_id": "pydantic-ai",
-            "slug": "s",
-            "page_updated_at": "2026-08-16T15:00:00+00:00",
-            "effective_date": None,
-            "effective_date_source": None,
-            "chunk_text": "fact",
-        }]
+        return [
+            {
+                "id": row["retrieved_chunk_ids"][0],
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact",
+            }
+        ]
 
     async def fake_m3(**kwargs):
         nonlocal calls
@@ -336,7 +409,9 @@ def test_run_replay_repeat_reports_serving_window_stats(monkeypatch) -> None:
     assert report["done_rows"] == 2
     assert report["unresolved_rows"] == 1
     assert report["retry_rows"] == 1
-    assert report["validation_error_counts"] == {"known item must cite an evidence label": 1}
+    assert report["validation_error_counts"] == {
+        "known item must cite an evidence label": 1
+    }
     assert [item["run"] for item in report["results"]] == [1, 2, 3]
     assert report["run_stats"] == [
         {
@@ -415,6 +490,7 @@ def test_run_replay_preserves_all_captured_chunks_by_default(monkeypatch) -> Non
     report = asyncio.run(replay_module.run_replay([row], timeout=30.0))
     assert report["results"][0]["chunk_count"] == 6
 
+
 def test_replay_question_prefers_explicit_as_of_ts() -> None:
     row = {
         "query": "Which version is current?",
@@ -463,7 +539,9 @@ def test_filter_future_temporal_evidence_keeps_non_temporal_question() -> None:
         "created_at": "2026-08-16T00:00:00Z",
         "as_of_ts": None,
     }
-    chunks = [{"id": 2, "effective_date": "2026-08-17", "effective_date_source": "published"}]
+    chunks = [
+        {"id": 2, "effective_date": "2026-08-17", "effective_date_source": "published"}
+    ]
     kept, excluded = replay_module.filter_future_temporal_evidence(row, chunks)
     assert kept == chunks
     assert excluded == 0
@@ -487,9 +565,17 @@ def test_schema_pack_provenance_accepts_exact_match(monkeypatch) -> None:
     async def fake_current(row):
         return snapshot
 
-    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
-    assert asyncio.run(replay_module.verify_schema_pack_provenance({"schema_pack_per_source": snapshot})) is True
-
+    monkeypatch.setattr(
+        replay_module, "read_current_schema_pack_snapshot", fake_current
+    )
+    assert (
+        asyncio.run(
+            replay_module.verify_schema_pack_provenance(
+                {"schema_pack_per_source": snapshot}
+            )
+        )
+        is True
+    )
 
 
 def test_schema_pack_provenance_allows_source_commit_drift(monkeypatch) -> None:
@@ -515,10 +601,13 @@ def test_schema_pack_provenance_allows_source_commit_drift(monkeypatch) -> None:
     async def fake_current(row):
         return current
 
-    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
+    monkeypatch.setattr(
+        replay_module, "read_current_schema_pack_snapshot", fake_current
+    )
     row = {"schema_pack_per_source": captured}
     assert asyncio.run(replay_module.verify_schema_pack_provenance(row)) is True
     assert replay_module.captured_source_commits(row) == {"pydantic-ai": "old123"}
+
 
 def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
     captured = {
@@ -541,9 +630,15 @@ def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
     async def fake_current(row):
         return current
 
-    monkeypatch.setattr(replay_module, "read_current_schema_pack_snapshot", fake_current)
+    monkeypatch.setattr(
+        replay_module, "read_current_schema_pack_snapshot", fake_current
+    )
     try:
-        asyncio.run(replay_module.verify_schema_pack_provenance({"schema_pack_per_source": captured}))
+        asyncio.run(
+            replay_module.verify_schema_pack_provenance(
+                {"schema_pack_per_source": captured}
+            )
+        )
     except RuntimeError as exc:
         assert "schema-pack provenance drift" in str(exc)
     else:
@@ -552,42 +647,161 @@ def test_schema_pack_provenance_rejects_current_pack_drift(monkeypatch) -> None:
 
 def test_capture_stability_detects_completion_flip_across_repeats(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
-        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact"}]
+        return [
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact",
+            }
+        ]
 
-    outputs = iter([
-        {"ok": True, "done": False, "known": ["fact [E1]"], "missing": ["detail"], "conflicts": [], "queries": ["detail"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": True, "known": ["fact [E1]"], "missing": [], "conflicts": [], "queries": [], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["fact [E1]"], "missing": ["detail"], "conflicts": [], "queries": ["detail"], "attempts": 1, "validation_errors": []},
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": False,
+                "known": ["fact [E1]"],
+                "missing": ["detail"],
+                "conflicts": [],
+                "queries": ["detail"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": True,
+                "known": ["fact [E1]"],
+                "missing": [],
+                "conflicts": [],
+                "queries": [],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["fact [E1]"],
+                "missing": ["detail"],
+                "conflicts": [],
+                "queries": ["detail"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 7, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 7,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["s"],
+        "retrieved_chunk_ids": [31],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
     report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
 
-    assert report["capture_stability"] == [{"capture_id": 7, "samples": 3, "successful_samples": 3, "done_true": 1, "done_false": 2, "completion_stable": False, "known_evidence_label_sets": [["[E1]"]], "known_evidence_coverage_stable": True, "critical_evidence_labels": [], "critical_evidence_scored_runs": 0, "critical_evidence_recall_range": None, "critical_evidence_omission_runs": 0, "known_count_range": [1, 1], "missing_count_range": [0, 1], "query_count_range": [0, 1], "decision_shape_stable": False}]
+    assert report["capture_stability"] == [
+        {
+            "capture_id": 7,
+            "samples": 3,
+            "successful_samples": 3,
+            "done_true": 1,
+            "done_false": 2,
+            "completion_stable": False,
+            "known_evidence_label_sets": [["[E1]"]],
+            "known_evidence_coverage_stable": True,
+            "critical_evidence_labels": [],
+            "critical_evidence_scored_runs": 0,
+            "critical_evidence_recall_range": None,
+            "critical_evidence_omission_runs": 0,
+            "known_count_range": [1, 1],
+            "missing_count_range": [0, 1],
+            "query_count_range": [0, 1],
+            "decision_shape_stable": False,
+        }
+    ]
 
 
 def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
-        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact"}]
+        return [
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact",
+            }
+        ]
 
-    outputs = iter([
-        {"ok": True, "done": False, "known": ["a [E1]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["a [E1]", "b [E1]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]", "b [E1]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": [],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 20, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 20,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["s"],
+        "retrieved_chunk_ids": [31],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
     report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
     stability = report["capture_stability"][0]
@@ -608,22 +822,70 @@ def test_capture_stability_detects_shape_drift_when_done_is_stable(monkeypatch) 
     }
 
 
-def test_stability_drift_separates_controller_failure_from_completion_flip(monkeypatch) -> None:
+def test_stability_drift_separates_controller_failure_from_completion_flip(
+    monkeypatch,
+) -> None:
     async def fake_read(row, *, chunk_limit):
-        return [{"id": 31, "source_id": "pydantic-ai", "slug": "s", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact"}]
+        return [
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "s",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact",
+            }
+        ]
 
-    outputs = iter([
-        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": False, "error": "invalid m3 evidence JSON", "attempts": 2, "validation_errors": ["invalid m3 evidence JSON"]},
-        {"ok": True, "done": False, "known": [], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": False,
+                "known": [],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": False,
+                "error": "invalid m3 evidence JSON",
+                "attempts": 2,
+                "validation_errors": ["invalid m3 evidence JSON"],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": [],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 20, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["s"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 20,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["s"],
+        "retrieved_chunk_ids": [31],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
     report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
 
@@ -636,22 +898,78 @@ def test_stability_drift_separates_controller_failure_from_completion_flip(monke
 def test_known_count_drift_can_preserve_evidence_coverage(monkeypatch) -> None:
     async def fake_read(row, *, chunk_limit):
         return [
-            {"id": 31, "source_id": "pydantic-ai", "slug": "a", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact a"},
-            {"id": 32, "source_id": "pydantic-ai", "slug": "b", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact b"},
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "a",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact a",
+            },
+            {
+                "id": 32,
+                "source_id": "pydantic-ai",
+                "slug": "b",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact b",
+            },
         ]
 
-    outputs = iter([
-        {"ok": True, "done": False, "known": ["combined [E1] [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["a [E1]", "b [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["a and b [E2] [E1]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": False,
+                "known": ["combined [E1] [E2]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]", "b [E2]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a and b [E2] [E1]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a", "b"], "retrieved_chunk_ids": [31, 32], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 30,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["a", "b"],
+        "retrieved_chunk_ids": [31, 32],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
     report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3))
     stability = report["capture_stability"][0]
@@ -663,7 +981,9 @@ def test_known_count_drift_can_preserve_evidence_coverage(monkeypatch) -> None:
     assert report["stability_drift_counts"]["known_evidence_coverage"] == 0
 
 
-def test_critical_evidence_qrels_measure_omission_without_changing_controller(monkeypatch, tmp_path) -> None:
+def test_critical_evidence_qrels_measure_omission_without_changing_controller(
+    monkeypatch, tmp_path
+) -> None:
     qrels_path = tmp_path / "critical.json"
     qrels_path.write_text(
         json.dumps(
@@ -677,24 +997,84 @@ def test_critical_evidence_qrels_measure_omission_without_changing_controller(mo
 
     async def fake_read(row, *, chunk_limit):
         return [
-            {"id": 31, "source_id": "pydantic-ai", "slug": "a", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact a"},
-            {"id": 32, "source_id": "pydantic-ai", "slug": "b", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact b"},
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "a",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact a",
+            },
+            {
+                "id": 32,
+                "source_id": "pydantic-ai",
+                "slug": "b",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact b",
+            },
         ]
 
-    outputs = iter([
-        {"ok": True, "done": False, "known": ["a [E1]", "b [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["a [E1]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-        {"ok": True, "done": False, "known": ["a [E1]", "b [E2]"], "missing": ["x"], "conflicts": [], "queries": ["q"], "attempts": 1, "validation_errors": []},
-    ])
+    outputs = iter(
+        [
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]", "b [E2]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+            {
+                "ok": True,
+                "done": False,
+                "known": ["a [E1]", "b [E2]"],
+                "missing": ["x"],
+                "conflicts": [],
+                "queries": ["q"],
+                "attempts": 1,
+                "validation_errors": [],
+            },
+        ]
+    )
 
     async def fake_m3(**kwargs):
         return next(outputs)
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a", "b"], "retrieved_chunk_ids": [31, 32], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 30,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["a", "b"],
+        "retrieved_chunk_ids": [31, 32],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
-    report = asyncio.run(replay_module.run_replay([row], timeout=30.0, repeat=3, critical_evidence_qrels=qrels))
+    report = asyncio.run(
+        replay_module.run_replay(
+            [row], timeout=30.0, repeat=3, critical_evidence_qrels=qrels
+        )
+    )
     stability = report["capture_stability"][0]
     assert stability["critical_evidence_labels"] == ["[E1]", "[E2]"]
     assert stability["critical_evidence_scored_runs"] == 3
@@ -703,19 +1083,52 @@ def test_critical_evidence_qrels_measure_omission_without_changing_controller(mo
     assert report["stability_drift_counts"]["critical_evidence_omission"] == 1
 
 
-def test_critical_evidence_reports_zero_scored_runs_when_controller_never_succeeds(monkeypatch) -> None:
+def test_critical_evidence_reports_zero_scored_runs_when_controller_never_succeeds(
+    monkeypatch,
+) -> None:
     async def fake_read(row, *, chunk_limit):
-        return [{"id": 31, "source_id": "pydantic-ai", "slug": "a", "page_updated_at": "2026-08-16T15:00:00+00:00", "effective_date": None, "effective_date_source": None, "chunk_text": "fact a"}]
+        return [
+            {
+                "id": 31,
+                "source_id": "pydantic-ai",
+                "slug": "a",
+                "page_updated_at": "2026-08-16T15:00:00+00:00",
+                "effective_date": None,
+                "effective_date_source": None,
+                "chunk_text": "fact a",
+            }
+        ]
 
     async def fake_m3(**kwargs):
-        return {"ok": False, "model": "m3", "provider": "minimax", "error": "provider unavailable"}
+        return {
+            "ok": False,
+            "model": "m3",
+            "provider": "minimax",
+            "error": "provider unavailable",
+        }
 
     monkeypatch.setattr(replay_module, "read_captured_chunks", fake_read)
     monkeypatch.setattr(replay_module, "invoke_m3_evidence", fake_m3)
-    row = {"schema_version": 1, "id": 30, "tool_name": "query", "query": "q", "source_ids": ["pydantic-ai"], "retrieved_slugs": ["a"], "retrieved_chunk_ids": [31], "retrieved_chunk_hashes": [], "created_at": "2026-08-16T16:10:29.252Z", "as_of_ts": None}
+    row = {
+        "schema_version": 1,
+        "id": 30,
+        "tool_name": "query",
+        "query": "q",
+        "source_ids": ["pydantic-ai"],
+        "retrieved_slugs": ["a"],
+        "retrieved_chunk_ids": [31],
+        "retrieved_chunk_hashes": [],
+        "created_at": "2026-08-16T16:10:29.252Z",
+        "as_of_ts": None,
+    }
 
     report = asyncio.run(
-        replay_module.run_replay([row], timeout=30.0, repeat=3, critical_evidence_qrels={30: frozenset({"[E1]"})})
+        replay_module.run_replay(
+            [row],
+            timeout=30.0,
+            repeat=3,
+            critical_evidence_qrels={30: frozenset({"[E1]"})},
+        )
     )
     stability = report["capture_stability"][0]
 

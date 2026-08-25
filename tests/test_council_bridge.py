@@ -22,7 +22,9 @@ abc:
     assert _session_is_open(output, "missing") is False
 
 
-def test_bridge_start_reuses_existing_open_cli_session(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bridge_start_reuses_existing_open_cli_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = SolBridge()
     calls: list[tuple[tuple[str, ...], dict[str, Any]]] = []
 
@@ -39,7 +41,9 @@ def test_bridge_start_reuses_existing_open_cli_session(monkeypatch: pytest.Monke
     assert calls[0][0] == ("list", "--all")
 
 
-def test_bridge_start_attaches_extension_when_session_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bridge_start_attaches_extension_when_session_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = SolBridge()
     outputs = iter(
         [
@@ -71,7 +75,9 @@ def test_bridge_probe_requires_started_bridge() -> None:
         asyncio.run(bridge.probe(url="https://chatgpt.com/c/test"))
 
 
-def test_bridge_probe_accepts_compact_composer_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bridge_probe_accepts_compact_composer_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = SolBridge()
     bridge._started = True
 
@@ -79,7 +85,13 @@ def test_bridge_probe_accepts_compact_composer_state(monkeypatch: pytest.MonkeyP
         assert "chrome.tabs.query" in code
         assert "#prompt-textarea" in code
         assert timeout == 15.0
-        return {"ok": True, "state": "BUSY", "reason": "generating", "empty": True, "tabId": 7}
+        return {
+            "ok": True,
+            "state": "BUSY",
+            "reason": "generating",
+            "empty": True,
+            "tabId": 7,
+        }
 
     monkeypatch.setattr(bridge, "_run_code", fake_run_code)
 
@@ -101,14 +113,16 @@ def test_send_script_embeds_ready_gate_and_message_safely() -> None:
     assert '"ackTimeoutMs": 3000' in script
     assert 'line 1\\n\\"quoted\\"' in script
     assert 'before.state !== "READY"' in script
-    assert 'expression: args.stateExpr' in script
-    assert 'expression: stateExpr' not in script
-    assert 'Input.insertText' in script
-    assert 'Input.dispatchKeyEvent' in script
-    assert 'after.empty' in script
+    assert "expression: args.stateExpr" in script
+    assert "expression: stateExpr" not in script
+    assert "Input.insertText" in script
+    assert "Input.dispatchKeyEvent" in script
+    assert "after.empty" in script
 
 
-def test_bridge_send_returns_acknowledged_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bridge_send_returns_acknowledged_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = SolBridge(ready_timeout=2.0, ack_timeout=1.0)
     bridge._started = True
 

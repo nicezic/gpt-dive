@@ -84,7 +84,6 @@ def test_parse_stream_json_requires_terminal_result() -> None:
         _parse_stream_json(json.dumps({"event": "init"}))
 
 
-
 def test_extract_stream_metadata_tolerates_incomplete_stream() -> None:
     stdout = "\n".join(
         [
@@ -136,13 +135,17 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
         def __init__(self) -> None:
             self.done = worker_subprocess_module.asyncio.Event()
 
-        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
+        async def communicate(
+            self, _stdin_payload: object = None
+        ) -> tuple[bytes, bytes]:
             await self.done.wait()
             return stdout, b"partial stderr"
 
     proc = FakeProcess()
 
-    async def fake_create_subprocess_exec(*args: object, **kwargs: object) -> FakeProcess:
+    async def fake_create_subprocess_exec(
+        *args: object, **kwargs: object
+    ) -> FakeProcess:
         return proc
 
     async def fake_wait_for(awaitable: object, timeout: float) -> object:
@@ -171,7 +174,6 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
     assert result["stderr"] == "partial stderr"
 
 
-
 def test_invoke_agy_worker_cancellation_terminates_and_reaps(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -188,7 +190,9 @@ def test_invoke_agy_worker_cancellation_terminates_and_reaps(
             self.done = worker_subprocess_module.asyncio.Event()
             self.reaped = False
 
-        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
+        async def communicate(
+            self, _stdin_payload: object = None
+        ) -> tuple[bytes, bytes]:
             self.started.set()
             await self.done.wait()
             self.reaped = True
@@ -198,7 +202,9 @@ def test_invoke_agy_worker_cancellation_terminates_and_reaps(
     proc = FakeProcess()
     killed: list[tuple[int, int]] = []
 
-    async def fake_create_subprocess_exec(*args: object, **kwargs: object) -> FakeProcess:
+    async def fake_create_subprocess_exec(
+        *args: object, **kwargs: object
+    ) -> FakeProcess:
         return proc
 
     def fake_killpg(pid: int, sig: int) -> None:

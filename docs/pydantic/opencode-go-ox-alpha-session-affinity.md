@@ -97,31 +97,39 @@ Policy mirrors OpenCode then improves on it:
 ```python
 import time, uuid
 
-def new_sid(): return str(uuid.uuid4())
 
-def classify(resp) -> str:                    # ok | bad_route
-    if resp.status in (408,429,500,502,503,504): return "bad_route"
-    fr = resp.finish_reason                   # last chunk if streaming
+def new_sid():
+    return str(uuid.uuid4())
+
+
+def classify(resp) -> str:  # ok | bad_route
+    if resp.status in (408, 429, 500, 502, 503, 504):
+        return "bad_route"
+    fr = resp.finish_reason  # last chunk if streaming
     empty = not (resp.content or resp.tool_calls or resp.reasoning)
-    if fr == "network_error" or fr is None: return "bad_route"
-    return "ok" if fr in ("stop","tool_calls","length") and not empty else "bad_route"
+    if fr == "network_error" or fr is None:
+        return "bad_route"
+    return "ok" if fr in ("stop", "tool_calls", "length") and not empty else "bad_route"
+
 
 def call_with_affinity(request_fn, state, max_same=2, max_rotate=4):
-    sid = state.session_id                    # persisted per thread
+    sid = state.session_id  # persisted per thread
     delay = 0.5
-    for _ in range(max_same):                 # same-id retries (OpenCode-style)
+    for _ in range(max_same):  # same-id retries (OpenCode-style)
         r = send(request_fn, sid)
         if classify(r) == "ok":
-            state.session_id = sid            # keep binding
+            state.session_id = sid  # keep binding
             return r
-        time.sleep(delay); delay *= 2
-    for _ in range(max_rotate):               # rotate on persistent bad route
+        time.sleep(delay)
+        delay *= 2
+    for _ in range(max_rotate):  # rotate on persistent bad route
         sid = new_sid()
         r = send(request_fn, sid)
         if classify(r) == "ok":
-            state.session_id = sid            # re-bind to new healthy slot
+            state.session_id = sid  # re-bind to new healthy slot
             return r
-        time.sleep(delay); delay *= 2
+        time.sleep(delay)
+        delay *= 2
     raise ProviderUnavailable
 ```
 

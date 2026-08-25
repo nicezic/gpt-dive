@@ -97,7 +97,9 @@ def _probe_script(url: str) -> str:
     )
 
 
-def _send_script(url: str, message: str, *, ready_timeout: float, ack_timeout: float) -> str:
+def _send_script(
+    url: str, message: str, *, ready_timeout: float, ack_timeout: float
+) -> str:
     return (
         _extension_prelude(
             {
@@ -207,16 +209,22 @@ class SolBridge:
             env=child_env,
         )
         try:
-            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
         except TimeoutError as exc:
             proc.kill()
             await proc.communicate()
-            raise RuntimeError(f"Playwright CLI timed out after {timeout} seconds") from exc
+            raise RuntimeError(
+                f"Playwright CLI timed out after {timeout} seconds"
+            ) from exc
         stdout = stdout_b.decode(errors="replace")
         stderr = stderr_b.decode(errors="replace")
         if proc.returncode != 0:
             detail = _redact_cli_output((stderr or stdout).strip())
-            raise RuntimeError(f"Playwright CLI failed: {detail or f'exit {proc.returncode}'}")
+            raise RuntimeError(
+                f"Playwright CLI failed: {detail or f'exit {proc.returncode}'}"
+            )
         return stdout
 
     async def start(self) -> None:
@@ -238,7 +246,9 @@ class SolBridge:
         )
         inventory = await self._run_cli("list", "--all", timeout=20.0)
         if not _session_is_open(inventory, self._session):
-            raise RuntimeError(f"Playwright session {self._session!r} did not become open after attach")
+            raise RuntimeError(
+                f"Playwright session {self._session!r} did not become open after attach"
+            )
         self._started = True
         self._owns_session = True
 
@@ -280,11 +290,17 @@ class SolBridge:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
             detail = _redact_cli_output(raw.strip())
-            raise RuntimeError(f"invalid Playwright CLI result: {detail[:500]}") from exc
+            raise RuntimeError(
+                f"invalid Playwright CLI result: {detail[:500]}"
+            ) from exc
 
     async def probe(self, *, url: str) -> dict[str, Any]:
         result = await self._run_code(_probe_script(url), timeout=15.0)
-        if not isinstance(result, dict) or result.get("state") not in {"READY", "BUSY", "MISSING"}:
+        if not isinstance(result, dict) or result.get("state") not in {
+            "READY",
+            "BUSY",
+            "MISSING",
+        }:
             raise RuntimeError("invalid SOL composer state result")
         return result
 

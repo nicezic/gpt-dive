@@ -72,7 +72,9 @@ def test_code_mode_cancellation_reaps_real_agy_worker(
             self.done = asyncio.Event()
             self.reaped = False
 
-        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
+        async def communicate(
+            self, _stdin_payload: object = None
+        ) -> tuple[bytes, bytes]:
             self.started.set()
             await self.done.wait()
             self.returncode = -signal.SIGTERM
@@ -82,7 +84,9 @@ def test_code_mode_cancellation_reaps_real_agy_worker(
     proc = FakeProcess()
     killed: list[tuple[int, int]] = []
 
-    async def fake_create_subprocess_exec(*_args: object, **_kwargs: object) -> FakeProcess:
+    async def fake_create_subprocess_exec(
+        *_args: object, **_kwargs: object
+    ) -> FakeProcess:
         return proc
 
     def fake_killpg(pid: int, sig: int) -> None:

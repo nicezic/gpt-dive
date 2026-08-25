@@ -44,10 +44,18 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "Write code as Monty/Python orchestration" in description
     assert "Prefer registered capabilities directly" in description
     assert "Decide dependencies first" in description
-    assert "Use Pydantic run_command only when shell execution is required" in description
+    assert (
+        "Use Pydantic run_command only when shell execution is required" in description
+    )
     assert "Every MCP call requires payload as a string" in description
-    assert "CAPABILITIES provides the live inner capability signatures + descriptions" in description
-    assert "Never invent capability names, arguments, optional fields, or return shapes" in description
+    assert (
+        "CAPABILITIES provides the live inner capability signatures + descriptions"
+        in description
+    )
+    assert (
+        "Never invent capability names, arguments, optional fields, or return shapes"
+        in description
+    )
     assert "payload" in tool.input_schema["required"]
     assert tool.input_schema["properties"]["payload"]["type"] == "string"
     label_variants = tool.input_schema["properties"]["label"]["anyOf"]
@@ -58,15 +66,22 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "execution_id" in tool.input_schema["properties"]
     assert "job_id" not in tool.input_schema["properties"]
     action_variants = tool.input_schema["properties"]["action"]["anyOf"]
-    assert {tuple(v.get("enum", [])) for v in action_variants} >= {("status", "result", "cancel")}
+    assert {tuple(v.get("enum", [])) for v in action_variants} >= {
+        ("status", "result", "cancel")
+    }
     assert "input" not in tool.input_schema["properties"]
 
 
-def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> None:
+def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> (
+    None
+):
     instructions = gpt_dive.mcp.instructions
     assert instructions is not None
     assert "use code_mode as the default programmable root" in instructions
-    assert "Use Web Search only when the missing evidence is external and current" in instructions
+    assert (
+        "Use Web Search only when the missing evidence is external and current"
+        in instructions
+    )
     assert "Never invent capability names" in instructions
     assert "Use wsl2_sync only for transport/smoke" in instructions
 
@@ -99,7 +114,9 @@ async def _call_tracked_tasks_middleware(
 ) -> CallToolResult:
     connection = SimpleNamespace(state={})
     session = SimpleNamespace(_connection=connection)
-    ctx = SimpleNamespace(method="tools/call", params={"name": tool_name}, session=session)
+    ctx = SimpleNamespace(
+        method="tools/call", params={"name": tool_name}, session=session
+    )
 
     async def call_next(_ctx):
         return result
@@ -169,7 +186,9 @@ async def _call_periodic_reminder_middleware(
 ) -> CallToolResult:
     connection = SimpleNamespace(state=connection_state)
     session = SimpleNamespace(_connection=connection)
-    ctx = SimpleNamespace(method="tools/call", params={"name": tool_name}, session=session)
+    ctx = SimpleNamespace(
+        method="tools/call", params={"name": tool_name}, session=session
+    )
 
     async def call_next(_ctx):
         return _middleware_tool_result()
@@ -179,7 +198,9 @@ async def _call_periodic_reminder_middleware(
     return result
 
 
-def test_periodic_reminder_appends_user_rules_section_on_third_tool_call(monkeypatch) -> None:
+def test_periodic_reminder_appends_user_rules_section_on_third_tool_call(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(app, "_read_periodic_reminder", lambda: "## Reminder\nREMINDER")
     monkeypatch.setattr(
         app,
@@ -220,7 +241,9 @@ def test_periodic_reminder_interval_comes_from_config(monkeypatch) -> None:
     assert "PERIODIC DIVE REMINDER: 2 tool calls" in second.content[-1].text
 
 
-def test_periodic_reminder_reads_only_user_rules_reminder(monkeypatch, tmp_path) -> None:
+def test_periodic_reminder_reads_only_user_rules_reminder(
+    monkeypatch, tmp_path
+) -> None:
     (tmp_path / "bootstrap").mkdir()
     (tmp_path / "bootstrap" / "reminder.json").write_text(
         '{"interval": 3, "reminder_files": [{"path": "USER_RULES.md", "section": "Reminder"}]}'
@@ -232,7 +255,10 @@ def test_periodic_reminder_reads_only_user_rules_reminder(monkeypatch, tmp_path)
     monkeypatch.setattr(app, "_wiki_path", lambda: tmp_path)
 
     text = app._read_periodic_reminder()
-    assert text == f"---\n`$ cat {tmp_path / 'USER_RULES.md'}`\n\n## Reminder\nROUTE\nPREVIEW"
+    assert (
+        text
+        == f"---\n`$ cat {tmp_path / 'USER_RULES.md'}`\n\n## Reminder\nROUTE\nPREVIEW"
+    )
     assert "FULL RULES" not in text
     assert "ERROR_CASE" not in text
 
@@ -256,7 +282,9 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
         result = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
         assert len(result.content) == 1
 
-    third_after_reset = asyncio.run(_call_periodic_reminder_middleware("wsl2_async", state))
+    third_after_reset = asyncio.run(
+        _call_periodic_reminder_middleware("wsl2_async", state)
+    )
     assert len(third_after_reset.content) == 2
 
 
@@ -283,14 +311,16 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
         gpt_dive.executions,
         "status",
         lambda execution_id: (
-            calls.append(("status", execution_id)) or {"execution_id": execution_id, "status": "running"}
+            calls.append(("status", execution_id))
+            or {"execution_id": execution_id, "status": "running"}
         ),
     )
     monkeypatch.setattr(
         gpt_dive.executions,
         "result",
         lambda execution_id: (
-            calls.append(("result", execution_id)) or {"execution_id": execution_id, "ready": True}
+            calls.append(("result", execution_id))
+            or {"execution_id": execution_id, "ready": True}
         ),
     )
     monkeypatch.setattr(
@@ -345,7 +375,9 @@ def test_wsl2_sync_permission_is_required_in_live_schema() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     schema = tools["wsl2_sync"].input_schema
     assert "permission" in schema["required"]
-    assert app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+    assert (
+        app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+    )
 
 
 def test_wsl2_async_permission_is_exposed_in_live_schema() -> None:
@@ -353,7 +385,9 @@ def test_wsl2_async_permission_is_exposed_in_live_schema() -> None:
     schema = tools["wsl2_async"].input_schema
     assert "permission" in schema["properties"]
     assert "permission" not in schema.get("required", [])
-    assert app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+    assert (
+        app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
+    )
     assert "execution_id" in schema["properties"]
     assert "job_id" not in schema["properties"]
 

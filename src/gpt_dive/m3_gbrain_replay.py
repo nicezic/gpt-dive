@@ -16,12 +16,23 @@ from .m3_evidence import invoke_m3_evidence
 from .runtime_env import build_runtime_path
 
 _PYDANTIC_SOURCES = {"pydantic-ai", "pydantic-ai-harness", "pydantic-ai-monty"}
-_CURRENT_QUERY_RE = re.compile(r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE)
+_CURRENT_QUERY_RE = re.compile(
+    r"\b(current|currently|latest|now|today)\b|현재|최신|지금|오늘", re.IGNORECASE
+)
 _EVIDENCE_LABEL_RE = re.compile(r"\[E[1-9][0-9]*\]")
 _DYNAMIC_VALIDATION_ERROR_PATTERNS = (
-    (re.compile(r"^(known|conflicts) item must cite an evidence label:.*$"), r"\1 item must cite an evidence label"),
-    (re.compile(r"^(known|conflicts) item cites unknown evidence label\(s\):.*$"), r"\1 item cites unknown evidence label(s)"),
-    (re.compile(r"^queries returned \d+ items, exceeding max_queries=\d+$"), "queries exceed max_queries"),
+    (
+        re.compile(r"^(known|conflicts) item must cite an evidence label:.*$"),
+        r"\1 item must cite an evidence label",
+    ),
+    (
+        re.compile(r"^(known|conflicts) item cites unknown evidence label\(s\):.*$"),
+        r"\1 item cites unknown evidence label(s)",
+    ),
+    (
+        re.compile(r"^queries returned \d+ items, exceeding max_queries=\d+$"),
+        "queries exceed max_queries",
+    ),
 )
 
 
@@ -78,19 +89,25 @@ def replay_question(row: dict[str, Any]) -> str:
     )
 
 
-def reject_post_capture_page_updates(row: dict[str, Any], chunks: list[dict[str, Any]]) -> None:
+def reject_post_capture_page_updates(
+    row: dict[str, Any], chunks: list[dict[str, Any]]
+) -> None:
     """Fail closed when a captured chunk's page was rewritten after query capture.
 
     GBrain upserts chunks by ``(page_id, chunk_index)`` and can update
     ``chunk_text`` in place, preserving the chunk id. An id-only replay would
     then silently read newer text than the model originally received.
     """
-    capture_time = datetime.fromisoformat(_validated_timestamp(row.get("created_at"), field="created_at"))
+    capture_time = datetime.fromisoformat(
+        _validated_timestamp(row.get("created_at"), field="created_at")
+    )
     changed_ids: list[int] = []
     for chunk in chunks:
         updated_raw = chunk.get("page_updated_at")
         if not isinstance(updated_raw, str) or not updated_raw.strip():
-            raise RuntimeError(f"captured GBrain chunk {chunk.get('id', '?')} has no page update watermark")
+            raise RuntimeError(
+                f"captured GBrain chunk {chunk.get('id', '?')} has no page update watermark"
+            )
         try:
             updated_at = datetime.fromisoformat(updated_raw.strip())
         except ValueError as exc:
@@ -98,7 +115,9 @@ def reject_post_capture_page_updates(row: dict[str, Any], chunks: list[dict[str,
                 f"captured GBrain chunk {chunk.get('id', '?')} has invalid page update watermark"
             ) from exc
         if updated_at.tzinfo is None:
-            raise RuntimeError(f"captured GBrain chunk {chunk.get('id', '?')} page update watermark has no timezone")
+            raise RuntimeError(
+                f"captured GBrain chunk {chunk.get('id', '?')} page update watermark has no timezone"
+            )
         if updated_at > capture_time:
             chunk_id = chunk.get("id")
             if isinstance(chunk_id, int):
@@ -120,17 +139,28 @@ def verify_captured_chunk_hashes(
         raise TypeError("captured chunk hash provenance is invalid")
     chunk_ids = row.get("retrieved_chunk_ids")
     if not isinstance(chunk_ids, list) or len(captured) != len(chunk_ids):
-        raise RuntimeError("captured chunk hash provenance is not aligned with retrieved_chunk_ids")
+        raise RuntimeError(
+            "captured chunk hash provenance is not aligned with retrieved_chunk_ids"
+        )
     expected = captured if chunk_limit is None else captured[:chunk_limit]
     if len(expected) != len(chunks):
-        raise RuntimeError("captured chunk hash provenance does not cover materialized chunks")
+        raise RuntimeError(
+            "captured chunk hash provenance does not cover materialized chunks"
+        )
     changed_ids: list[int] = []
     for expected_hash, chunk in zip(expected, chunks, strict=True):
-        if not isinstance(expected_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
-            raise RuntimeError("captured chunk hash provenance contains an invalid SHA-256 value")
+        if (
+            not isinstance(expected_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None
+        ):
+            raise RuntimeError(
+                "captured chunk hash provenance contains an invalid SHA-256 value"
+            )
         text = chunk.get("chunk_text")
         if not isinstance(text, str):
-            raise TypeError(f"captured GBrain chunk {chunk.get('id', '?')} has no text for hash verification")
+            raise TypeError(
+                f"captured GBrain chunk {chunk.get('id', '?')} has no text for hash verification"
+            )
         current_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if current_hash != expected_hash:
             chunk_id = chunk.get("id")
@@ -163,7 +193,9 @@ def filter_future_temporal_evidence(
                 continue
         kept.append(chunk)
     if not kept:
-        raise RuntimeError("all captured evidence is dated after the historical replay boundary")
+        raise RuntimeError(
+            "all captured evidence is dated after the historical replay boundary"
+        )
     return kept, excluded
 
 
@@ -184,13 +216,21 @@ def load_capture_rows(path: Path) -> list[dict[str, Any]]:
         chunk_ids = value.get("retrieved_chunk_ids")
         if not isinstance(query, str) or not query.strip():
             raise ValueError(f"line {line_number} has no query text")
-        if not isinstance(source_ids, list) or not all(isinstance(item, str) for item in source_ids):
+        if not isinstance(source_ids, list) or not all(
+            isinstance(item, str) for item in source_ids
+        ):
             raise ValueError(f"line {line_number} has invalid source_ids")
         if not source_ids or not set(source_ids) <= _PYDANTIC_SOURCES:
-            raise ValueError(f"line {line_number} is outside the supported Pydantic sources")
-        if not isinstance(slugs, list) or not all(isinstance(item, str) for item in slugs):
+            raise ValueError(
+                f"line {line_number} is outside the supported Pydantic sources"
+            )
+        if not isinstance(slugs, list) or not all(
+            isinstance(item, str) for item in slugs
+        ):
             raise ValueError(f"line {line_number} has invalid retrieved_slugs")
-        if not isinstance(chunk_ids, list) or not all(isinstance(item, int) and item > 0 for item in chunk_ids):
+        if not isinstance(chunk_ids, list) or not all(
+            isinstance(item, int) and item > 0 for item in chunk_ids
+        ):
             raise ValueError(
                 f"line {line_number} has no valid retrieved_chunk_ids; "
                 "re-export a current GBrain capture for exact evidence replay"
@@ -199,7 +239,10 @@ def load_capture_rows(path: Path) -> list[dict[str, Any]]:
         if chunk_hashes not in (None, []) and (
             not isinstance(chunk_hashes, list)
             or len(chunk_hashes) != len(chunk_ids)
-            or not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item) for item in chunk_hashes)
+            or not all(
+                isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item)
+                for item in chunk_hashes
+            )
         ):
             raise ValueError(f"line {line_number} has invalid retrieved_chunk_hashes")
         try:
@@ -231,7 +274,9 @@ def build_evidence_packet(chunks: list[dict[str, Any]]) -> str:
         ]
         title = chunk.get("title")
         if isinstance(title, str) and title.strip():
-            header_parts.append(f"title={json.dumps(title.strip(), ensure_ascii=False)}")
+            header_parts.append(
+                f"title={json.dumps(title.strip(), ensure_ascii=False)}"
+            )
         effective_date = chunk.get("effective_date")
         effective_date_source = chunk.get("effective_date_source")
         if (
@@ -295,8 +340,14 @@ try {
 async def read_current_schema_pack_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     """Resolve the current per-source schema-pack snapshot using GBrain's canonical resolver."""
     source_ids = row.get("source_ids")
-    if not isinstance(source_ids, list) or not source_ids or not all(isinstance(item, str) for item in source_ids):
-        raise RuntimeError("capture has invalid source_ids for schema-pack verification")
+    if (
+        not isinstance(source_ids, list)
+        or not source_ids
+        or not all(isinstance(item, str) for item in source_ids)
+    ):
+        raise RuntimeError(
+            "capture has invalid source_ids for schema-pack verification"
+        )
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
     env["GPT_DIVE_GBRAIN_SOURCE_IDS"] = json.dumps(source_ids)
@@ -327,7 +378,9 @@ def _schema_pack_semantics(snapshot: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     for source_id, value in snapshot.items():
         if isinstance(value, dict):
-            normalized[source_id] = {key: item for key, item in value.items() if key != "source_commit"}
+            normalized[source_id] = {
+                key: item for key, item in value.items() if key != "source_commit"
+            }
         else:
             normalized[source_id] = value
     return normalized
@@ -340,7 +393,11 @@ def captured_source_commits(row: dict[str, Any]) -> dict[str, str | None]:
         return {}
     commits: dict[str, str | None] = {}
     for source_id, value in captured.items():
-        if not isinstance(source_id, str) or not isinstance(value, dict) or "source_commit" not in value:
+        if (
+            not isinstance(source_id, str)
+            or not isinstance(value, dict)
+            or "source_commit" not in value
+        ):
             continue
         commit = value.get("source_commit")
         if commit is not None and not isinstance(commit, str):
@@ -358,11 +415,15 @@ async def verify_schema_pack_provenance(row: dict[str, Any]) -> bool:
         raise TypeError("captured schema-pack provenance is invalid")
     current = await read_current_schema_pack_snapshot(row)
     if _schema_pack_semantics(current) != _schema_pack_semantics(captured):
-        raise RuntimeError("schema-pack provenance drift: current active pack differs from the captured replay snapshot")
+        raise RuntimeError(
+            "schema-pack provenance drift: current active pack differs from the captured replay snapshot"
+        )
     return True
 
 
-async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) -> list[dict[str, Any]]:
+async def read_captured_chunks(
+    row: dict[str, Any], *, chunk_limit: int | None
+) -> list[dict[str, Any]]:
     """Materialize captured chunk IDs exactly, without issuing a new retrieval query."""
     if chunk_limit is not None and chunk_limit <= 0:
         raise ValueError("chunk_limit must be greater than 0")
@@ -385,7 +446,9 @@ async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) 
     )
     stdout, stderr = await proc.communicate(_CHUNK_READER.encode())
     if proc.returncode != 0:
-        raise RuntimeError(f"failed to materialize captured GBrain chunks: {stderr.decode(errors='replace').strip()}")
+        raise RuntimeError(
+            f"failed to materialize captured GBrain chunks: {stderr.decode(errors='replace').strip()}"
+        )
     value = json.loads(stdout)
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise RuntimeError("GBrain chunk reader returned invalid JSON")
@@ -396,15 +459,23 @@ async def read_captured_chunks(row: dict[str, Any], *, chunk_limit: int | None) 
     chunks = [by_id[chunk_id] for chunk_id in chunk_ids]
     wrong_sources = [item for item in chunks if item.get("source_id") not in source_ids]
     if wrong_sources:
-        raise RuntimeError("captured GBrain chunk resolved outside the captured source scope")
+        raise RuntimeError(
+            "captured GBrain chunk resolved outside the captured source scope"
+        )
     return chunks
 
 
 def load_critical_evidence_qrels(path: Path) -> dict[int, frozenset[str]]:
     """Load human-reviewed per-capture evidence labels used only for replay scoring."""
     value = json.loads(path.read_text())
-    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("captures"), list):
-        raise ValueError("critical evidence qrels must be a schema_version=1 object with captures[]")
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != 1
+        or not isinstance(value.get("captures"), list)
+    ):
+        raise ValueError(
+            "critical evidence qrels must be a schema_version=1 object with captures[]"
+        )
     qrels: dict[int, frozenset[str]] = {}
     for item in value["captures"]:
         if not isinstance(item, dict):
@@ -412,11 +483,21 @@ def load_critical_evidence_qrels(path: Path) -> dict[int, frozenset[str]]:
         capture_id = item.get("capture_id")
         labels = item.get("critical_labels")
         if not isinstance(capture_id, int) or capture_id in qrels:
-            raise ValueError("critical evidence qrels capture_id must be a unique integer")
-        if not isinstance(labels, list) or not labels or any(
-            not isinstance(label, str) or _EVIDENCE_LABEL_RE.fullmatch(label) is None for label in labels
+            raise ValueError(
+                "critical evidence qrels capture_id must be a unique integer"
+            )
+        if (
+            not isinstance(labels, list)
+            or not labels
+            or any(
+                not isinstance(label, str)
+                or _EVIDENCE_LABEL_RE.fullmatch(label) is None
+                for label in labels
+            )
         ):
-            raise ValueError("critical evidence qrels critical_labels must be non-empty [E#] labels")
+            raise ValueError(
+                "critical evidence qrels critical_labels must be non-empty [E#] labels"
+            )
         qrels[capture_id] = frozenset(labels)
     return qrels
 
@@ -448,10 +529,14 @@ async def run_replay(
         for row in rows:
             schema_pack_checked = await verify_schema_pack_provenance(row)
             captured_chunks = await read_captured_chunks(row, chunk_limit=chunk_limit)
-            chunk_hashes_checked = verify_captured_chunk_hashes(row, captured_chunks, chunk_limit=chunk_limit)
+            chunk_hashes_checked = verify_captured_chunk_hashes(
+                row, captured_chunks, chunk_limit=chunk_limit
+            )
             if not chunk_hashes_checked:
                 reject_post_capture_page_updates(row, captured_chunks)
-            chunks, excluded_future_chunks = filter_future_temporal_evidence(row, captured_chunks)
+            chunks, excluded_future_chunks = filter_future_temporal_evidence(
+                row, captured_chunks
+            )
             controller = await invoke_m3_evidence(
                 question=replay_question(row),
                 evidence=build_evidence_packet(chunks),
@@ -484,10 +569,18 @@ async def run_replay(
                         invariant = validation_error_invariant(error)
                         error_counts[invariant] = error_counts.get(invariant, 0) + 1
         return {
-            "done_rows": sum(1 for item in ok_items if item["controller"].get("done") is True),
-            "unresolved_rows": sum(1 for item in ok_items if item["controller"].get("done") is False),
-            "retry_rows": sum(1 for item in ok_items if item["controller"].get("attempts", 1) > 1),
-            "proposed_queries": sum(len(item["controller"].get("queries", [])) for item in ok_items),
+            "done_rows": sum(
+                1 for item in ok_items if item["controller"].get("done") is True
+            ),
+            "unresolved_rows": sum(
+                1 for item in ok_items if item["controller"].get("done") is False
+            ),
+            "retry_rows": sum(
+                1 for item in ok_items if item["controller"].get("attempts", 1) > 1
+            ),
+            "proposed_queries": sum(
+                len(item["controller"].get("queries", [])) for item in ok_items
+            ),
             "controller_failures": len(items) - len(ok_items),
             "validation_error_counts": dict(sorted(error_counts.items())),
         }
@@ -504,24 +597,42 @@ async def run_replay(
         ok_samples = [item for item in samples if item["controller"].get("ok")]
         done_values = [item["controller"].get("done") for item in ok_samples]
         known_counts = [len(item["controller"].get("known", [])) for item in ok_samples]
-        missing_counts = [len(item["controller"].get("missing", [])) for item in ok_samples]
-        query_counts = [len(item["controller"].get("queries", [])) for item in ok_samples]
+        missing_counts = [
+            len(item["controller"].get("missing", [])) for item in ok_samples
+        ]
+        query_counts = [
+            len(item["controller"].get("queries", [])) for item in ok_samples
+        ]
         known_evidence_label_sets = sorted(
-            {tuple(sorted(_known_evidence_labels(item["controller"]))) for item in ok_samples}
+            {
+                tuple(sorted(_known_evidence_labels(item["controller"])))
+                for item in ok_samples
+            }
         )
         critical_labels = (
             sorted((critical_evidence_qrels or {}).get(capture_id, frozenset()))
             if isinstance(capture_id, int)
             else []
         )
-        critical_recalls = [
-            len(set(critical_labels) & _known_evidence_labels(item["controller"])) / len(critical_labels)
-            for item in ok_samples
-        ] if critical_labels else []
+        critical_recalls = (
+            [
+                len(set(critical_labels) & _known_evidence_labels(item["controller"]))
+                / len(critical_labels)
+                for item in ok_samples
+            ]
+            if critical_labels
+            else []
+        )
         count_ranges = {
-            "known_count_range": [min(known_counts), max(known_counts)] if known_counts else [0, 0],
-            "missing_count_range": [min(missing_counts), max(missing_counts)] if missing_counts else [0, 0],
-            "query_count_range": [min(query_counts), max(query_counts)] if query_counts else [0, 0],
+            "known_count_range": [min(known_counts), max(known_counts)]
+            if known_counts
+            else [0, 0],
+            "missing_count_range": [min(missing_counts), max(missing_counts)]
+            if missing_counts
+            else [0, 0],
+            "query_count_range": [min(query_counts), max(query_counts)]
+            if query_counts
+            else [0, 0],
         }
         capture_stability.append(
             {
@@ -530,17 +641,25 @@ async def run_replay(
                 "successful_samples": len(ok_samples),
                 "done_true": sum(value is True for value in done_values),
                 "done_false": sum(value is False for value in done_values),
-                "completion_stable": len(set(done_values)) <= 1 and len(ok_samples) == len(samples),
-                "known_evidence_label_sets": [list(labels) for labels in known_evidence_label_sets],
+                "completion_stable": len(set(done_values)) <= 1
+                and len(ok_samples) == len(samples),
+                "known_evidence_label_sets": [
+                    list(labels) for labels in known_evidence_label_sets
+                ],
                 "known_evidence_coverage_stable": (
-                    len(known_evidence_label_sets) <= 1 and len(ok_samples) == len(samples)
+                    len(known_evidence_label_sets) <= 1
+                    and len(ok_samples) == len(samples)
                 ),
                 "critical_evidence_labels": critical_labels,
                 "critical_evidence_scored_runs": len(critical_recalls),
                 "critical_evidence_recall_range": (
-                    [min(critical_recalls), max(critical_recalls)] if critical_recalls else None
+                    [min(critical_recalls), max(critical_recalls)]
+                    if critical_recalls
+                    else None
                 ),
-                "critical_evidence_omission_runs": sum(value < 1.0 for value in critical_recalls),
+                "critical_evidence_omission_runs": sum(
+                    value < 1.0 for value in critical_recalls
+                ),
                 **count_ranges,
                 "decision_shape_stable": (
                     len(ok_samples) == len(samples)
@@ -550,20 +669,33 @@ async def run_replay(
         )
     stability_drift_counts = {
         "completion": sum(
-            item["done_true"] > 0 and item["done_false"] > 0 for item in capture_stability
+            item["done_true"] > 0 and item["done_false"] > 0
+            for item in capture_stability
         ),
-        "known_count": sum(item["known_count_range"][0] != item["known_count_range"][1] for item in capture_stability),
+        "known_count": sum(
+            item["known_count_range"][0] != item["known_count_range"][1]
+            for item in capture_stability
+        ),
         "known_evidence_coverage": sum(
             len(item["known_evidence_label_sets"]) > 1 for item in capture_stability
         ),
-        "missing_count": sum(item["missing_count_range"][0] != item["missing_count_range"][1] for item in capture_stability),
-        "query_count": sum(item["query_count_range"][0] != item["query_count_range"][1] for item in capture_stability),
-        "decision_shape": sum(not item["decision_shape_stable"] for item in capture_stability),
+        "missing_count": sum(
+            item["missing_count_range"][0] != item["missing_count_range"][1]
+            for item in capture_stability
+        ),
+        "query_count": sum(
+            item["query_count_range"][0] != item["query_count_range"][1]
+            for item in capture_stability
+        ),
+        "decision_shape": sum(
+            not item["decision_shape_stable"] for item in capture_stability
+        ),
         "controller_failure": sum(
             item["successful_samples"] != item["samples"] for item in capture_stability
         ),
         "critical_evidence_omission": sum(
-            bool(item["critical_evidence_labels"]) and item["critical_evidence_omission_runs"] > 0
+            bool(item["critical_evidence_labels"])
+            and item["critical_evidence_omission_runs"] > 0
             for item in capture_stability
         ),
     }
@@ -583,17 +715,36 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Replay exported real GBrain Pydantic queries through their exact captured chunks and MiniMax-M3."
     )
-    parser.add_argument("--against", type=Path, required=True, help="NDJSON from `gbrain eval export`.")
-    parser.add_argument("--limit", type=int, default=10, help="Maximum captured query rows to replay.")
+    parser.add_argument(
+        "--against", type=Path, required=True, help="NDJSON from `gbrain eval export`."
+    )
+    parser.add_argument(
+        "--limit", type=int, default=10, help="Maximum captured query rows to replay."
+    )
     parser.add_argument(
         "--chunk-limit",
         type=int,
         default=None,
         help="Optional maximum captured chunks supplied to M3 per query; default preserves all captured chunks.",
     )
-    parser.add_argument("--max-queries", type=int, default=3, help="Maximum M3 follow-up queries per row.")
-    parser.add_argument("--timeout", type=float, required=True, help="Per M3 evidence call timeout in seconds.")
-    parser.add_argument("--repeat", type=int, default=1, help="Replay the same capture set N times sequentially.")
+    parser.add_argument(
+        "--max-queries",
+        type=int,
+        default=3,
+        help="Maximum M3 follow-up queries per row.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        required=True,
+        help="Per M3 evidence call timeout in seconds.",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Replay the same capture set N times sequentially.",
+    )
     parser.add_argument(
         "--critical-qrels",
         type=Path,
@@ -604,7 +755,11 @@ def main() -> None:
     if args.limit <= 0:
         raise ValueError("limit must be greater than 0")
     rows = load_capture_rows(args.against)[: args.limit]
-    critical_evidence_qrels = load_critical_evidence_qrels(args.critical_qrels) if args.critical_qrels else None
+    critical_evidence_qrels = (
+        load_critical_evidence_qrels(args.critical_qrels)
+        if args.critical_qrels
+        else None
+    )
     report = asyncio.run(
         run_replay(
             rows,

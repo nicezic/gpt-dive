@@ -41,4 +41,6 @@ def append_event_ndjson(path: Path, redis_id: str, event_json: str) -> None:
     record = {"redis_id": redis_id, **event}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        handle.write(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        )

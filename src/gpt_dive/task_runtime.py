@@ -73,12 +73,15 @@ def _is_code_mode_execution(
     execution_id: str,
     envelope: dict[str, Any] | None,
 ) -> bool:
-    if code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
+    if (
+        code_mode_request_ref(executions, execution_id).is_file()
+        or envelope is not None
+    ):
         return True
     meta_path = executions.root / execution_id / "meta.json"
     try:
         meta = json.loads(meta_path.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except OSError, ValueError, json.JSONDecodeError:
         return False
     command = str(meta.get("command") or "") if isinstance(meta, dict) else ""
     try:
@@ -101,7 +104,9 @@ def _parse_code_mode_envelope(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not isinstance(envelope, dict):
         return None
-    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(envelope.get("ok"), bool):
+    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(
+        envelope.get("ok"), bool
+    ):
         return None
     return envelope
 
@@ -135,14 +140,18 @@ def _normalize_code_mode_result(
         )
     else:
         error_code = "worker_protocol_error"
-        error_message = "Background Code Mode worker exited without a valid error envelope."
+        error_message = (
+            "Background Code Mode worker exited without a valid error envelope."
+        )
     if envelope.get("ok") is True and exit_code != 0:
         error_code = "worker_protocol_error"
         error_message = "Worker reported success but exited with a non-zero status."
     return _background_error(raw, code=error_code, message=error_message)
 
 
-def read_execution_result(executions: ExecutionManager, execution_id: str) -> dict[str, Any]:
+def read_execution_result(
+    executions: ExecutionManager, execution_id: str
+) -> dict[str, Any]:
     raw = executions.result(execution_id)
     if not raw.get("ready"):
         return raw
@@ -336,7 +345,7 @@ def refresh_task(rt: TaskRuntime, task: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = read_execution_result(rt.executions, execution_id)
-    except (ExecutionNotFoundError, FileNotFoundError):
+    except ExecutionNotFoundError, FileNotFoundError:
         return rt.task_store.update_state(task_id, "lost")
     if not result.get("ready", True):
         return task
@@ -353,7 +362,7 @@ def collect_task(rt: TaskRuntime, task_id: str) -> dict[str, Any]:
     execution_id = str(task["execution_id"])
     try:
         result = read_execution_result(rt.executions, execution_id)
-    except (ExecutionNotFoundError, FileNotFoundError):
+    except ExecutionNotFoundError, FileNotFoundError:
         task = rt.task_store.update_state(str(task["task_id"]), "lost")
         return {"task": task, "ready": False, "unavailable": True}
     return {"task": task, "ready": True, "result": result}

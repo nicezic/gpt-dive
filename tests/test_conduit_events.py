@@ -24,7 +24,10 @@ def test_redis_publisher_uses_one_json_event_field() -> None:
 
     assert event_id == "123-0"
     assert redis.calls == [
-        ("conduit:test", {"event": json.dumps(event, ensure_ascii=False, separators=(",", ":"))})
+        (
+            "conduit:test",
+            {"event": json.dumps(event, ensure_ascii=False, separators=(",", ":"))},
+        )
     ]
 
 

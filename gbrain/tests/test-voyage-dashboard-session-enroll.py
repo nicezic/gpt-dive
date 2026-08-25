@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "voyage-dashboard-session-enroll"
+SCRIPT = (
+    Path(__file__).resolve().parents[1] / "scripts" / "voyage-dashboard-session-enroll"
+)
 mod = importlib.machinery.SourceFileLoader("voyage_enroll", str(SCRIPT)).load_module()
 
 
@@ -68,7 +70,9 @@ class VoyageDashboardSessionEnrollTests(unittest.TestCase):
             stderr="",
         )
         with (
-            patch.object(mod, "resolve_playwright_cli", return_value="/abs/playwright-cli"),
+            patch.object(
+                mod, "resolve_playwright_cli", return_value="/abs/playwright-cli"
+            ),
             patch.object(mod, "run", return_value=cp),
         ):
             self.assertTrue(mod.session_is_open("msedge"))
@@ -77,7 +81,9 @@ class VoyageDashboardSessionEnrollTests(unittest.TestCase):
     def test_attach_extension_uses_creds_and_edge_executable_env(self):
         cp = subprocess.CompletedProcess(["creds"], 0, stdout="", stderr="")
         with (
-            patch.object(mod, "resolve_playwright_cli", return_value="/abs/playwright-cli"),
+            patch.object(
+                mod, "resolve_playwright_cli", return_value="/abs/playwright-cli"
+            ),
             patch.object(mod, "run", return_value=cp) as run_mock,
         ):
             mod.attach_extension("msedge")
@@ -95,20 +101,36 @@ class VoyageDashboardSessionEnrollTests(unittest.TestCase):
                 "--session=msedge",
             ],
         )
-        self.assertEqual(kwargs["env"]["PLAYWRIGHT_MCP_EXECUTABLE_PATH"], mod.EDGE_EXECUTABLE)
+        self.assertEqual(
+            kwargs["env"]["PLAYWRIGHT_MCP_EXECUTABLE_PATH"], mod.EDGE_EXECUTABLE
+        )
 
     def test_refresh_usage_snapshot_runs_guard_through_creds(self):
         payload = {"source": "dashboard", "guard": "PASS", "usedPercent": 12.3}
-        cp = subprocess.CompletedProcess(["creds"], 0, stdout=json.dumps(payload) + "\n", stderr="")
+        cp = subprocess.CompletedProcess(
+            ["creds"], 0, stdout=json.dumps(payload) + "\n", stderr=""
+        )
         with (
-            patch.dict(mod.os.environ, {"VOYAGE_GUARD_BIN": "/tmp/voyage-free-guard"}, clear=False),
+            patch.dict(
+                mod.os.environ,
+                {"VOYAGE_GUARD_BIN": "/tmp/voyage-free-guard"},
+                clear=False,
+            ),
             patch.object(mod, "run", return_value=cp) as run_mock,
         ):
             result = mod.refresh_usage_snapshot()
         self.assertEqual(result, payload)
         self.assertEqual(
             run_mock.call_args.args[0],
-            ["creds", "run", "ai", "--", "/tmp/voyage-free-guard", "--refresh", "--json"],
+            [
+                "creds",
+                "run",
+                "ai",
+                "--",
+                "/tmp/voyage-free-guard",
+                "--refresh",
+                "--json",
+            ],
         )
 
     def test_main_attaches_and_detaches_when_session_absent(self):
@@ -116,9 +138,15 @@ class VoyageDashboardSessionEnrollTests(unittest.TestCase):
             patch.object(sys, "argv", [str(SCRIPT)]),
             patch.object(mod, "session_is_open", return_value=False),
             patch.object(mod, "attach_extension") as attach,
-            patch.object(mod, "read_dashboard_session", return_value="session-secret") as read,
+            patch.object(
+                mod, "read_dashboard_session", return_value="session-secret"
+            ) as read,
             patch.object(mod, "store_session") as store,
-            patch.object(mod, "refresh_usage_snapshot", return_value={"source": "dashboard", "guard": "PASS"}) as refresh,
+            patch.object(
+                mod,
+                "refresh_usage_snapshot",
+                return_value={"source": "dashboard", "guard": "PASS"},
+            ) as refresh,
             patch.object(mod, "detach_session") as detach,
         ):
             mod.main()
@@ -135,7 +163,11 @@ class VoyageDashboardSessionEnrollTests(unittest.TestCase):
             patch.object(mod, "attach_extension") as attach,
             patch.object(mod, "read_dashboard_session", return_value="session-secret"),
             patch.object(mod, "store_session"),
-            patch.object(mod, "refresh_usage_snapshot", return_value={"source": "dashboard", "guard": "PASS"}) as refresh,
+            patch.object(
+                mod,
+                "refresh_usage_snapshot",
+                return_value={"source": "dashboard", "guard": "PASS"},
+            ) as refresh,
             patch.object(mod, "detach_session") as detach,
         ):
             mod.main()

@@ -55,7 +55,10 @@ def test_tasks_intercepts_only_wsl2_async_start(tmp_path):
         name="wsl2_async",
         arguments={"action": "start", "command": "printf TASK_OK", "timeout": 3},
     )
-    task = cast(dict[str, Any], asyncio.run(extension.intercept_tool_call(start, ctx, call_next)))
+    task = cast(
+        dict[str, Any],
+        asyncio.run(extension.intercept_tool_call(start, ctx, call_next)),
+    )
     assert task["resultType"] == "task"
     extension.executions.cancel(task["taskId"])
 

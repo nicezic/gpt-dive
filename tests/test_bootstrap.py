@@ -31,9 +31,7 @@ def _write_test_wiki(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "interval": 3,
-                "reminder_files": [
-                    {"path": "USER_RULES.md"}
-                ],
+                "reminder_files": [{"path": "USER_RULES.md"}],
             }
         )
     )
@@ -62,7 +60,7 @@ def test_parse_preload_files_validation_errors() -> None:
         app_module._parse_preload_files('["a.md"]')
 
     with pytest.raises(ValueError, match="missing 'preload_files' field"):
-        app_module._parse_preload_files('{}')
+        app_module._parse_preload_files("{}")
 
     with pytest.raises(TypeError, match="must be a list"):
         app_module._parse_preload_files('{"preload_files": "a.md"}')
@@ -125,7 +123,9 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert "# BOOTSTRAP PACKET" not in result["stdout"]
     assert "Preload loaded:" not in result["stdout"]
     assert "Bootstrap reminder added:" not in result["stdout"]
-    assert result["stdout"].startswith(f"$HOME = {Path.home()}\n\n---\n`$ cat {wiki / 'bootstrap/intro.md'}`\n\n")
+    assert result["stdout"].startswith(
+        f"$HOME = {Path.home()}\n\n---\n`$ cat {wiki / 'bootstrap/intro.md'}`\n\n"
+    )
     assert f"`$ cat {wiki / 'USER_RULES.md'}`" in result["stdout"]
     assert "INTRO" in result["stdout"]
     assert "FULL RULES" in result["stdout"]
@@ -147,6 +147,7 @@ def test_read_bootstrap_packet_exposes_nonempty_warnings(
     result = app_module._read_bootstrap_packet()
 
     assert result["warnings"] == ["missing preload document: skills/INDEX.md"]
+
 
 def test_bootstrap_appends_only_nonpreloaded_reminders_in_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
