@@ -57,14 +57,21 @@ async def test_provider_scopes_auth_and_replays_one_401() -> None:
                 "originator": request.headers.get("originator"),
             }
         )
-        if request.url.host == "chatgpt.com" and len([item for item in seen if item["host"] == "chatgpt.com"]) == 1:
+        if (
+            request.url.host == "chatgpt.com"
+            and len([item for item in seen if item["host"] == "chatgpt.com"]) == 1
+        ):
             return httpx.Response(401, request=request)
         return httpx.Response(200, request=request, json={"ok": True})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=False
+    )
     OpenAICodexProvider(credential_source=source, http_client=client)
 
-    response = await client.post("https://chatgpt.com/backend-api/codex/responses", content=b"{}")
+    response = await client.post(
+        "https://chatgpt.com/backend-api/codex/responses", content=b"{}"
+    )
     assert response.status_code == 200
     assert seen[0]["authorization"] == "Bearer token-1"
     assert seen[1]["authorization"] == "Bearer token-2"
@@ -81,7 +88,11 @@ async def test_provider_scopes_auth_and_replays_one_401() -> None:
 
 class _FakeStreamedResponse:
     def __init__(self) -> None:
-        self._response = ModelResponse(parts=[TextPart("ok")], model_name="gpt-5.6-sol", provider_name="openai-codex")
+        self._response = ModelResponse(
+            parts=[TextPart("ok")],
+            model_name="gpt-5.6-sol",
+            provider_name="openai-codex",
+        )
 
     def __aiter__(self):
         async def iterator():
@@ -94,17 +105,25 @@ class _FakeStreamedResponse:
         return self._response
 
 
-async def test_model_request_aggregates_stream_and_forces_store_false(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_model_request_aggregates_stream_and_forces_store_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     @asynccontextmanager
-    async def fake_request_stream(self, messages, model_settings, model_request_parameters, run_context=None):
+    async def fake_request_stream(
+        self, messages, model_settings, model_request_parameters, run_context=None
+    ):
         captured["settings"] = model_settings
         yield _FakeStreamedResponse()
 
     monkeypatch.setattr(OpenAIResponsesModel, "request_stream", fake_request_stream)
     source = _CredentialSource()
-    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request)))
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, request=request)
+        )
+    )
     model = OpenAICodexResponsesModel(
         "gpt-5.6-sol",
         provider=OpenAICodexProvider(credential_source=source, http_client=client),

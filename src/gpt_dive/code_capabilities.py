@@ -141,7 +141,9 @@ def build_code_registry(
     shell_env = {
         name: value
         for name, value in os.environ.items()
-        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in shell_denied_env_patterns)
+        if not any(
+            fnmatch.fnmatchcase(name, pattern) for pattern in shell_denied_env_patterns
+        )
     }
     shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
     shell_max_output_chars = 50_000

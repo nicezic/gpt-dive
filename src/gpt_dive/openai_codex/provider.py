@@ -22,7 +22,9 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
     def __init__(self, credential_source: OpenAICodexCredentialSource) -> None:
         self._credential_source = credential_source
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if not self._is_trusted_openai_codex_url(request.url):
             yield request
             return
@@ -48,8 +50,12 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
 
     @staticmethod
     def _apply(request: httpx.Request, credentials: OpenAICodexCredentials) -> None:
-        request.headers["Authorization"] = f"Bearer {credentials.access_token.get_secret_value()}"
-        request.headers["ChatGPT-Account-ID"] = credentials.account_id.get_secret_value()
+        request.headers["Authorization"] = (
+            f"Bearer {credentials.access_token.get_secret_value()}"
+        )
+        request.headers["ChatGPT-Account-ID"] = (
+            credentials.account_id.get_secret_value()
+        )
         request.headers["originator"] = "gpt-dive"
         if credentials.account_is_fedramp:
             request.headers["X-OpenAI-Fedramp"] = "true"
@@ -99,7 +105,11 @@ class OpenAICodexProvider(Provider[AsyncOpenAI]):
         return merge_profile(
             openai_model_profile(model_name),
             OpenAIModelProfile(
-                openai_unsupported_model_settings=("max_tokens", "temperature", "top_p"),
+                openai_unsupported_model_settings=(
+                    "max_tokens",
+                    "temperature",
+                    "top_p",
+                ),
             ),
         )
 
@@ -119,7 +129,9 @@ class OpenAICodexProvider(Provider[AsyncOpenAI]):
             self._http_client_factory = create_async_http_client
         else:
             if http_client.auth is not None:
-                raise UserError("`http_client` must not already have authentication configured.")
+                raise UserError(
+                    "`http_client` must not already have authentication configured."
+                )
             if http_client.follow_redirects:
                 raise UserError("`http_client` must have `follow_redirects=False`.")
 

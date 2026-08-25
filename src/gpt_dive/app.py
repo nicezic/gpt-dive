@@ -171,10 +171,7 @@ def _read_bootstrap_packet() -> dict[str, Any]:
     chunks: list[str] = [f"$HOME = {Path.home()}"]
     for doc in documents:
         source = _display_source_path(wiki / doc["path"])
-        chunks.append(
-            f"---\n`$ cat {source}`\n\n"
-            f"{doc['content'].rstrip()}"
-        )
+        chunks.append(f"---\n`$ cat {source}`\n\n{doc['content'].rstrip()}")
     if bootstrap_reminders:
         chunks.append(_format_reminder_sections(bootstrap_reminders))
 
@@ -197,7 +194,9 @@ _PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
 _PERIODIC_REMINDER_CONFIG = "bootstrap/reminder.json"
 
 
-def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str | None]]]:
+def _parse_reminder_config(
+    reminder_text: str,
+) -> tuple[int, list[tuple[str, str | None]]]:
     """Parse reminder cadence plus ordered whole-file or Markdown section sources."""
     try:
         data = json.loads(reminder_text)
@@ -222,8 +221,12 @@ def _parse_reminder_config(reminder_text: str) -> tuple[int, list[tuple[str, str
         section = item.get("section")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("reminder file path must be a non-empty string")
-        if section is not None and (not isinstance(section, str) or not section.strip()):
-            raise ValueError("reminder section must be a non-empty string when provided")
+        if section is not None and (
+            not isinstance(section, str) or not section.strip()
+        ):
+            raise ValueError(
+                "reminder section must be a non-empty string when provided"
+            )
         files.append((path, section))
     return interval, files
 
@@ -338,7 +341,11 @@ async def _tracked_tasks_middleware(
 
     tool_name = _tool_name_from_request(ctx.params)
     result = await call_next(ctx)
-    if tool_name == "bootstrap" or not isinstance(result, CallToolResult) or result.is_error:
+    if (
+        tool_name == "bootstrap"
+        or not isinstance(result, CallToolResult)
+        or result.is_error
+    ):
         return result
 
     try:
@@ -404,9 +411,7 @@ _DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance;
 def wsl2_sync(
     command: Annotated[
         str,
-        Field(
-            description="Shell command to run via /bin/bash -lc."
-        ),
+        Field(description="Shell command to run via /bin/bash -lc."),
     ],
     permission: Annotated[
         str,
@@ -419,9 +424,7 @@ def wsl2_sync(
     ],
     cwd: Annotated[
         str | None,
-        Field(
-            description="Optional WSL2 working directory."
-        ),
+        Field(description="Optional WSL2 working directory."),
     ] = None,
     timeout: Annotated[
         float,
@@ -437,8 +440,6 @@ def wsl2_sync(
             "wsl2_sync permission mismatch; use the exact harness declaration from the live schema"
         )
     return _run_command(command, cwd, timeout)
-
-
 
 
 def _code_mode_request_dir() -> Path:
@@ -548,7 +549,9 @@ def _start_background_code_mode(
 def _background_code_mode_result(execution_id: str) -> dict[str, Any]:
     result = _runtime_read_execution_result(executions, execution_id)
     if result.get("ready") is False:
-        raise RuntimeError(f"code_mode background execution {execution_id!r} is still running")
+        raise RuntimeError(
+            f"code_mode background execution {execution_id!r} is still running"
+        )
     return result
 
 
@@ -564,7 +567,6 @@ async def code_mode(
                 "Code Mode and make the final expression compact. CWD is a path string, not process chdir. "
                 "BACKGROUND is runtime-injected from the actual outer execution mode. Never guess capability "
                 "contracts; inspect CAPABILITIES when uncertain."
-
             )
         ),
     ] = None,
@@ -591,19 +593,28 @@ async def code_mode(
     ] = None,
     background: Annotated[
         bool,
-        Field(description="Detach this Code Mode program as a durable background execution."),
+        Field(
+            description="Detach this Code Mode program as a durable background execution."
+        ),
     ] = False,
     label: Annotated[
         str | None,
-        Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
+        Field(
+            description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).",
+            max_length=80,
+        ),
     ] = None,
     status_cmd: Annotated[
         str | None,
-        Field(description="Optional bounded local command whose stdout decorates a working Task."),
+        Field(
+            description="Optional bounded local command whose stdout decorates a working Task."
+        ),
     ] = None,
     status: Annotated[
         str | None,
-        Field(description="Optional static Task display status used when status_cmd has no usable output."),
+        Field(
+            description="Optional static Task display status used when status_cmd has no usable output."
+        ),
     ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
@@ -620,13 +631,17 @@ async def code_mode(
     normalized_action = action.strip().lower() if action is not None else None
     has_code = code is not None and bool(code.strip())
     clean_label = label.strip() if label is not None else None
-    clean_status_cmd = status_cmd.strip() if status_cmd is not None and status_cmd.strip() else None
+    clean_status_cmd = (
+        status_cmd.strip() if status_cmd is not None and status_cmd.strip() else None
+    )
     clean_status = status.strip() if status is not None and status.strip() else None
     if label is not None and not clean_label:
         raise ValueError("label must not be empty")
     if clean_label is not None and len(clean_label) > 80:
         raise ValueError("label must be 80 characters or fewer")
-    if (clean_status_cmd is not None or clean_status is not None) and clean_label is None:
+    if (
+        clean_status_cmd is not None or clean_status is not None
+    ) and clean_label is None:
         raise ValueError("status fields require a labeled background Task")
 
     if normalized_action is None:
@@ -675,7 +690,9 @@ async def code_mode(
     if payload is not None:
         raise ValueError("payload is only valid when launching code")
     if execution_id is None or not execution_id.strip():
-        raise ValueError(f"code_mode action={normalized_action!r} requires execution_id")
+        raise ValueError(
+            f"code_mode action={normalized_action!r} requires execution_id"
+        )
     if normalized_action == "status":
         state = await asyncio.to_thread(executions.status, execution_id)
         if state.get("status") != "running":
@@ -742,23 +759,34 @@ async def _mcp_code_mode(
     ] = None,
     background: Annotated[
         bool,
-        Field(description="Detach this Code Mode program as a durable background execution; the actual mode is exposed inside Monty as BACKGROUND."),
+        Field(
+            description="Detach this Code Mode program as a durable background execution; the actual mode is exposed inside Monty as BACKGROUND."
+        ),
     ] = False,
     label: Annotated[
         str | None,
-        Field(description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).", max_length=80),
+        Field(
+            description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).",
+            max_length=80,
+        ),
     ] = None,
     status_cmd: Annotated[
         str | None,
-        Field(description="Optional bounded local command whose stdout decorates a working Task."),
+        Field(
+            description="Optional bounded local command whose stdout decorates a working Task."
+        ),
     ] = None,
     status: Annotated[
         str | None,
-        Field(description="Optional static Task display status used when status_cmd has no usable output."),
+        Field(
+            description="Optional static Task display status used when status_cmd has no usable output."
+        ),
     ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
-        Field(description="Lifecycle action for a background Code Mode execution: status, result, or cancel."),
+        Field(
+            description="Lifecycle action for a background Code Mode execution: status, result, or cancel."
+        ),
     ] = None,
     execution_id: Annotated[
         str | None,
@@ -819,9 +847,7 @@ def wsl2_async(
     ] = None,
     execution_id: Annotated[
         str | None,
-        Field(
-            description="Execution ID for status/result/cancel."
-        ),
+        Field(description="Execution ID for status/result/cancel."),
     ] = None,
     cwd: Annotated[
         str | None,
@@ -840,7 +866,10 @@ def wsl2_async(
     if normalized == "capabilities":
         return {
             "actions": {
-                "start": {"requires": ["command", "permission"], "optional": ["cwd", "timeout"]},
+                "start": {
+                    "requires": ["command", "permission"],
+                    "optional": ["cwd", "timeout"],
+                },
                 "status": {"requires": ["execution_id"]},
                 "result": {"requires": ["execution_id"]},
                 "cancel": {"requires": ["execution_id"]},

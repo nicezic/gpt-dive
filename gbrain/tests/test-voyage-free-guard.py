@@ -13,7 +13,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "voyage-free-guard"
-mod = importlib.machinery.SourceFileLoader("voyage_free_guard", str(SCRIPT)).load_module()
+mod = importlib.machinery.SourceFileLoader(
+    "voyage_free_guard", str(SCRIPT)
+).load_module()
 
 
 class FakeHeaders:
@@ -25,9 +27,18 @@ class FakeHeaders:
 
 
 class FakeResponse:
-    def __init__(self, status: int, body: object = b"", *, url: str, cookies: list[str] | None = None):
+    def __init__(
+        self,
+        status: int,
+        body: object = b"",
+        *,
+        url: str,
+        cookies: list[str] | None = None,
+    ):
         self.status = status
-        self._body = json.dumps(body).encode() if isinstance(body, (dict, list, str)) else body
+        self._body = (
+            json.dumps(body).encode() if isinstance(body, (dict, list, str)) else body
+        )
         self._url = url
         self.headers = FakeHeaders(cookies)
 
@@ -70,23 +81,36 @@ class GuardTests(unittest.TestCase):
                 return FakeResponse(
                     200,
                     url=mod.DASHBOARD_USAGE_URL,
-                    cookies=["__session=rotated-session; Path=/; Max-Age=86400; Secure; HttpOnly; SameSite=Lax"],
+                    cookies=[
+                        "__session=rotated-session; Path=/; Max-Age=86400; Secure; HttpOnly; SameSite=Lax"
+                    ],
                 )
             if req.full_url == mod.ACCESS_TOKEN_URL:
                 self.assertEqual(req.get_header("Cookie"), "__session=rotated-session")
-                return FakeResponse(200, {"token": "access-secret"}, url=mod.ACCESS_TOKEN_URL)
+                return FakeResponse(
+                    200, {"token": "access-secret"}, url=mod.ACCESS_TOKEN_URL
+                )
             if req.full_url.startswith(mod.QUOTA_ORIGIN):
-                self.assertEqual(req.get_header("Authorization"), "Bearer access-secret")
+                self.assertEqual(
+                    req.get_header("Authorization"), "Bearer access-secret"
+                )
                 return FakeResponse(
                     200,
-                    {"code": 200, "successCode": "OK", "data": [{
-                        "modelName": mod.MODEL,
-                        "totalFreeToken": 200_000_000,
-                        "remainingToken": remaining,
-                    }]},
+                    {
+                        "code": 200,
+                        "successCode": "OK",
+                        "data": [
+                            {
+                                "modelName": mod.MODEL,
+                                "totalFreeToken": 200_000_000,
+                                "remainingToken": remaining,
+                            }
+                        ],
+                    },
                     url=req.full_url,
                 )
             raise AssertionError(req.full_url)
+
         return opener
 
     def test_fresh_quota_still_uses_dashboard_only_for_explicit_refresh(self):
@@ -99,7 +123,13 @@ class GuardTests(unittest.TestCase):
 
     def test_local_status_warns_at_80_percent_but_passes(self):
         now = datetime(2026, 8, 15, tzinfo=UTC)
-        snapshot = mod.make_snapshot(total=200_000_000, used=160_000_000, source="dashboard", verified=True, now=now)
+        snapshot = mod.make_snapshot(
+            total=200_000_000,
+            used=160_000_000,
+            source="dashboard",
+            verified=True,
+            now=now,
+        )
         mod.write_snapshot(snapshot)
         status = mod.status_payload(snapshot, now=now + timedelta(days=1))
         self.assertTrue(status["warning"])
@@ -108,11 +138,31 @@ class GuardTests(unittest.TestCase):
 
     def test_ledger_adds_only_events_after_baseline(self):
         now = datetime(2026, 8, 15, tzinfo=UTC)
-        snapshot = mod.make_snapshot(total=200_000_000, used=10_000_000, source="dashboard", verified=True, now=now)
+        snapshot = mod.make_snapshot(
+            total=200_000_000,
+            used=10_000_000,
+            source="dashboard",
+            verified=True,
+            now=now,
+        )
         mod.write_snapshot(snapshot)
         self.ledger.write_text(
-            json.dumps({"ts": "2026-08-14T00:00:00Z", "model": mod.MODEL, "estimatedTokens": 99}) + "\n" +
-            json.dumps({"ts": "2026-08-16T00:00:00Z", "model": mod.MODEL, "estimatedTokens": 1234}) + "\n",
+            json.dumps(
+                {
+                    "ts": "2026-08-14T00:00:00Z",
+                    "model": mod.MODEL,
+                    "estimatedTokens": 99,
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "ts": "2026-08-16T00:00:00Z",
+                    "model": mod.MODEL,
+                    "estimatedTokens": 1234,
+                }
+            )
+            + "\n",
             encoding="utf-8",
         )
         status = mod.status_payload(snapshot, now=now + timedelta(days=2))
@@ -121,13 +171,19 @@ class GuardTests(unittest.TestCase):
 
     def test_snapshot_requires_reauth_at_30_days(self):
         now = datetime(2026, 8, 15, tzinfo=UTC)
-        snapshot = mod.make_snapshot(total=200_000_000, used=1, source="dashboard", verified=True, now=now)
+        snapshot = mod.make_snapshot(
+            total=200_000_000, used=1, source="dashboard", verified=True, now=now
+        )
         status = mod.status_payload(snapshot, now=now + timedelta(days=30))
         self.assertTrue(status["reauthRequired"])
         self.assertEqual(status["guard"], "BLOCK")
 
     def test_refresh_main_resets_to_authoritative_server_usage(self):
-        quota = {"modelName": mod.MODEL, "totalFreeToken": 200_000_000, "remainingToken": 123_000_000}
+        quota = {
+            "modelName": mod.MODEL,
+            "totalFreeToken": 200_000_000,
+            "remainingToken": 123_000_000,
+        }
         out, err = io.StringIO(), io.StringIO()
         with (
             patch.object(sys, "argv", [str(SCRIPT), "--refresh", "--json"]),
@@ -146,7 +202,9 @@ class GuardTests(unittest.TestCase):
     def test_bootstrap_main_sets_local_baseline_and_30_day_deadline(self):
         out = io.StringIO()
         with (
-            patch.object(sys, "argv", [str(SCRIPT), "--bootstrap-used-tokens", "12345", "--json"]),
+            patch.object(
+                sys, "argv", [str(SCRIPT), "--bootstrap-used-tokens", "12345", "--json"]
+            ),
             contextlib.redirect_stdout(out),
         ):
             mod.main()
@@ -158,7 +216,11 @@ class GuardTests(unittest.TestCase):
 
     def test_expired_default_guard_exits_70(self):
         old = datetime.now(UTC) - timedelta(days=31)
-        mod.write_snapshot(mod.make_snapshot(total=200_000_000, used=1, source="dashboard", verified=True, now=old))
+        mod.write_snapshot(
+            mod.make_snapshot(
+                total=200_000_000, used=1, source="dashboard", verified=True, now=old
+            )
+        )
         with (
             patch.object(sys, "argv", [str(SCRIPT), "--json"]),
             contextlib.redirect_stdout(io.StringIO()),
@@ -174,7 +236,9 @@ class GuardTests(unittest.TestCase):
 
         stderr = io.StringIO()
         with (
-            patch.dict(os.environ, {mod.SESSION_ENV: "super-secret-session"}, clear=False),
+            patch.dict(
+                os.environ, {mod.SESSION_ENV: "super-secret-session"}, clear=False
+            ),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as caught,
         ):

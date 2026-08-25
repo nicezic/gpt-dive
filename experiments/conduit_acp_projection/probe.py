@@ -7,7 +7,11 @@ EVENT_LOG = Path("/tmp/conduit-events.ndjson")
 
 
 def latest_emit(path: Path) -> dict[str, object]:
-    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     for event in reversed(events):
         if event.get("action") == "emit":
             return event
@@ -26,7 +30,9 @@ def main() -> None:
     session_id = event.get("session_id")
     report = {
         "projection_probe": "PASS",
-        "raw_event_direct_projection": "PASS" if isinstance(session_id, str) and session_id else "FAIL",
+        "raw_event_direct_projection": "PASS"
+        if isinstance(session_id, str) and session_id
+        else "FAIL",
         "acp_target": {"protocolVersion": 1, "schema_artifact": "v1.20.0"},
         "observed": {
             "assistant_text": True,
@@ -40,12 +46,16 @@ def main() -> None:
             "session/update.agent_message_chunk.content.text": "event.result.text",
             "session/prompt.stopReason": "end_turn because Conduit emit is a complete Mirrored Full Output",
         },
-        "missing_from_legacy_emit_event": ([] if isinstance(session_id, str) and session_id else ["session_id"]),
+        "missing_from_legacy_emit_event": (
+            [] if isinstance(session_id, str) and session_id else ["session_id"]
+        ),
         "owned_by_acp_ingress_adapter": [
             "user prompt content/direction",
             "session creation and active-prompt state",
         ],
-        "deferred_separate_acceptance": ["session cancellation correlation and real Web cancellation"],
+        "deferred_separate_acceptance": [
+            "session cancellation correlation and real Web cancellation"
+        ],
         "excluded_from_conversation_domain_without_more_evidence": [
             "redis_id",
             "transport timestamp",

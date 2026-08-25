@@ -12,7 +12,9 @@ from .runtime import ConduitRuntime
 
 executions = ExecutionManager()
 task_store = TaskStore()
-runtime = ConduitRuntime(executions=executions, task_store=task_store, publisher=RedisEventPublisher())
+runtime = ConduitRuntime(
+    executions=executions, task_store=task_store, publisher=RedisEventPublisher()
+)
 
 mcp = MCPServer(
     name="c",
@@ -47,7 +49,10 @@ def c(
     *,
     label: Annotated[
         str | None,
-        Field(description="Short human-readable task label for start (max 80 chars).", max_length=80),
+        Field(
+            description="Short human-readable task label for start (max 80 chars).",
+            max_length=80,
+        ),
     ] = None,
     command: Annotated[
         str | None,

@@ -19,7 +19,9 @@ def _evidence_labels(evidence: str) -> set[str]:
     item_labels = _EVIDENCE_ITEM_LABEL_RE.findall(evidence)
     if len(item_labels) != len(set(item_labels)):
         raise ValueError("evidence labels must be unique")
-    return set(item_labels) if item_labels else set(_EVIDENCE_LABEL_RE.findall(evidence))
+    return (
+        set(item_labels) if item_labels else set(_EVIDENCE_LABEL_RE.findall(evidence))
+    )
 
 
 def _delimit_evidence(evidence: str) -> str:
@@ -32,7 +34,12 @@ def _delimit_evidence(evidence: str) -> str:
 
 
 def _prompt(
-    *, question: str, evidence: str, round_number: int, max_rounds: int, max_queries: int
+    *,
+    question: str,
+    evidence: str,
+    round_number: int,
+    max_rounds: int,
+    max_queries: int,
 ) -> str:
     source_data = _delimit_evidence(evidence)
     return f"""You are an evidence controller for a local code/research workflow.
@@ -100,7 +107,9 @@ def _validate_payload(
         raise ValueError(f"JSON keys must be exactly {sorted(expected)}")
     for field in _REQUIRED_LIST_FIELDS:
         items = value[field]
-        if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        if not isinstance(items, list) or not all(
+            isinstance(item, str) for item in items
+        ):
             raise ValueError(f"{field} must be a list of strings")
     if not isinstance(value["done"], bool):
         raise TypeError("done must be a boolean")
@@ -120,15 +129,24 @@ def _validate_payload(
         raise ValueError("queries must be empty when done is true")
     if value["done"] and value["missing"]:
         raise ValueError("missing must be empty when done is true")
-    if not final_round and max_queries > 0 and value["missing"] and not normalized_queries:
-        raise ValueError("unresolved missing evidence requires at least one query before the final research round")
+    if (
+        not final_round
+        and max_queries > 0
+        and value["missing"]
+        and not normalized_queries
+    ):
+        raise ValueError(
+            "unresolved missing evidence requires at least one query before the final research round"
+        )
     value["queries"] = normalized_queries
     if evidence_labels:
         for field in ("known", "conflicts"):
             for item in value[field]:
                 cited = set(_EVIDENCE_LABEL_RE.findall(item))
                 if not cited:
-                    raise ValueError(f"{field} item must cite an evidence label: {item!r}")
+                    raise ValueError(
+                        f"{field} item must cite an evidence label: {item!r}"
+                    )
                 unknown = cited - evidence_labels
                 if unknown:
                     raise ValueError(
@@ -204,7 +222,9 @@ async def invoke_m3_evidence(
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             last_error = exc
             validation_errors.append(
-                "invalid m3 evidence JSON" if isinstance(exc, json.JSONDecodeError) else str(exc)
+                "invalid m3 evidence JSON"
+                if isinstance(exc, json.JSONDecodeError)
+                else str(exc)
             )
             if attempt < 2:
                 prompt = _retry_prompt(prompt, exc)
@@ -226,7 +246,9 @@ async def invoke_m3_evidence(
         "ok": False,
         "model": last_call.get("model", "m3"),
         "provider": last_call.get("provider", "minimax"),
-        "error": "invalid m3 evidence JSON" if isinstance(last_error, json.JSONDecodeError) else str(last_error),
+        "error": "invalid m3 evidence JSON"
+        if isinstance(last_error, json.JSONDecodeError)
+        else str(last_error),
         "raw_output": last_raw,
         "usage": usage,
         "attempts": 2,

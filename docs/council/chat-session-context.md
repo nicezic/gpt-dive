@@ -121,9 +121,9 @@ Results expose:
 Basic shape:
 
 ```python
-result1 = await agent.run('first turn')
+result1 = await agent.run("first turn")
 result2 = await agent.run(
-    'next turn',
+    "next turn",
     message_history=result1.all_messages(),
 )
 ```

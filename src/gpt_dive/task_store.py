@@ -18,7 +18,9 @@ class TaskStore:
     """Small durable registry for Web SOL task awareness."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or (Path.home() / ".local" / "state" / "gpt-dive" / "tasks.sqlite3")
+        self.path = path or (
+            Path.home() / ".local" / "state" / "gpt-dive" / "tasks.sqlite3"
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
@@ -132,7 +134,9 @@ class TaskStore:
     def delete(self, task_id: str) -> None:
         current = self.get(task_id)
         with closing(self._connect()) as connection, connection:
-            connection.execute("DELETE FROM tasks WHERE task_id = ?", (current["task_id"],))
+            connection.execute(
+                "DELETE FROM tasks WHERE task_id = ?", (current["task_id"],)
+            )
 
     def list_tasks(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:

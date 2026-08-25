@@ -17,7 +17,9 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     return value
 
 
-def score_result(case: dict[str, Any], result: dict[str, Any]) -> tuple[bool, list[str]]:
+def score_result(
+    case: dict[str, Any], result: dict[str, Any]
+) -> tuple[bool, list[str]]:
     errors: list[str] = []
     expect = case.get("expect", {})
     if not result.get("ok"):
@@ -50,7 +52,9 @@ def score_result(case: dict[str, Any], result: dict[str, Any]) -> tuple[bool, li
     return not errors, errors
 
 
-async def run_cases(cases: list[dict[str, Any]], *, timeout: float, repeat: int = 1) -> dict[str, Any]:
+async def run_cases(
+    cases: list[dict[str, Any]], *, timeout: float, repeat: int = 1
+) -> dict[str, Any]:
     if repeat <= 0:
         raise ValueError("repeat must be greater than 0")
 
@@ -67,16 +71,18 @@ async def run_cases(cases: list[dict[str, Any]], *, timeout: float, repeat: int 
                 timeout=timeout,
             )
             passed, errors = score_result(case, result)
-            rows.append({
-                "name": case["name"],
-                "run": run,
-                "passed": passed,
-                "errors": errors,
-                "attempts": result.get("attempts", 1),
-                "done": result.get("done"),
-                "query_count": len(result.get("queries", [])),
-                "latency_ms": round((time.monotonic() - started) * 1000),
-            })
+            rows.append(
+                {
+                    "name": case["name"],
+                    "run": run,
+                    "passed": passed,
+                    "errors": errors,
+                    "attempts": result.get("attempts", 1),
+                    "done": result.get("done"),
+                    "query_count": len(result.get("queries", [])),
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                }
+            )
 
     case_stats: list[dict[str, Any]] = []
     flaky_cases: list[str] = []
@@ -87,27 +93,35 @@ async def run_cases(cases: list[dict[str, Any]], *, timeout: float, repeat: int 
         failed_for_case = len(samples) - passed_for_case
         if passed_for_case and failed_for_case:
             flaky_cases.append(name)
-        case_stats.append({
-            "name": name,
-            "runs": len(samples),
-            "passed": passed_for_case,
-            "failed": failed_for_case,
-            "pass_rate": passed_for_case / len(samples) if samples else 0.0,
-            "retry_runs": sum(1 for row in samples if row["attempts"] > 1),
-        })
+        case_stats.append(
+            {
+                "name": name,
+                "runs": len(samples),
+                "passed": passed_for_case,
+                "failed": failed_for_case,
+                "pass_rate": passed_for_case / len(samples) if samples else 0.0,
+                "retry_runs": sum(1 for row in samples if row["attempts"] > 1),
+            }
+        )
 
     run_stats: list[dict[str, Any]] = []
     for run in range(1, repeat + 1):
         samples = [row for row in rows if row["run"] == run]
         passed_for_run = sum(1 for row in samples if row["passed"])
-        run_stats.append({
-            "run": run,
-            "passed": passed_for_run,
-            "failed": len(samples) - passed_for_run,
-            "pass_rate": passed_for_run / len(samples) if samples else 0.0,
-            "retry_samples": sum(1 for row in samples if row["attempts"] > 1),
-            "mean_latency_ms": round(sum(row["latency_ms"] for row in samples) / len(samples)) if samples else 0,
-        })
+        run_stats.append(
+            {
+                "run": run,
+                "passed": passed_for_run,
+                "failed": len(samples) - passed_for_run,
+                "pass_rate": passed_for_run / len(samples) if samples else 0.0,
+                "retry_samples": sum(1 for row in samples if row["attempts"] > 1),
+                "mean_latency_ms": round(
+                    sum(row["latency_ms"] for row in samples) / len(samples)
+                )
+                if samples
+                else 0,
+            }
+        )
 
     passed = sum(1 for row in rows if row["passed"])
     return {
@@ -127,12 +141,28 @@ async def run_cases(cases: list[dict[str, Any]], *, timeout: float, repeat: int 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the fixed live MiniMax-M3 evidence-controller eval set.")
-    parser.add_argument("--cases", type=Path, default=Path("tests/fixtures/m3_evidence_eval.json"))
-    parser.add_argument("--repeat", type=int, default=1, help="Run the fixed case set N times sequentially.")
-    parser.add_argument("--timeout", type=float, required=True, help="Per M3 evidence call timeout in seconds.")
+    parser = argparse.ArgumentParser(
+        description="Run the fixed live MiniMax-M3 evidence-controller eval set."
+    )
+    parser.add_argument(
+        "--cases", type=Path, default=Path("tests/fixtures/m3_evidence_eval.json")
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Run the fixed case set N times sequentially.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        required=True,
+        help="Per M3 evidence call timeout in seconds.",
+    )
     args = parser.parse_args()
-    report = asyncio.run(run_cases(load_cases(args.cases), timeout=args.timeout, repeat=args.repeat))
+    report = asyncio.run(
+        run_cases(load_cases(args.cases), timeout=args.timeout, repeat=args.repeat)
+    )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["failed"] == 0 else 1)
 

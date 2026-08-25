@@ -126,7 +126,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
                 "error": f"unknown peer provider {provider!r}; registered providers: {known}",
             }
         explicit_model = bool(payload.get("model") and str(payload["model"]).strip())
-        model_name = str(payload["model"]).strip() if explicit_model else route.default_model
+        model_name = (
+            str(payload["model"]).strip() if explicit_model else route.default_model
+        )
         # Defense line across the process boundary: this worker is spawned with
         # stdin JSON, so it re-checks what the host already validated in case a
         # future spawner skips the host-side gate.
@@ -163,9 +165,13 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         alias = _validate(str(payload["model"]), prompt, 1.0, output_tokens_limit)
         if anthropic_thinking is not None:
             if anthropic_thinking not in {"adaptive", "disabled"}:
-                raise ValueError("anthropic_thinking must be 'adaptive', 'disabled', or None")
+                raise ValueError(
+                    "anthropic_thinking must be 'adaptive', 'disabled', or None"
+                )
             if alias.transport != "anthropic-compatible":
-                raise ValueError("anthropic_thinking requires an Anthropic-compatible model")
+                raise ValueError(
+                    "anthropic_thinking requires an Anthropic-compatible model"
+                )
         model_settings = (
             AnthropicModelSettings(anthropic_thinking={"type": anthropic_thinking})
             if anthropic_thinking is not None
@@ -178,10 +184,17 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     run_prompt: str | list[Any] = prompt
-    if peer_review and provider == "kunavo" and model_name == "claude-opus-5" and _PEER_CACHE_BREAK in prompt:
+    if (
+        peer_review
+        and provider == "kunavo"
+        and model_name == "claude-opus-5"
+        and _PEER_CACHE_BREAK in prompt
+    ):
         stable_base, round_delta = prompt.split(_PEER_CACHE_BREAK, 1)
         if not stable_base.strip() or not round_delta.strip():
-            raise ValueError("Kunavo peer cache marker requires non-empty base and round delta")
+            raise ValueError(
+                "Kunavo peer cache marker requires non-empty base and round delta"
+            )
         run_prompt = [stable_base, CachePoint(ttl="5m"), round_delta]
 
     result = await agent.run(
@@ -239,7 +252,9 @@ async def invoke_model_call(
         if not provider:
             raise ValueError("provider is required for peer-review mode")
         provider_label = provider
-        payload_model = str(model).strip() if model is not None and str(model).strip() else None
+        payload_model = (
+            str(model).strip() if model is not None and str(model).strip() else None
+        )
         model_label = _peer_model_label(payload_model, provider)
         requested_output_tokens_limit = None
     else:
@@ -315,4 +330,3 @@ async def invoke_model_call(
     if stderr_text:
         result["worker_stderr"] = stderr_tail(stderr_text)
     return result
-

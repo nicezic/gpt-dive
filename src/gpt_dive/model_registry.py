@@ -30,7 +30,9 @@ PROVIDER_ROUTES: dict[str, ProviderRoute] = {
     "aiapiflow": ProviderRoute(
         "AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com", "claude-haiku-4-5-20251001"
     ),
-    "kunavo": ProviderRoute("KUNAVO_API_KEY", "https://api.kunavo.com", "claude-opus-5"),
+    "kunavo": ProviderRoute(
+        "KUNAVO_API_KEY", "https://api.kunavo.com", "claude-opus-5"
+    ),
     "minimax": ProviderRoute(
         "MINIMAX_API_KEY", "https://api.minimax.io/anthropic", "MiniMax-M3"
     ),
@@ -108,10 +110,16 @@ def model_catalog() -> dict[str, dict[str, str | bool | int | None]]:
 def resolve_model(value: str | ModelAlias, *, lane: str | None = None) -> ModelAlias:
     """Resolve one alias and optionally enforce lane availability."""
     try:
-        alias = value if isinstance(value, ModelAlias) else ModelAlias(value.strip().lower())
+        alias = (
+            value
+            if isinstance(value, ModelAlias)
+            else ModelAlias(value.strip().lower())
+        )
     except ValueError as exc:
         choices = ", ".join(member.value for member in ModelAlias)
-        raise ValueError(f"unknown model alias {value!r}; choose one of: {choices}") from exc
+        raise ValueError(
+            f"unknown model alias {value!r}; choose one of: {choices}"
+        ) from exc
 
     if lane is not None:
         if lane not in {"peer_review", "subagent"}:
@@ -136,7 +144,9 @@ def build_model(value: str | ModelAlias) -> Any:
     if alias.transport == "codex-subscription":
         from .openai_codex import OpenAICodexProvider, OpenAICodexResponsesModel
 
-        return OpenAICodexResponsesModel(alias.model_name, provider=OpenAICodexProvider())
+        return OpenAICodexResponsesModel(
+            alias.model_name, provider=OpenAICodexProvider()
+        )
 
     raise RuntimeError(f"unsupported transport {alias.transport!r} for {alias.value!r}")
 
@@ -146,7 +156,9 @@ def build_provider_model(provider: str, model_name: str) -> Any:
     route = PROVIDER_ROUTES.get(provider)
     if route is None:
         known = ", ".join(sorted(PROVIDER_ROUTES))
-        raise ValueError(f"unknown peer provider {provider!r}; registered providers: {known}")
+        raise ValueError(
+            f"unknown peer provider {provider!r}; registered providers: {known}"
+        )
     return AnthropicModel(
         model_name,
         provider=AnthropicProvider(
@@ -159,7 +171,9 @@ def build_provider_model(provider: str, model_name: str) -> Any:
 def _async_client_for_route(route: ProviderRoute) -> Any:
     from anthropic import AsyncAnthropic
 
-    return AsyncAnthropic(api_key=os.environ[route.credential_env], base_url=route.base_url)
+    return AsyncAnthropic(
+        api_key=os.environ[route.credential_env], base_url=route.base_url
+    )
 
 
 async def verify_provider_model(

@@ -59,7 +59,7 @@ class OpenAICodexCredentials(BaseModel):
     explicitly unwrap these values in their narrowly scoped persistence code.
     """
 
-    model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     access_token: SecretStr
     refresh_token: SecretStr
@@ -77,11 +77,11 @@ class OpenAICodexCredentials(BaseModel):
     """
     account_is_fedramp: bool = False
 
-    @field_validator('expires_at')
+    @field_validator("expires_at")
     @classmethod
     def _expires_at_is_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError('expires_at must be timezone-aware')
+            raise ValueError("expires_at must be timezone-aware")
         return value
 
     def is_valid(self, *, skew: timedelta = _REFRESH_SKEW) -> bool:
@@ -92,24 +92,24 @@ class OpenAICodexCredentials(BaseModel):
 class OpenAICodexDeviceCode(BaseModel):
     """UI-safe information needed to complete device authorization."""
 
-    model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     verification_url: str
     user_code: SecretStr
     expires_at: datetime
 
-    @field_validator('expires_at')
+    @field_validator("expires_at")
     @classmethod
     def _expires_at_is_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError('expires_at must be timezone-aware')
+            raise ValueError("expires_at must be timezone-aware")
         return value
 
 
 class OpenAICodexAuthStatus(BaseModel):
     """Secret-free status for managed OpenAI Codex credentials."""
 
-    model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     authenticated: bool
     expires_at: datetime | None = None
@@ -120,7 +120,7 @@ class OpenAICodexAuthStatus(BaseModel):
 class OpenAICodexLogoutResult(BaseModel):
     """Result of removing managed OpenAI Codex credentials."""
 
-    model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     local_credentials_removed: bool
     upstream_revoked: bool = False
@@ -159,7 +159,9 @@ class OpenAICodexCredentialStore(Protocol):
         """Load the active credential snapshot, if present."""
         ...
 
-    async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
+    async def save(
+        self, credentials: OpenAICodexCredentials, *, expected_revision: str | None
+    ) -> bool:
         """Conditionally replace the active snapshot.
 
         Return `False` when the active revision differs from `expected_revision`.
@@ -193,7 +195,7 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if store is not None and path is not None:
-            raise UserError('`store` and `path` are mutually exclusive')
+            raise UserError("`store` and `path` are mutually exclusive")
         if store is None:
             from ._store import OpenAICodexFileCredentialStore
 
@@ -211,17 +213,25 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         the replacement is reused instead of rotating its refresh token again.
         """
         if rejected_revision is not None and not force_refresh:
-            raise UserError('`rejected_revision` requires `force_refresh=True`')
+            raise UserError("`rejected_revision` requires `force_refresh=True`")
 
         observed = await self._load_required()
-        if rejected_revision is not None and observed.revision != rejected_revision and observed.is_valid():
+        if (
+            rejected_revision is not None
+            and observed.revision != rejected_revision
+            and observed.is_valid()
+        ):
             return observed
         if not force_refresh and observed.is_valid():
             return observed
 
         async with self._exclusive_transaction():
             current = await self._load_required()
-            if rejected_revision is not None and current.revision != rejected_revision and current.is_valid():
+            if (
+                rejected_revision is not None
+                and current.revision != rejected_revision
+                and current.is_valid()
+            ):
                 resolved = current
             elif current.revision != observed.revision and current.is_valid():
                 resolved = current
@@ -232,7 +242,9 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
                     with anyio.fail_after(_REFRESH_AND_SAVE_TIMEOUT):
                         resolved = await self._refresh_and_save(current)
                 except TimeoutError:
-                    raise OpenAICodexRefreshError('OpenAI Codex credential refresh timed out.') from None
+                    raise OpenAICodexRefreshError(
+                        "OpenAI Codex credential refresh timed out."
+                    ) from None
 
         # Deliver cancellation only after a rotated token is durably stored and the
         # exclusive store context has released its lock.
@@ -253,7 +265,9 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         from ._oauth import OpenAICodexOAuthClient
 
         await self._check_store_ready()
-        credentials = await OpenAICodexOAuthClient(self._http_client).login_browser(open_url, timeout=timeout)
+        credentials = await OpenAICodexOAuthClient(self._http_client).login_browser(
+            open_url, timeout=timeout
+        )
         await self._replace_after_login(credentials)
         return credentials
 
@@ -267,7 +281,9 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         from ._oauth import OpenAICodexOAuthClient
 
         await self._check_store_ready()
-        credentials = await OpenAICodexOAuthClient(self._http_client).login_device(show_code, timeout=timeout)
+        credentials = await OpenAICodexOAuthClient(self._http_client).login_device(
+            show_code, timeout=timeout
+        )
         await self._replace_after_login(credentials)
         return credentials
 
@@ -304,16 +320,22 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
                     if not local_only:
                         from ._oauth import OpenAICodexOAuthClient
 
-                        await OpenAICodexOAuthClient(self._http_client).revoke(credentials)
+                        await OpenAICodexOAuthClient(self._http_client).revoke(
+                            credentials
+                        )
                         revoked = True
                 except OpenAICodexAuthError:
-                    revocation_error = 'Upstream OpenAI Codex token revocation failed.'
+                    revocation_error = "Upstream OpenAI Codex token revocation failed."
                 finally:
-                    removed = await self._store.delete(expected_revision=credentials.revision)
+                    removed = await self._store.delete(
+                        expected_revision=credentials.revision
+                    )
 
                 # An exclusive store must make this unreachable
                 if not removed:  # pragma: no cover
-                    raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while they were being removed.')
+                    raise OpenAICodexCredentialsError(
+                        "OpenAI Codex credentials changed while they were being removed."
+                    )
                 result = OpenAICodexLogoutResult(
                     local_credentials_removed=True,
                     upstream_revoked=revoked,
@@ -349,14 +371,18 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
             else:
                 await exclusive.__aexit__(None, None, None)
 
-    async def _refresh_and_save(self, current: OpenAICodexCredentials) -> OpenAICodexCredentials:
+    async def _refresh_and_save(
+        self, current: OpenAICodexCredentials
+    ) -> OpenAICodexCredentials:
         from ._oauth import OpenAICodexOAuthClient
 
         refreshed = await OpenAICodexOAuthClient(self._http_client).refresh(current)
         saved = await self._store.save(refreshed, expected_revision=current.revision)
         # An exclusive store must make this unreachable
         if not saved:  # pragma: no cover
-            raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while they were being refreshed.')
+            raise OpenAICodexCredentialsError(
+                "OpenAI Codex credentials changed while they were being refreshed."
+            )
         return refreshed
 
     async def _load_required(self) -> OpenAICodexCredentials:
@@ -372,7 +398,11 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         async with self._exclusive_transaction():
             current = await self._store.load()
             expected_revision = current.revision if current is not None else None
-            saved = await self._store.save(credentials, expected_revision=expected_revision)
+            saved = await self._store.save(
+                credentials, expected_revision=expected_revision
+            )
             if not saved:
-                raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while login was being saved.')
+                raise OpenAICodexCredentialsError(
+                    "OpenAI Codex credentials changed while login was being saved."
+                )
         await checkpoint()

@@ -83,7 +83,9 @@ class HostFileSystemOS(AbstractOS):
             return raw
         return self.cwd / raw
 
-    def _path(self, arg: PurePosixPath | MontyFileHandle, *, write: bool = False) -> Path:
+    def _path(
+        self, arg: PurePosixPath | MontyFileHandle, *, write: bool = False
+    ) -> Path:
         canonical = self._lexical(arg).resolve()
         if is_secret_path(canonical, home=self.home):
             raise PermissionError(f"Credential/secret path is blocked: {canonical}")
@@ -112,7 +114,9 @@ class HostFileSystemOS(AbstractOS):
     def path_write_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
         return self._path(path, write=True).write_text(data)
 
-    def path_write_bytes(self, path: PurePosixPath | MontyFileHandle, data: bytes) -> int:
+    def path_write_bytes(
+        self, path: PurePosixPath | MontyFileHandle, data: bytes
+    ) -> int:
         return self._path(path, write=True).write_bytes(data)
 
     def path_mkdir(self, path: PurePosixPath, parents: bool, exist_ok: bool) -> None:

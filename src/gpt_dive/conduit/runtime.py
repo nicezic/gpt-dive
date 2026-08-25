@@ -113,7 +113,9 @@ class ConduitRuntime:
         labels = probe_status_labels(refreshed)
         tasks: list[dict[str, object]] = []
         for task in refreshed:
-            projected = project_task(task, status_label=labels.get(str(task["task_id"])))
+            projected = project_task(
+                task, status_label=labels.get(str(task["task_id"]))
+            )
             row: dict[str, object] = {
                 "id": str(projected["task_id"]),
                 "label": str(projected["label"]),

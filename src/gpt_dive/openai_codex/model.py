@@ -42,12 +42,16 @@ class OpenAICodexResponsesModel(OpenAIResponsesModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Preserve ordinary Agent.run() by streaming and aggregating locally."""
-        async with self.request_stream(messages, model_settings, model_request_parameters) as streamed_response:
+        async with self.request_stream(
+            messages, model_settings, model_request_parameters
+        ) as streamed_response:
             async for _ in streamed_response:
                 pass
             aggregated = streamed_response.get()
             if aggregated.state == "incomplete":
-                raise UnexpectedModelBehavior("OpenAI Codex streamed response ended before it was complete")
+                raise UnexpectedModelBehavior(
+                    "OpenAI Codex streamed response ended before it was complete"
+                )
             return aggregated
 
     @asynccontextmanager

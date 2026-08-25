@@ -39,6 +39,7 @@ Bundle the pair into one value object. Third application of the repo's NamedTupl
 ```python
 class TaskRuntime(NamedTuple):
     """Paired handles for Task-aware execution bookkeeping."""
+
     executions: ExecutionManager
     task_store: TaskStore
 ```

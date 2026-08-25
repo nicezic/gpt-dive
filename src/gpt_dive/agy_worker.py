@@ -58,7 +58,9 @@ def _parse_stream_json(stdout_text: str) -> dict[str, Any]:
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid agy stream-json on line {line_number}: {exc}") from exc
+            raise ValueError(
+                f"invalid agy stream-json on line {line_number}: {exc}"
+            ) from exc
         if not isinstance(event, dict):
             raise TypeError(f"invalid agy stream-json event on line {line_number}")
         if event.get("event") == "result":

@@ -13,7 +13,9 @@ import gpt_dive.model_call as model_call_module
 class _FakeResult:
     output = "BARE_WORKER_OK"
     usage = SimpleNamespace(requests=1, input_tokens=7, output_tokens=5)
-    response = SimpleNamespace(finish_reason="stop", provider_details={"finish_reason": "end_turn"})
+    response = SimpleNamespace(
+        finish_reason="stop", provider_details={"finish_reason": "end_turn"}
+    )
 
 
 class _FakeAgent:
@@ -42,7 +44,9 @@ def test_peer_model_label_prefers_explicit_then_route_default() -> None:
     assert _peer_model_label(None, "not-a-registered-provider") == ""
 
 
-def test_model_call_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> None:
+def test_model_call_worker_builds_agent_without_tools_or_capabilities(
+    monkeypatch,
+) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(model_call_module, "build_model", lambda alias: sentinel_model)
@@ -92,7 +96,11 @@ def test_model_call_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
 def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
 
     result = asyncio.run(
         model_call_module._run_worker(
@@ -128,7 +136,11 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
 def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
 
     prompt = "STABLE BASE" + model_call_module._PEER_CACHE_BREAK + "ROUND 2 DELTA"
     result = asyncio.run(
@@ -163,7 +175,11 @@ def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) 
 def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
     original_response = _FakeResult.response
     _FakeResult.response = SimpleNamespace(
         finish_reason="length", provider_details={"finish_reason": "max_tokens"}
@@ -194,7 +210,9 @@ def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> 
     def _fail_agent(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("Agent must not be built for an unknown model")
 
-    async def _fake_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+    async def _fake_verify(
+        provider: str, model_name: str, **_kwargs: object
+    ) -> dict[str, object]:
         return {"checked": True, "exists": False, "available": ["claude-opus-5"]}
 
     monkeypatch.setattr(model_call_module, "Agent", _fail_agent)
@@ -218,16 +236,24 @@ def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> 
     assert result["available_models"] == ["claude-opus-5"]
 
 
-def test_peer_review_worker_resolves_provider_default_model(monkeypatch, tmp_path) -> None:
+def test_peer_review_worker_resolves_provider_default_model(
+    monkeypatch, tmp_path
+) -> None:
     sentinel_model = object()
     listing_calls: list[str] = []
 
-    async def _fail_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+    async def _fail_verify(
+        provider: str, model_name: str, **_kwargs: object
+    ) -> dict[str, object]:
         listing_calls.append(model_name)
         return {"checked": True, "exists": True, "available": []}
 
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
     monkeypatch.setattr(model_call_module, "verify_provider_model", _fail_verify)
 
     result = asyncio.run(
