@@ -175,13 +175,24 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     provider_details = response.provider_details or {}
     provider_finish_reason = provider_details.get("finish_reason")
     truncated = finish_reason == "length"
+    # Resolve the lane identity once instead of branching on peer_review per field.
+    if peer_review:
+        model_label = model_name
+        provider_label_result = provider
+        resolved_model_name = model_name
+        mode = "peer-review"
+    else:
+        model_label = alias.value
+        provider_label_result = alias.provider
+        resolved_model_name = alias.model_name
+        mode = "model-call"
     return {
         "ok": not truncated,
-        "model": model_name if peer_review else alias.value,
-        "provider": provider if peer_review else alias.provider,
-        "model_name": model_name if peer_review else alias.model_name,
+        "model": model_label,
+        "provider": provider_label_result,
+        "model_name": resolved_model_name,
         "output": str(result.output),
-        "mode": "peer-review" if peer_review else "model-call",
+        "mode": mode,
         "finish_reason": finish_reason,
         "provider_finish_reason": provider_finish_reason,
         "truncated": truncated,
