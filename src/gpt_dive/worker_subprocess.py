@@ -4,11 +4,24 @@ import asyncio
 import logging
 import os
 import signal
-from typing import Any
+from typing import NamedTuple
 
 logger = logging.getLogger("gpt_dive.runtime")
 
 _STDERR_TAIL_CHARS = 2000
+
+
+class WorkerOutcome(NamedTuple):
+    """Raw transport envelope returned by one bounded worker process.
+
+    NamedTuple(네임드터플): 필드 접근이 가능한 불변 경량 타입 — 오타 시
+    런타임 KeyError 대신 정적 검사(pyright)가 잡아 준다.
+    """
+
+    returncode: int
+    stdout_text: str
+    stderr_text: str
+    timed_out: bool
 
 
 def stderr_tail(stderr_text: str) -> str:
@@ -47,7 +60,7 @@ async def run_bounded_worker(
     timeout: float,
     grace_seconds: float = 2.0,
     log_label: str = "WORKER",
-) -> dict[str, Any]:
+) -> WorkerOutcome:
     """Run one detached worker process under a bounded timeout.
 
     Lifecycle semantics (owned here once for every worker caller):
@@ -59,8 +72,8 @@ async def run_bounded_worker(
     - on caller cancellation the group is terminated and CancelledError re-raises;
     - output is decoded with errors="replace".
 
-    Returns ``{returncode, stdout_text, stderr_text, timed_out}``; envelope
-    parsing and error shaping stay with each caller.
+    Returns a :class:`WorkerOutcome`; envelope parsing and error shaping
+    stay with each caller.
     """
     proc = await asyncio.create_subprocess_exec(
         *command,
@@ -100,9 +113,11 @@ async def run_bounded_worker(
         proc.pid,
         getattr(proc, "returncode", None),
     )
-    return {
-        "returncode": proc.returncode,
-        "stdout_text": stdout.decode(errors="replace").strip(),
-        "stderr_text": stderr.decode(errors="replace").strip(),
-        "timed_out": timed_out,
-    }
+    # communicate() completing implies the child was reaped, so the exit code is set.
+    assert proc.returncode is not None
+    return WorkerOutcome(
+        returncode=proc.returncode,
+        stdout_text=stdout.decode(errors="replace").strip(),
+        stderr_text=stderr.decode(errors="replace").strip(),
+        timed_out=timed_out,
+    )

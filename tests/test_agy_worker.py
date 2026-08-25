@@ -150,6 +150,8 @@ def test_invoke_agy_worker_timeout_preserves_partial_state(
 
     def fake_killpg(pid: int, sig: int) -> None:
         assert pid == 4242
+        # Mirror real asyncio: reaping after SIGTERM populates the exit code (-15).
+        proc.returncode = -15
         proc.done.set()
 
     monkeypatch.setattr(

@@ -76,21 +76,21 @@ async def invoke_subagent(
         timeout=timeout,
         log_label="SUBAGENT",
     )
-    stdout_text = outcome["stdout_text"]
-    stderr_text = outcome["stderr_text"]
-    if outcome["timed_out"]:
+    stdout_text = outcome.stdout_text
+    stderr_text = outcome.stderr_text
+    if outcome.timed_out:
         return {
             "ok": False,
             "model": alias.value,
             "provider": alias.provider,
             "error": f"subagent call timed out after {timeout} seconds",
         }
-    if outcome["returncode"] != 0:
+    if outcome.returncode != 0:
         return {
             "ok": False,
             "model": alias.value,
             "provider": alias.provider,
-            "error": f"subagent worker exited with code {outcome['returncode']}",
+            "error": f"subagent worker exited with code {outcome.returncode}",
             "stderr": stderr_tail(stderr_text),
         }
 

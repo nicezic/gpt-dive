@@ -151,9 +151,9 @@ async def invoke_agy_worker(
             "error": f"failed to launch agy: {exc}",
         }
 
-    stdout_text = outcome["stdout_text"]
-    stderr_text = outcome["stderr_text"]
-    if outcome["timed_out"]:
+    stdout_text = outcome.stdout_text
+    stderr_text = outcome.stderr_text
+    if outcome.timed_out:
         conversation_id, terminal = _extract_stream_metadata(stdout_text)
         payload: dict[str, Any] = {
             "ok": False,
@@ -174,12 +174,12 @@ async def invoke_agy_worker(
             payload["stderr"] = stderr_tail(stderr_text)
         return payload
 
-    if outcome["returncode"] != 0:
+    if outcome.returncode != 0:
         return {
             "ok": False,
             "provider": _PROVIDER,
             "model_name": model,
-            "error": f"agy exited with code {outcome['returncode']}",
+            "error": f"agy exited with code {outcome.returncode}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_tail(stderr_text),
         }

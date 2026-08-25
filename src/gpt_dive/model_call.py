@@ -272,21 +272,21 @@ async def invoke_model_call(
         timeout=timeout,
         log_label="MODEL_CALL",
     )
-    stdout_text = outcome["stdout_text"]
-    stderr_text = outcome["stderr_text"]
-    if outcome["timed_out"]:
+    stdout_text = outcome.stdout_text
+    stderr_text = outcome.stderr_text
+    if outcome.timed_out:
         return {
             "ok": False,
             "model": model_label,
             "provider": provider_label,
             "error": f"model call timed out after {timeout} seconds",
         }
-    if outcome["returncode"] != 0:
+    if outcome.returncode != 0:
         return {
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"model call worker exited with code {outcome['returncode']}",
+            "error": f"model call worker exited with code {outcome.returncode}",
             "stderr": stderr_tail(stderr_text),
         }
 
