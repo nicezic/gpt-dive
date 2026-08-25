@@ -254,7 +254,8 @@ def _probe_pool() -> ThreadPoolExecutor:
 
     Snapshots run on every task_list / @c call; constructing a fresh
     ThreadPoolExecutor per invocation churned threads for no benefit.
-    Idle pool threads cost nothing between snapshots.
+    The pool is shared across concurrent snapshots: probes queue behind
+    in-flight ones but stay bounded by the 1s run_command timeout.
     """
     global _PROBE_POOL
     with _PROBE_POOL_LOCK:

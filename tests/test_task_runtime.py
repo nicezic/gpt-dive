@@ -112,6 +112,9 @@ def test_probe_status_labels_reuses_a_shared_pool(
         {"task_id": str(i), "state": "working", "status": "", "status_cmd": "echo ok"}
         for i in range(2)
     ]
+    # Reset so lazy construction is genuinely exercised; monkeypatch restores
+    # the previous pool (or None) afterwards.
+    monkeypatch.setattr(task_runtime_module, "_PROBE_POOL", None)
 
     first = task_runtime_module.probe_status_labels(tasks)
     pool_seen = task_runtime_module._PROBE_POOL
