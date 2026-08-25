@@ -61,6 +61,19 @@ def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
     ]
 
 
+def _peer_model_label(payload_model: str | None, provider: str) -> str:
+    """Best-effort model label for error envelopes.
+
+    Explicit ids win; otherwise report the route's default so transport-error
+    envelopes never carry an empty ``model`` field. Unknown providers keep
+    "" — the worker reports the authoritative unknown-provider error.
+    """
+    if payload_model:
+        return payload_model
+    route = PROVIDER_ROUTES.get(provider)
+    return route.default_model if route else ""
+
+
 def _usage_summary(result: Any) -> dict[str, Any]:
     usage = result.usage
     if callable(usage):
@@ -227,7 +240,7 @@ async def invoke_model_call(
             raise ValueError("provider is required for peer-review mode")
         provider_label = provider
         payload_model = str(model).strip() if model is not None and str(model).strip() else None
-        model_label = payload_model or ""
+        model_label = _peer_model_label(payload_model, provider)
         requested_output_tokens_limit = None
     else:
         if model is None:

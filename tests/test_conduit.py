@@ -46,7 +46,7 @@ def test_start_returns_compact_snapshot_and_collect_is_non_destructive(tmp_path:
     execution_id = started["result"]["execution_id"]
     assert task_id != execution_id
     assert started["result"]["status"] == "running"
-    assert not (runtime.executions.root / execution_id / "conduit.json").exists()
+    assert not (runtime.rt.executions.root / execution_id / "conduit.json").exists()
     assert started["tasks"] == [
         {
             "id": task_id,
@@ -109,7 +109,7 @@ def test_ack_hides_terminal_task_but_keeps_result_retrievable(tmp_path: Path) ->
         pass
     else:
         raise AssertionError("acked Task awareness should be removed")
-    assert runtime.executions.result(execution_id)["stdout"] == "ACKME"
+    assert runtime.rt.executions.result(execution_id)["stdout"] == "ACKME"
     assert publisher.events[-1]["action"] == "ack"
 
 
@@ -130,8 +130,8 @@ def test_ack_rejects_running_task(tmp_path: Path) -> None:
 
 def test_snapshot_includes_other_tasks_from_shared_store(tmp_path: Path) -> None:
     runtime, _ = _runtime(tmp_path)
-    execution_id = str(runtime.executions.start("sleep 1", timeout=3)["execution_id"])
-    external = runtime.task_store.create(execution_id=execution_id, label="external-task")
+    execution_id = str(runtime.rt.executions.start("sleep 1", timeout=3)["execution_id"])
+    external = runtime.rt.task_store.create(execution_id=execution_id, label="external-task")
 
     snapshot = runtime.call(action="sync", text="peek")
 
@@ -143,7 +143,7 @@ def test_snapshot_includes_other_tasks_from_shared_store(tmp_path: Path) -> None
             "age_sec": snapshot["tasks"][0]["age_sec"],
         }
     ]
-    runtime.executions.cancel(execution_id)
+    runtime.rt.executions.cancel(execution_id)
 
 
 def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
@@ -200,7 +200,7 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
         dive_snapshot = next(task for task in conduit_snapshot if task["id"] == dive_task_id)
         assert dive_snapshot["status_label"] == "TODOS 3/9"
 
-        runtime.executions.cancel(conduit_execution_id)
+        runtime.rt.executions.cancel(conduit_execution_id)
         asyncio.run(gpt_dive.code_mode("await task_cancel(PAYLOAD)", payload=dive_task_id))
     finally:
         app_module.task_store = original_task_store
@@ -211,7 +211,7 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
 def test_conduit_snapshot_is_bounded(tmp_path: Path) -> None:
     runtime, _ = _runtime(tmp_path)
     for index in range(9):
-        runtime.task_store.create(
+        runtime.rt.task_store.create(
             execution_id=f"missing-{index}",
             label=f"task-{index}",
             state="lost",

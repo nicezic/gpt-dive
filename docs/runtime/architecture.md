@@ -117,7 +117,7 @@ src/gpt_dive/
 ├── command_runtime.py
 ├── execution_manager.py
 ├── task_store.py
-├── task_runtime.py     # shared Task lifecycle + background result normalizer (@dive/@c)
+├── task_runtime.py     # shared Task lifecycle + background result normalizer (@dive/@c); TaskRuntime bundles the (executions, task_store) pair
 ├── conduit/
 ├── subagent_runtime.py
 ├── subagent_worker.py

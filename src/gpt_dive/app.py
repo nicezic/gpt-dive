@@ -19,7 +19,7 @@ from .code_capabilities import build_code_registry, code_runtime
 from .command_runtime import run_command as _run_command
 from .execution_manager import ExecutionManager
 from .runtime_diagnostics import request_lifecycle_middleware
-from .task_runtime import CODE_MODE_WORKER_PROTOCOL
+from .task_runtime import CODE_MODE_WORKER_PROTOCOL, TaskRuntime
 from .task_runtime import ack_task as runtime_ack_task
 from .task_runtime import cancel_task as runtime_cancel_task
 from .task_runtime import (
@@ -455,8 +455,13 @@ def _cleanup_code_mode_request(execution_id: str) -> None:
     _runtime_cleanup_code_mode_request(executions, execution_id)
 
 
+def _task_runtime() -> TaskRuntime:
+    """Assemble the pair at call time so tests can swap either half."""
+    return TaskRuntime(executions, task_store)
+
+
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-    return _runtime_list_projected_tasks(executions, task_store, limit=limit)
+    return _runtime_list_projected_tasks(_task_runtime(), limit=limit)
 
 
 def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
@@ -464,15 +469,15 @@ def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str
 
 
 def _task_collect(task_id: str) -> dict[str, Any]:
-    return runtime_collect_task(executions, task_store, task_id)
+    return runtime_collect_task(_task_runtime(), task_id)
 
 
 def _task_cancel(task_id: str) -> dict[str, Any]:
-    return runtime_cancel_task(executions, task_store, task_id)
+    return runtime_cancel_task(_task_runtime(), task_id)
 
 
 def _task_ack(task_id: str) -> dict[str, Any]:
-    return runtime_ack_task(executions, task_store, task_id)
+    return runtime_ack_task(_task_runtime(), task_id)
 
 
 def _start_background_code_mode(

@@ -832,7 +832,7 @@ def test_task_status_display_falls_back_without_changing_state(
         app_module.task_store.create(execution_id="b", label="fail", status_cmd="fail", status="FAILBACK")
         app_module.task_store.create(execution_id="c", label="timeout", status_cmd="timeout", status="TIMEOUTBACK")
         app_module.task_store.create(execution_id="d", label="empty", status_cmd="empty", status="EMPTYBACK")
-        monkeypatch.setattr(task_runtime_module, "refresh_task", lambda executions, store, task: task)
+        monkeypatch.setattr(task_runtime_module, "refresh_task", lambda rt, task: task)
         monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
 
         tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]

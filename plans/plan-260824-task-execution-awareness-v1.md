@@ -1,5 +1,7 @@
 ## Problem Statement
 
+> **2026-08-25 status:** v1 shipped (`4f7f30d..3f73998`) and survived a full review cycle. Implementation sequence + acceptance checklist live in `plans/runtime/2026-08-24-task-execution-awareness-v1.md` (including its post-ship work log). The decisions below are kept verbatim as the historical record; follow-up slice after the review cycle is a separate plan: `plans/runtime/2026-08-25-task-runtime-bundle.md`.
+
 GPT Dive can already run durable background work, but Web SOL must remember raw execution handles manually. That works for one detached process, but it does not scale to heterogeneous long-running work such as background Code Mode, AGY, peer review, and later Conduit work.
 
 The missing layer is durable **Task awareness**:
