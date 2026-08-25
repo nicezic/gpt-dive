@@ -95,6 +95,14 @@ Bundling removes the position where the pair could be split or reordered at all.
 - Deviation noted: plan originally expected tests to rebuild a `TASK_RUNTIME` constant; implemented as a call-time accessor (`_task_runtime()`) reading the live globals instead — same bundle benefit, zero blast radius on the ~6 swap-pattern tests.
 - Live canary evidence for the worker path comes from the existing real-subprocess coverage (`test_code_mode_task_aware_background_launch_and_task_list` et al.), which spawns the worker and drives `task_list`/`task_collect`/`task_ack` end to end.
 
+## Post-implementation decisions (/grill-me, 2026-08-25)
+
+All three open questions resolved by user acceptance of recommendations; no follow-up work required.
+
+1. Shared probe pool stays un-shut-down for process lifetime — probes are bounded at 1s, idle threads cost ~0, service-lifetime process makes exit cleanup moot.
+2. No compatibility properties on `ConduitRuntime` for the removed `.executions`/`.task_store` fields — no external consumers exist; properties would resurrect Middle Man.
+3. Bundling boundary stands: helpers taking bare `executions` without `task_store` (`read_execution_result`, `code_mode_request_*`) are not clump members and stay unbundled — forcing the bundle would create fake coupling.
+
 ## Out of scope
 
 - `probe_status_labels` internals beyond what bundling requires (pool already shared via `2f049ac`).
