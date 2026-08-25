@@ -7,7 +7,7 @@ from typing import Any
 
 from .model_registry import ModelAlias, model_catalog, resolve_model
 from .runtime_env import build_runtime_path
-from .worker_subprocess import run_bounded_worker, stderr_tail
+from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
@@ -76,24 +76,16 @@ async def invoke_subagent(
         timeout=timeout,
         log_label="SUBAGENT",
     )
+    failure = worker_failure(outcome, kind="subagent", timeout=timeout)
+    if failure is not None:
+        failure["model"] = alias.value
+        failure["provider"] = alias.provider
+        if not outcome.timed_out:
+            failure["stderr"] = stderr_tail(outcome.stderr_text)
+        return failure
+
     stdout_text = outcome.stdout_text
     stderr_text = outcome.stderr_text
-    if outcome.timed_out:
-        return {
-            "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
-            "error": f"subagent call timed out after {timeout} seconds",
-        }
-    if outcome.returncode != 0:
-        return {
-            "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
-            "error": f"subagent worker exited with code {outcome.returncode}",
-            "stderr": stderr_tail(stderr_text),
-        }
-
     try:
         result = json.loads(stdout_text)
     except json.JSONDecodeError as exc:

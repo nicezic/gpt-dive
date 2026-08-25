@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .worker_subprocess import run_bounded_worker, stderr_tail
+from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
 
 AGY = Path.home() / ".local" / "bin" / "agy"
 DEFAULT_MODEL = "gemini-3.7-flash-high"
@@ -153,36 +153,26 @@ async def invoke_agy_worker(
 
     stdout_text = outcome.stdout_text
     stderr_text = outcome.stderr_text
-    if outcome.timed_out:
-        conversation_id, terminal = _extract_stream_metadata(stdout_text)
-        payload: dict[str, Any] = {
-            "ok": False,
-            "provider": _PROVIDER,
-            "model_name": model,
-            "timed_out": True,
-            "error": f"agy worker timed out after {timeout} seconds",
-        }
-        if conversation_id is not None:
-            payload["conversation_id"] = conversation_id
-        if terminal is not None:
-            response = terminal.get("response")
-            if isinstance(response, str) and response:
-                payload["partial_output"] = response.rstrip("\n")
-        if stdout_text:
-            payload["stdout"] = stdout_text[-4000:]
-        if stderr_text:
-            payload["stderr"] = stderr_tail(stderr_text)
-        return payload
-
-    if outcome.returncode != 0:
-        return {
-            "ok": False,
-            "provider": _PROVIDER,
-            "model_name": model,
-            "error": f"agy exited with code {outcome.returncode}",
-            "stdout": stdout_text[-2000:],
-            "stderr": stderr_tail(stderr_text),
-        }
+    failure = worker_failure(outcome, kind="agy", timeout=timeout)
+    if failure is not None:
+        failure["provider"] = _PROVIDER
+        failure["model_name"] = model
+        if outcome.timed_out:
+            conversation_id, terminal = _extract_stream_metadata(stdout_text)
+            if conversation_id is not None:
+                failure["conversation_id"] = conversation_id
+            if terminal is not None:
+                response = terminal.get("response")
+                if isinstance(response, str) and response:
+                    failure["partial_output"] = response.rstrip("\n")
+            if stdout_text:
+                failure["stdout"] = stdout_text[-4000:]
+            if stderr_text:
+                failure["stderr"] = stderr_tail(stderr_text)
+        else:
+            failure["stdout"] = stdout_text[-2000:]
+            failure["stderr"] = stderr_tail(stderr_text)
+        return failure
 
     try:
         result = _parse_stream_json(stdout_text)

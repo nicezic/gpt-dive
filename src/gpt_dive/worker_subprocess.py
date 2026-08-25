@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import signal
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 logger = logging.getLogger("gpt_dive.runtime")
 
@@ -27,6 +27,30 @@ class WorkerOutcome(NamedTuple):
 def stderr_tail(stderr_text: str) -> str:
     """Best-effort diagnostics tail shared by every worker caller."""
     return stderr_text[-_STDERR_TAIL_CHARS:]
+
+
+def worker_failure(
+    outcome: WorkerOutcome, *, kind: str, timeout: float
+) -> dict[str, Any] | None:
+    """Shared failure detection for one bounded worker run.
+
+    Returns the base ``{"ok": False, "error": ...}`` payload when the worker
+    timed out or exited nonzero, or None when the caller may proceed to parse
+    the envelope. Lane-specific fields (labels, tails, partial output) stay
+    with each caller, per the documented envelope policy.
+    """
+    if outcome.timed_out:
+        return {
+            "ok": False,
+            "timed_out": True,
+            "error": f"{kind} worker timed out after {timeout} seconds",
+        }
+    if outcome.returncode != 0:
+        return {
+            "ok": False,
+            "error": f"{kind} worker exited with code {outcome.returncode}",
+        }
+    return None
 
 
 async def _terminate_and_reap(
