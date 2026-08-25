@@ -5,7 +5,7 @@ import shlex
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .command_runtime import run_command
 from .execution_manager import ExecutionManager, ExecutionNotFoundError
@@ -14,6 +14,17 @@ from .worker_subprocess import stderr_tail
 
 CODE_MODE_WORKER_PROTOCOL = 2
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled"}
+
+
+class TaskRuntime(NamedTuple):
+    """Paired handles for Task-aware execution bookkeeping.
+
+    Every Task-domain operation needs both halves; bundling them removes
+    the position where the pair could be split or reordered at call sites.
+    """
+
+    executions: ExecutionManager
+    task_store: TaskStore
 
 
 def code_mode_request_dir(executions: ExecutionManager) -> Path:
@@ -255,16 +266,15 @@ def _probe_pool() -> ThreadPoolExecutor:
 
 
 def list_projected_tasks(
-    executions: ExecutionManager,
-    task_store: TaskStore,
+    rt: TaskRuntime,
     *,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Refresh every stored Task and return the projected awareness rows."""
-    tasks = task_store.list_tasks()
+    tasks = rt.task_store.list_tasks()
     if limit is not None:
         tasks = tasks[:limit]
-    refreshed = [refresh_task(executions, task_store, task) for task in tasks]
+    refreshed = [refresh_task(rt, task) for task in tasks]
     labels = probe_status_labels(refreshed)
     return [
         project_task(task, status_label=labels.get(str(task["task_id"])))
@@ -307,18 +317,16 @@ def render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
     return "\n".join(lines)
 
 
-def refresh_task(
-    executions: ExecutionManager, task_store: TaskStore, task: dict[str, Any]
-) -> dict[str, Any]:
+def refresh_task(rt: TaskRuntime, task: dict[str, Any]) -> dict[str, Any]:
     if task["state"] == "lost":
         return task
 
     task_id = str(task["task_id"])
     execution_id = str(task["execution_id"])
     try:
-        execution = executions.status(execution_id)
+        execution = rt.executions.status(execution_id)
     except ExecutionNotFoundError:
-        return task_store.update_state(task_id, "lost")
+        return rt.task_store.update_state(task_id, "lost")
 
     if str(execution.get("status") or "") == "running":
         return task
@@ -326,18 +334,16 @@ def refresh_task(
         return task
 
     try:
-        result = read_execution_result(executions, execution_id)
+        result = read_execution_result(rt.executions, execution_id)
     except (ExecutionNotFoundError, FileNotFoundError):
-        return task_store.update_state(task_id, "lost")
+        return rt.task_store.update_state(task_id, "lost")
     if not result.get("ready", True):
         return task
-    return task_store.update_state(task_id, _state_from_result(result))
+    return rt.task_store.update_state(task_id, _state_from_result(result))
 
 
-def collect_task(
-    executions: ExecutionManager, task_store: TaskStore, task_id: str
-) -> dict[str, Any]:
-    task = refresh_task(executions, task_store, task_store.get(task_id))
+def collect_task(rt: TaskRuntime, task_id: str) -> dict[str, Any]:
+    task = refresh_task(rt, rt.task_store.get(task_id))
     if task["state"] == "working":
         return {"task": task, "ready": False}
     if task["state"] == "lost":
@@ -345,34 +351,30 @@ def collect_task(
 
     execution_id = str(task["execution_id"])
     try:
-        result = read_execution_result(executions, execution_id)
+        result = read_execution_result(rt.executions, execution_id)
     except (ExecutionNotFoundError, FileNotFoundError):
-        task = task_store.update_state(str(task["task_id"]), "lost")
+        task = rt.task_store.update_state(str(task["task_id"]), "lost")
         return {"task": task, "ready": False, "unavailable": True}
     return {"task": task, "ready": True, "result": result}
 
 
-def cancel_task(
-    executions: ExecutionManager, task_store: TaskStore, task_id: str
-) -> dict[str, Any]:
-    task = refresh_task(executions, task_store, task_store.get(task_id))
+def cancel_task(rt: TaskRuntime, task_id: str) -> dict[str, Any]:
+    task = refresh_task(rt, rt.task_store.get(task_id))
     if task["state"] != "working":
         return {"task": task}
 
     execution_id = str(task["execution_id"])
     try:
-        executions.cancel(execution_id)
+        rt.executions.cancel(execution_id)
     except ExecutionNotFoundError:
-        task = task_store.update_state(str(task["task_id"]), "lost")
+        task = rt.task_store.update_state(str(task["task_id"]), "lost")
         return {"task": task}
-    return {"task": refresh_task(executions, task_store, task_store.get(task_id))}
+    return {"task": refresh_task(rt, rt.task_store.get(task_id))}
 
 
-def ack_task(
-    executions: ExecutionManager, task_store: TaskStore, task_id: str
-) -> dict[str, Any]:
-    task = refresh_task(executions, task_store, task_store.get(task_id))
+def ack_task(rt: TaskRuntime, task_id: str) -> dict[str, Any]:
+    task = refresh_task(rt, rt.task_store.get(task_id))
     if task["state"] == "working":
         raise ValueError("task_ack requires a terminal or lost Task")
-    task_store.delete(task_id)
+    rt.task_store.delete(task_id)
     return {"task_id": str(task["task_id"]), "state": str(task["state"]), "acked": True}

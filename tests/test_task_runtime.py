@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gpt_dive.execution_manager import ExecutionManager
-from gpt_dive.task_runtime import ack_task, collect_task, refresh_task
+from gpt_dive.task_runtime import TaskRuntime, ack_task, collect_task, refresh_task
 from gpt_dive.task_store import TaskStore
 
 
@@ -32,12 +32,12 @@ def test_raw_shell_task_success_and_failure_share_runtime(tmp_path: Path) -> Non
     _wait_terminal(executions, ok_execution)
     _wait_terminal(executions, failed_execution)
 
-    ok_task = refresh_task(executions, store, ok)
-    failed_task = refresh_task(executions, store, failed)
+    ok_task = refresh_task(TaskRuntime(executions, store), ok)
+    failed_task = refresh_task(TaskRuntime(executions, store), failed)
     assert ok_task["state"] == "completed"
     assert failed_task["state"] == "failed"
 
-    collected = collect_task(executions, store, str(ok["task_id"]))
+    collected = collect_task(TaskRuntime(executions, store), str(ok["task_id"]))
     assert collected["ready"] is True
     assert collected["result"]["stdout"] == "OK"
 
@@ -46,7 +46,7 @@ def test_raw_shell_task_success_and_failure_share_runtime(tmp_path: Path) -> Non
     )
     text_task = store.create(execution_id=text_execution, label="raw-text")
     _wait_terminal(executions, text_execution)
-    text_collected = collect_task(executions, store, str(text_task["task_id"]))
+    text_collected = collect_task(TaskRuntime(executions, store), str(text_task["task_id"]))
     assert text_collected["task"]["state"] == "completed"
     assert text_collected["result"]["stdout"] == "-m gpt_dive.code_mode_worker"
 
@@ -57,10 +57,10 @@ def test_missing_execution_becomes_lost_and_can_be_acked(tmp_path: Path) -> None
     store = TaskStore(tmp_path / "tasks.sqlite3")
     task = store.create(execution_id="missing-execution", label="missing")
 
-    refreshed = refresh_task(executions, store, task)
+    refreshed = refresh_task(TaskRuntime(executions, store), task)
     assert refreshed["state"] == "lost"
 
-    acked = ack_task(executions, store, str(task["task_id"]))
+    acked = ack_task(TaskRuntime(executions, store), str(task["task_id"]))
     assert acked == {"task_id": task["task_id"], "state": "lost", "acked": True}
     assert store.list_tasks() == []
 

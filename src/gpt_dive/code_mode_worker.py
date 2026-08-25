@@ -12,6 +12,7 @@ from .command_runtime import run_command
 from .execution_manager import ExecutionManager
 from .task_runtime import (
     CODE_MODE_WORKER_PROTOCOL,
+    TaskRuntime,
     ack_task,
     cancel_task,
     collect_task,
@@ -21,20 +22,19 @@ from .task_store import TaskStore
 
 
 def _tracked_task_ops() -> dict[str, Any]:
-    executions = ExecutionManager()
-    task_store = TaskStore()
+    rt = TaskRuntime(ExecutionManager(), TaskStore())
 
     def task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-        return list_projected_tasks(executions, task_store, limit=limit)
+        return list_projected_tasks(rt, limit=limit)
 
     def task_collect(task_id: str) -> dict[str, Any]:
-        return collect_task(executions, task_store, task_id)
+        return collect_task(rt, task_id)
 
     def task_cancel(task_id: str) -> dict[str, Any]:
-        return cancel_task(executions, task_store, task_id)
+        return cancel_task(rt, task_id)
 
     def task_ack(task_id: str) -> dict[str, Any]:
-        return ack_task(executions, task_store, task_id)
+        return ack_task(rt, task_id)
 
     return {
         "task_list": task_list,

@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from ..execution_manager import ExecutionManager
 from ..task_runtime import (
+    TaskRuntime,
     ack_task,
     collect_task,
     probe_status_labels,
@@ -28,8 +29,7 @@ class ConduitRuntime:
         task_store: TaskStore,
         publisher: EventPublisher,
     ) -> None:
-        self.executions = executions
-        self.task_store = task_store
+        self.rt = TaskRuntime(executions, task_store)
         self.publisher = publisher
 
     def call(
@@ -53,15 +53,15 @@ class ConduitRuntime:
                 raise ValueError("start label must not be empty")
             if len(clean_label) > 80:
                 raise ValueError("start label must be 80 characters or fewer")
-            started = self.executions.start(command, cwd=cwd, timeout=timeout)
+            started = self.rt.executions.start(command, cwd=cwd, timeout=timeout)
             execution_id = str(started["execution_id"])
             try:
-                task = self.task_store.create(
+                task = self.rt.task_store.create(
                     execution_id=execution_id,
                     label=clean_label,
                 )
             except Exception:
-                self.executions.cancel(execution_id)
+                self.rt.executions.cancel(execution_id)
                 raise
             result: dict[str, Any] = {
                 "task_id": str(task["task_id"]),
@@ -107,8 +107,8 @@ class ConduitRuntime:
 
     def snapshot(self) -> list[dict[str, object]]:
         refreshed = [
-            refresh_task(self.executions, self.task_store, stored)
-            for stored in self.task_store.list_tasks()[:8]
+            refresh_task(self.rt, stored)
+            for stored in self.rt.task_store.list_tasks()[:8]
         ]
         labels = probe_status_labels(refreshed)
         tasks: list[dict[str, object]] = []
@@ -127,7 +127,7 @@ class ConduitRuntime:
         return tasks
 
     def _collect(self, task_id: str) -> dict[str, Any]:
-        collected = collect_task(self.executions, self.task_store, task_id)
+        collected = collect_task(self.rt, task_id)
         task = collected["task"]
         mapped = self._map_state(str(task["state"]))
         if not collected["ready"]:
@@ -148,7 +148,7 @@ class ConduitRuntime:
 
     def _ack(self, task_id: str) -> dict[str, object]:
         try:
-            acked = ack_task(self.executions, self.task_store, task_id)
+            acked = ack_task(self.rt, task_id)
         except ValueError as exc:
             raise ValueError("ack requires a terminal or lost task") from exc
         return {
