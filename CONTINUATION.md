@@ -21,7 +21,7 @@ Implemented and verified on 2026-08-24 (commits `4f7f30d`..`7cdd1a7`): Task-awar
 
 ## Night Sweep 2026-08-24 — branch `improve/260824-night-sweep`
 
-Autonomous opencode improvement branch on top of `3f73998`, **not merged**; all gates green at each commit (pytest / ruff / pyright / git diff --check). Review before merging.
+Autonomous opencode improvement branch on top of `3f73998`; all gates green at each commit (pytest / ruff / pyright / git diff --check). Merged to main as `d437e3c` after review.
 
 - Background Code Mode result normalization unified into `task_runtime.read_execution_result`; duplicated parser in `app.py` removed. Behavior note: `code_mode action=result` on a raw shell execution now returns the honest raw result instead of a misleading `worker_protocol_error`.
 - Capability registry construction extracted to `code_capabilities.py`; `code_mode_worker` wires its own deps and no longer imports the MCP server module.
