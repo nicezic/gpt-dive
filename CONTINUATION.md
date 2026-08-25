@@ -9,7 +9,7 @@ Implemented and verified on 2026-08-26 (commit `4b8096d`): the `background` flag
 
 - Decision SSOT: `docs/runtime/adr/0002-task-object-detachment.md` — delta over runtime ADR 0001, which stays untouched as shipped-v1 history
 - Spec/evidence: `plans/runtime/2026-08-26-task-object-detachment.md`, `plans/runtime/2026-08-26-task-object-detachment-v1.md`
-- **Not merged to main yet**; independent AGY review returned ACCEPT.
+- Merged to main (`15ba39d`) after an independent AGY review returned ACCEPT; local commits not pushed to origin yet.
 
 ## Completed Runtime Work — Task / Execution / TrackedTasks v1
 
