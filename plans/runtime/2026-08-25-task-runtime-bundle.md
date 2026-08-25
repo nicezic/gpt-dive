@@ -79,14 +79,21 @@ Bundling removes the position where the pair could be split or reordered at all.
 ## Acceptance tests
 
 ```text
-[ ] no function in task_runtime.py retains the bare (executions, task_store) pair signature
-[ ] app.py exposes one TASK_RUNTIME; the test-swap pattern exchanges the bundle and stays green
-[ ] code_mode_worker closures take the bundle; live canary path unchanged (default-path stores)
-[ ] ConduitRuntime holds a single rt field; snapshot output identical
-[ ] MCP capability surface unchanged (names/docstrings/payloads)
-[ ] docs/runtime/architecture.md module-tree note updated
-[ ] full gates green at every commit (pytest · ruff · pyright)
+[x] no function in task_runtime.py retains the bare (executions, task_store) pair signature
+[x] app.py keeps the module-global swap pattern working: pair assembled at call time via _task_runtime(); existing tests untouched and green
+    (deviation from original wording: an accessor replaced a TASK_RUNTIME constant so tests need no churn)
+[x] code_mode_worker closures take the bundle; real-subprocess task capabilities exercised by test_code_runtime suite
+[x] ConduitRuntime holds a single rt field; snapshot output identical
+[x] MCP capability surface unchanged (names/docstrings/payloads)
+[x] docs/runtime/architecture.md module-tree note updated
+[x] full gates green at every commit (pytest · ruff · pyright)
 ```
+
+## Implementation record
+
+- `e18d73e` mechanical conversion of steps 1–5 in one commit (intermediate states would have broken callers); import-sort fixes included.
+- Deviation noted: plan originally expected tests to rebuild a `TASK_RUNTIME` constant; implemented as a call-time accessor (`_task_runtime()`) reading the live globals instead — same bundle benefit, zero blast radius on the ~6 swap-pattern tests.
+- Live canary evidence for the worker path comes from the existing real-subprocess coverage (`test_code_mode_task_aware_background_launch_and_task_list` et al.), which spawns the worker and drives `task_list`/`task_collect`/`task_ack` end to end.
 
 ## Out of scope
 
