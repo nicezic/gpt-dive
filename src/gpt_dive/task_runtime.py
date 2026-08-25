@@ -2,33 +2,35 @@ from __future__ import annotations
 
 import json
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from .command_runtime import run_command
 from .execution_manager import ExecutionManager, ExecutionNotFoundError
 from .task_store import TaskStore
+from .worker_subprocess import stderr_tail
 
 CODE_MODE_WORKER_PROTOCOL = 2
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled"}
 
 
-def _code_mode_request_dir(executions: ExecutionManager) -> Path:
+def code_mode_request_dir(executions: ExecutionManager) -> Path:
     return executions.root.parent / "code-mode-inputs"
 
 
-def _code_mode_request_ref(executions: ExecutionManager, execution_id: str) -> Path:
+def code_mode_request_ref(executions: ExecutionManager, execution_id: str) -> Path:
     return executions.root / execution_id / "code_mode_payload.ref"
 
 
-def _cleanup_code_mode_request(executions: ExecutionManager, execution_id: str) -> None:
-    ref = _code_mode_request_ref(executions, execution_id)
+def cleanup_code_mode_request(executions: ExecutionManager, execution_id: str) -> None:
+    ref = code_mode_request_ref(executions, execution_id)
     if not ref.is_file():
         return
     try:
         raw = ref.read_text().strip()
         request_path = Path(raw).resolve()
-        request_path.relative_to(_code_mode_request_dir(executions).resolve())
+        request_path.relative_to(code_mode_request_dir(executions).resolve())
         request_path.unlink(missing_ok=True)
     except OSError, ValueError:
         pass
@@ -50,7 +52,7 @@ def _background_error(
     }
     stderr = str(raw.get("stderr") or "").strip()
     if stderr:
-        result["worker_stderr"] = stderr[-2000:]
+        result["worker_stderr"] = stderr_tail(stderr)
     return result
 
 
@@ -59,7 +61,7 @@ def _is_code_mode_execution(
     execution_id: str,
     envelope: dict[str, Any] | None,
 ) -> bool:
-    if _code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
+    if code_mode_request_ref(executions, execution_id).is_file() or envelope is not None:
         return True
     meta_path = executions.root / execution_id / "meta.json"
     try:
@@ -137,7 +139,7 @@ def read_execution_result(executions: ExecutionManager, execution_id: str) -> di
     if not _is_code_mode_execution(executions, execution_id, envelope):
         return raw
 
-    _cleanup_code_mode_request(executions, execution_id)
+    cleanup_code_mode_request(executions, execution_id)
     if raw.get("status") == "cancelled":
         return _background_error(
             raw,
@@ -199,11 +201,55 @@ def task_elapsed_seconds(task: dict[str, Any]) -> int:
     return max(0, int((end - created).total_seconds()))
 
 
-def project_task(task: dict[str, Any]) -> dict[str, Any]:
+_UNSET_STATUS_LABEL = object()
+
+
+def project_task(
+    task: dict[str, Any], *, status_label: Any = _UNSET_STATUS_LABEL
+) -> dict[str, Any]:
     projected = dict(task)
-    projected["status_label"] = task_status_label(task)
+    projected["status_label"] = (
+        task_status_label(task) if status_label is _UNSET_STATUS_LABEL else status_label
+    )
     projected["elapsed_seconds"] = task_elapsed_seconds(task)
     return projected
+
+
+def probe_status_labels(tasks: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Run bounded status_cmd probes concurrently so wall time stays near one probe.
+
+    Only working Tasks with a status_cmd need a probe; every other projected
+    row keeps its static fallback (or no decoration). Returns a map keyed by
+    task_id for tasks that were probed.
+    """
+    candidates = [task for task in tasks if task["state"] == "working"]
+    if not candidates:
+        return {}
+    workers = min(len(candidates), 8)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            str(task["task_id"]): pool.submit(task_status_label, task)
+            for task in candidates
+        }
+        return {task_id: future.result() for task_id, future in futures.items()}
+
+
+def list_projected_tasks(
+    executions: ExecutionManager,
+    task_store: TaskStore,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Refresh every stored Task and return the projected awareness rows."""
+    tasks = task_store.list_tasks()
+    if limit is not None:
+        tasks = tasks[:limit]
+    refreshed = [refresh_task(executions, task_store, task) for task in tasks]
+    labels = probe_status_labels(refreshed)
+    return [
+        project_task(task, status_label=labels.get(str(task["task_id"])))
+        for task in refreshed
+    ]
 
 
 _TASK_STATE_MARKERS = {

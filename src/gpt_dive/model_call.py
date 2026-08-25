@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import signal
 from pathlib import Path
 from typing import Any
 
@@ -13,19 +11,25 @@ from pydantic_ai_harness import CodeMode, FileSystem
 
 from .filesystem_policy import harness_denied_patterns, is_secret_path
 from .model_registry import (
+    PROVIDER_ROUTES,
     ModelAlias,
     build_model,
     build_provider_model,
     model_output_tokens_limit,
     resolve_model,
+    verify_provider_model,
 )
 from .runtime_env import build_runtime_path
+from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDS = Path.home() / ".local" / "bin" / "creds"
 UV = Path.home() / ".local" / "bin" / "uv"
 
 _PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
+_PEER_DEFAULT_OUTPUT_TOKENS_LIMIT = 8_192
+
+_EMPTY_PROMPT_ERROR = "prompt must not be empty"
 
 _PEER_REVIEW_INSTRUCTIONS = (
     "Act as an independent peer reviewer. Use the supplied packet as the primary evidence path. "
@@ -81,9 +85,9 @@ def _validate(
     timeout: float,
     output_tokens_limit: int | None,
 ) -> ModelAlias:
-    alias = resolve_model(model, lane="bare")
+    alias = resolve_model(model, lane="peer_review")
     if not prompt.strip():
-        raise ValueError("prompt must not be empty")
+        raise ValueError(_EMPTY_PROMPT_ERROR)
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
     if output_tokens_limit is not None and output_tokens_limit <= 0:
@@ -99,14 +103,42 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
 
     if peer_review:
         provider = str(payload["provider"])
-        model_name = str(payload["model"])
+        route = PROVIDER_ROUTES.get(provider)
+        if route is None:
+            known = ", ".join(sorted(PROVIDER_ROUTES))
+            return {
+                "ok": False,
+                "mode": "peer-review",
+                "provider": provider,
+                "error": f"unknown peer provider {provider!r}; registered providers: {known}",
+            }
+        explicit_model = bool(payload.get("model") and str(payload["model"]).strip())
+        model_name = str(payload["model"]).strip() if explicit_model else route.default_model
+        # Defense line across the process boundary: this worker is spawned with
+        # stdin JSON, so it re-checks what the host already validated in case a
+        # future spawner skips the host-side gate.
         if not prompt.strip():
-            raise ValueError("prompt must not be empty")
-        output_tokens_limit = model_output_tokens_limit(model_name)
-        if output_tokens_limit is None:
-            raise ValueError(f"model {model_name!r} has no output_tokens_limit metadata")
+            raise ValueError(_EMPTY_PROMPT_ERROR)
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
+
+        if explicit_model:
+            verification = await verify_provider_model(provider, model_name)
+            if verification["checked"] and not verification["exists"]:
+                return {
+                    "ok": False,
+                    "mode": "peer-review",
+                    "model": model_name,
+                    "provider": provider,
+                    "error": (
+                        f"model {model_name!r} is not offered by provider {provider!r}"
+                    ),
+                    "available_models": sorted(verification["available"]),
+                }
+
+        output_tokens_limit = (
+            model_output_tokens_limit(model_name) or _PEER_DEFAULT_OUTPUT_TOKENS_LIMIT
+        )
         agent = Agent(
             build_provider_model(provider, model_name),
             instructions=_PEER_REVIEW_INSTRUCTIONS,
@@ -148,13 +180,24 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     provider_details = response.provider_details or {}
     provider_finish_reason = provider_details.get("finish_reason")
     truncated = finish_reason == "length"
+    # Resolve the lane identity once instead of branching on peer_review per field.
+    if peer_review:
+        model_label = model_name
+        provider_label_result = provider
+        resolved_model_name = model_name
+        mode = "peer-review"
+    else:
+        model_label = alias.value
+        provider_label_result = alias.provider
+        resolved_model_name = alias.model_name
+        mode = "model-call"
     return {
         "ok": not truncated,
-        "model": model_name if peer_review else alias.value,
-        "provider": provider if peer_review else alias.provider,
-        "model_name": model_name if peer_review else alias.model_name,
+        "model": model_label,
+        "provider": provider_label_result,
+        "model_name": resolved_model_name,
         "output": str(result.output),
-        "mode": "peer-review" if peer_review else "bare",
+        "mode": mode,
         "finish_reason": finish_reason,
         "provider_finish_reason": provider_finish_reason,
         "truncated": truncated,
@@ -162,9 +205,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def invoke_bare(
+async def invoke_model_call(
     *,
-    model: str | ModelAlias,
+    model: str | ModelAlias | None,
     prompt: str,
     timeout: float,
     output_tokens_limit: int = 4096,
@@ -175,18 +218,20 @@ async def invoke_bare(
 ) -> dict[str, Any]:
     """Run a model call, using provider + exact model name for peer review."""
     if not prompt.strip():
-        raise ValueError("prompt must not be empty")
+        raise ValueError(_EMPTY_PROMPT_ERROR)
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
 
     if peer_review:
         if not provider:
             raise ValueError("provider is required for peer-review mode")
-        model_label = str(model)
         provider_label = provider
-        payload_model = model_label
+        payload_model = str(model).strip() if model is not None and str(model).strip() else None
+        model_label = payload_model or ""
         requested_output_tokens_limit = None
     else:
+        if model is None:
+            raise ValueError("model is required for alias-based model calls")
         alias = _validate(model, prompt, timeout, output_tokens_limit)
         model_label = alias.value
         provider_label = alias.provider
@@ -219,48 +264,29 @@ async def invoke_bare(
         "3.14",
         "python",
         "-m",
-        "gpt_dive.bare_worker",
+        "gpt_dive.model_call_worker",
         "--worker",
     ]
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
+    outcome = await run_bounded_worker(
+        command,
+        stdin_payload=payload,
         env=env,
+        timeout=timeout,
+        log_label="MODEL_CALL",
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(payload), timeout=timeout
-        )
-    except TimeoutError:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-        return {
-            "ok": False,
-            "model": model_label,
-            "provider": provider_label,
-            "error": f"bare call timed out after {timeout} seconds",
-        }
+    failure = worker_failure(outcome, kind="model call", timeout=timeout)
+    if failure is not None:
+        failure["model"] = model_label
+        failure["provider"] = provider_label
+        if not outcome.timed_out:
+            failure["stderr"] = stderr_tail(outcome.stderr_text)
+        return failure
 
-    stdout_text = stdout.decode(errors="replace").strip()
-    stderr_text = stderr.decode(errors="replace").strip()
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "model": model_label,
-            "provider": provider_label,
-            "error": f"bare worker exited with code {proc.returncode}",
-            "stderr": stderr_text[-2000:],
-        }
-
+    stdout_text = outcome.stdout_text
+    stderr_text = outcome.stderr_text
     try:
         result = json.loads(stdout_text)
     except json.JSONDecodeError as exc:
@@ -268,12 +294,12 @@ async def invoke_bare(
             "ok": False,
             "model": model_label,
             "provider": provider_label,
-            "error": f"invalid bare worker JSON: {exc}",
+            "error": f"invalid model call worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     if stderr_text:
-        result["worker_stderr"] = stderr_text[-2000:]
+        result["worker_stderr"] = stderr_tail(stderr_text)
     return result
 

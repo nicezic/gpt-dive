@@ -11,6 +11,7 @@ import pytest
 from pydantic_monty import MontyRuntimeError, MontyTypingError
 
 import gpt_dive.app as app_module
+import gpt_dive.code_capabilities as code_capabilities_module
 import gpt_dive.task_runtime as task_runtime_module
 from gpt_dive import code_mode
 
@@ -124,7 +125,7 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "stop_command",
         "agy_worker",
         "subagent_call",
-        "bare",
+        "peer_review",
         "m3_evidence",
         "repo_search",
         "council_emit",
@@ -188,7 +189,6 @@ def test_gz64_capability_round_trip() -> None:
 
 def test_subagent_call_is_registry_capability(monkeypatch) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     calls: list[dict[str, object]] = []
 
@@ -200,7 +200,7 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
             "output": "SUBAGENT_OK",
         }
 
-    monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
+    monkeypatch.setattr(code_capabilities_module, "invoke_subagent", fake_invoke_subagent)
     code = """\nresult = await subagent_call(\n    model='terra',\n    task='review this',\n    timeout=17,\n    output_tokens_limit=321,\n)\n{'ok': result['ok'], 'model': result['model'], 'output': result['output']}\n"""
     assert asyncio.run(gpt_dive.code_mode(code)) == {
         "result": {"ok": True, "model": "terra", "output": "SUBAGENT_OK"}
@@ -218,7 +218,6 @@ def test_subagent_call_is_registry_capability(monkeypatch) -> None:
 
 def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     calls: list[dict[str, object]] = []
 
@@ -226,7 +225,7 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
         calls.append(kwargs)
         return {"ok": True, "known": ["k"], "missing": [], "conflicts": [], "queries": [], "done": True}
 
-    monkeypatch.setattr(app_module, "invoke_m3_evidence", fake_invoke_m3_evidence)
+    monkeypatch.setattr(code_capabilities_module, "invoke_m3_evidence", fake_invoke_m3_evidence)
     code = "result = await m3_evidence(question='q', evidence='e', max_queries=2, timeout=30.0); result['done']"
     assert asyncio.run(gpt_dive.code_mode(code)) == {"result": True}
     assert calls == [{
@@ -240,19 +239,18 @@ def test_m3_evidence_is_registry_capability(monkeypatch) -> None:
     }]
 
 
-def test_bare_is_registry_capability(monkeypatch) -> None:
+def test_peer_review_is_registry_capability(monkeypatch) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     calls: list[dict[str, object]] = []
 
-    async def fake_invoke_bare(**kwargs):
+    async def fake_invoke_model_call(**kwargs):
         calls.append(kwargs)
         return {"ok": True, "model": kwargs["model"], "output": "BARE_OK"}
 
-    monkeypatch.setattr(app_module, "invoke_bare", fake_invoke_bare)
+    monkeypatch.setattr(code_capabilities_module, "invoke_model_call", fake_invoke_model_call)
     code = (
-        "result = await bare(provider='aiapiflow', model='claude-opus-5', "
+        "result = await peer_review(provider='aiapiflow', model='claude-opus-5', "
         "prompt='think', timeout=180.0); result['output']"
     )
     assert asyncio.run(gpt_dive.code_mode(code, cwd="/tmp/ignored")) == {
@@ -272,7 +270,6 @@ def test_bare_is_registry_capability(monkeypatch) -> None:
 
 def test_repo_search_is_registry_capability(monkeypatch, tmp_path: Path) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     calls: list[dict[str, object]] = []
 
@@ -280,7 +277,7 @@ def test_repo_search_is_registry_capability(monkeypatch, tmp_path: Path) -> None
         calls.append(kwargs)
         return {"ok": True, "engine": "probe", "count": 1, "results": []}
 
-    monkeypatch.setattr(app_module, "search_repo", fake_search_repo)
+    monkeypatch.setattr(code_capabilities_module, "search_repo", fake_search_repo)
     code = "result = await repo_search(query='model AND provider'); result['engine']"
     assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
         "result": "probe"
@@ -298,7 +295,6 @@ def test_repo_search_is_registry_capability(monkeypatch, tmp_path: Path) -> None
 
 def test_subagent_call_preserves_failure_diagnostics(monkeypatch) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     async def fake_invoke_subagent(**kwargs):
         return {
@@ -309,7 +305,7 @@ def test_subagent_call_preserves_failure_diagnostics(monkeypatch) -> None:
             "stderr": "worker detail",
         }
 
-    monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
+    monkeypatch.setattr(code_capabilities_module, "invoke_subagent", fake_invoke_subagent)
     result = asyncio.run(
         gpt_dive.code_mode("await subagent_call(model='luna', task='fail', timeout=30.0)")
     )["result"]
@@ -326,7 +322,6 @@ def test_subagent_call_inherits_code_mode_workspace(
     monkeypatch, tmp_path: Path
 ) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
 
     calls: list[dict[str, object]] = []
 
@@ -334,7 +329,7 @@ def test_subagent_call_inherits_code_mode_workspace(
         calls.append(kwargs)
         return {"ok": True, "model": kwargs["model"], "output": "WORKSPACE_OK"}
 
-    monkeypatch.setattr(app_module, "invoke_subagent", fake_invoke_subagent)
+    monkeypatch.setattr(code_capabilities_module, "invoke_subagent", fake_invoke_subagent)
     code = "result = await subagent_call(model='terra', task='edit file', timeout=30.0); result['output']"
     assert asyncio.run(gpt_dive.code_mode(code, cwd=str(tmp_path))) == {
         "result": "WORKSPACE_OK"
@@ -343,7 +338,6 @@ def test_subagent_call_inherits_code_mode_workspace(
 
 
 def test_council_emit_is_registry_capability(monkeypatch, tmp_path: Path) -> None:
-    import gpt_dive.app as app_module
 
     calls: list[tuple[str, str, str | None]] = []
 
@@ -351,7 +345,7 @@ def test_council_emit_is_registry_capability(monkeypatch, tmp_path: Path) -> Non
         calls.append((council_dir, message, expected_head))
         return {"ok": True, "commit": "abc123"}
 
-    monkeypatch.setattr(app_module, "emit_sol_response", fake_emit)
+    monkeypatch.setattr(code_capabilities_module, "emit_sol_response", fake_emit)
     code = (
         f"await council_emit(council_dir={str(tmp_path)!r}, "
         'message="SOL_OK", expected_head="deadbeef")'
@@ -838,7 +832,7 @@ def test_task_status_display_falls_back_without_changing_state(
         app_module.task_store.create(execution_id="b", label="fail", status_cmd="fail", status="FAILBACK")
         app_module.task_store.create(execution_id="c", label="timeout", status_cmd="timeout", status="TIMEOUTBACK")
         app_module.task_store.create(execution_id="d", label="empty", status_cmd="empty", status="EMPTYBACK")
-        monkeypatch.setattr(app_module, "_refresh_task", lambda task: task)
+        monkeypatch.setattr(task_runtime_module, "refresh_task", lambda executions, store, task: task)
         monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
 
         tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
@@ -1048,7 +1042,7 @@ def test_repo_search_relative_path_inherits_code_mode_cwd(
     async def fake_search_repo(**kwargs):
         return kwargs
 
-    monkeypatch.setattr(app_module, "search_repo", fake_search_repo)
+    monkeypatch.setattr(code_capabilities_module, "search_repo", fake_search_repo)
     result = asyncio.run(
         code_mode(
             "await repo_search(query='needle', path='src')",
@@ -1139,3 +1133,32 @@ def test_harness_shell_direct_registry_preserves_output_cap() -> None:
     )["result"]
     assert result["length"] == 50_000
     assert result["prefix"].startswith("[... output truncated, showing last ")
+
+
+def test_code_mode_result_passthrough_for_raw_shell_execution(tmp_path: Path) -> None:
+    import time
+
+    import gpt_dive
+
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
+    try:
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
+        started = gpt_dive.executions.start("printf RAW_PASSTHROUGH_OK", timeout=5)
+        execution_id = str(started["execution_id"])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if gpt_dive.executions.status(execution_id)["status"] != "running":
+                break
+            time.sleep(0.02)
+        result = asyncio.run(
+            code_mode(action="result", execution_id=execution_id)
+        )
+        assert result["exit_code"] == 0
+        assert result["stdout"] == "RAW_PASSTHROUGH_OK"
+        assert "error" not in result
+    finally:
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd

@@ -11,7 +11,7 @@ def test_code_mode_survives_repeated_async_capability_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import gpt_dive
-    import gpt_dive.app as app_module
+    import gpt_dive.code_capabilities as code_capabilities_module
 
     def make_fake_worker(
         started: asyncio.Event, blocker: asyncio.Event, cancelled: asyncio.Event
@@ -33,7 +33,7 @@ def test_code_mode_survives_repeated_async_capability_cancellation(
             blocker = asyncio.Event()
 
             monkeypatch.setattr(
-                app_module,
+                code_capabilities_module,
                 "invoke_agy_worker",
                 make_fake_worker(started, blocker, cancelled),
             )
@@ -57,6 +57,7 @@ def test_code_mode_cancellation_reaps_real_agy_worker(
 ) -> None:
     import gpt_dive
     import gpt_dive.agy_worker as agy_worker_module
+    import gpt_dive.worker_subprocess as worker_subprocess_module
 
     fake_agy = tmp_path / "agy"
     fake_agy.write_text("fake")
@@ -71,7 +72,7 @@ def test_code_mode_cancellation_reaps_real_agy_worker(
             self.done = asyncio.Event()
             self.reaped = False
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, _stdin_payload: object = None) -> tuple[bytes, bytes]:
             self.started.set()
             await self.done.wait()
             self.returncode = -signal.SIGTERM
@@ -89,11 +90,11 @@ def test_code_mode_cancellation_reaps_real_agy_worker(
         proc.done.set()
 
     monkeypatch.setattr(
-        agy_worker_module.asyncio,
+        worker_subprocess_module.asyncio,
         "create_subprocess_exec",
         fake_create_subprocess_exec,
     )
-    monkeypatch.setattr(agy_worker_module.os, "killpg", fake_killpg)
+    monkeypatch.setattr(worker_subprocess_module.os, "killpg", fake_killpg)
 
     async def scenario() -> None:
         task = asyncio.create_task(

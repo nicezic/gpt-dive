@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..execution_manager import ExecutionManager
-from ..task_runtime import ack_task, collect_task, project_task, refresh_task
+from ..task_runtime import (
+    ack_task,
+    collect_task,
+    probe_status_labels,
+    project_task,
+    refresh_task,
+)
 from ..task_store import TaskStore
 
 
@@ -100,16 +106,21 @@ class ConduitRuntime:
         return {"result": result, "tasks": tasks}
 
     def snapshot(self) -> list[dict[str, object]]:
+        refreshed = [
+            refresh_task(self.executions, self.task_store, stored)
+            for stored in self.task_store.list_tasks()[:8]
+        ]
+        labels = probe_status_labels(refreshed)
         tasks: list[dict[str, object]] = []
-        for stored in self.task_store.list_tasks()[:8]:
-            task = project_task(refresh_task(self.executions, self.task_store, stored))
+        for task in refreshed:
+            projected = project_task(task, status_label=labels.get(str(task["task_id"])))
             row: dict[str, object] = {
-                "id": str(task["task_id"]),
-                "label": str(task["label"]),
-                "status": self._map_state(str(task["state"])),
-                "age_sec": int(task["elapsed_seconds"]),
+                "id": str(projected["task_id"]),
+                "label": str(projected["label"]),
+                "status": self._map_state(str(projected["state"])),
+                "age_sec": int(projected["elapsed_seconds"]),
             }
-            status_label = task.get("status_label")
+            status_label = projected.get("status_label")
             if status_label:
                 row["status_label"] = str(status_label)
             tasks.append(row)

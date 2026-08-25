@@ -12,7 +12,18 @@ This page records **GPT Dive provider/model integration roles and adapter owners
 | `terra` | OpenAI Codex subscription | GPT-5.6 Terra | local subscription-backed judgment/review/worker candidate |
 | `luna` | OpenAI Codex subscription | GPT-5.6 Luna | subscription-backed conductor/judgment candidate |
 
-The alias layer hides provider URL/key/model-name details from Monty orchestration code. For paid peer review, routing metadata alone is insufficient: the configured authenticated provider `/v1/models` catalog must advertise the exact model ID before inference.
+The alias layer hides provider URL/key/model-name details from Monty orchestration code. For paid peer review, routing metadata alone is insufficient: the configured authenticated provider `/v1/models` catalog must advertise the exact model ID before inference. That verification runs inside the credentialed `model_call_worker`: unknown ids fail fast with the provider's available list; unsupported/slow listings are skipped so verification never blocks a legitimate call.
+
+## Adding an Anthropic-compatible provider
+
+Provider connection info lives in one table, `PROVIDER_ROUTES` in `src/gpt_dive/model_registry.py`; alias members derive their route from it and exact-model callers read it directly.
+
+1. Add one entry: `"name": ProviderRoute(credential_env="NAME_KEY", base_url="https://...")`.
+2. Export the key through `creds` so only the spawned worker sees it.
+3. Optional: add a `ModelAlias` member if the provider should serve alias lanes (`peer_review`/`subagent`); exact-model peer review needs no alias.
+4. Probe `/v1/models` once to confirm the exact model id and record it here.
+
+Removing or rotating a provider is the same table plus the credential store. Subscription transports (Codex) are separate and unaffected.
 
 ## Pydantic adapters
 

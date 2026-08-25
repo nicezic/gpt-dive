@@ -7,7 +7,7 @@ from typing import ClassVar, cast
 from pydantic_ai import CachePoint, UsageLimits
 from pydantic_ai_harness import CodeMode, FileSystem
 
-import gpt_dive.bare as bare_module
+import gpt_dive.model_call as model_call_module
 
 
 class _FakeResult:
@@ -32,13 +32,13 @@ class _FakeAgent:
         return _FakeResult()
 
 
-def test_bare_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> None:
+def test_model_call_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> None:
     sentinel_model = object()
-    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(bare_module, "build_model", lambda alias: sentinel_model)
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_model", lambda alias: sentinel_model)
 
     result = asyncio.run(
-        bare_module._run_worker(
+        model_call_module._run_worker(
             {
                 "model": "opus5",
                 "prompt": "review this",
@@ -53,16 +53,16 @@ def test_bare_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> 
     assert result["ok"] is True
     assert result["model"] == "opus5"
     assert result["output"] == "BARE_WORKER_OK"
-    assert result["mode"] == "bare"
+    assert result["mode"] == "model-call"
 
 
-def test_bare_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
+def test_model_call_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
     sentinel_model = object()
-    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(bare_module, "build_model", lambda alias: sentinel_model)
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_model", lambda alias: sentinel_model)
 
     result = asyncio.run(
-        bare_module._run_worker(
+        model_call_module._run_worker(
             {
                 "model": "m3",
                 "prompt": "return JSON",
@@ -81,11 +81,11 @@ def test_bare_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
 
 def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
-    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(bare_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
 
     result = asyncio.run(
-        bare_module._run_worker(
+        model_call_module._run_worker(
             {
                 "provider": "aiapiflow",
                 "model": "claude-opus-5",
@@ -117,12 +117,12 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
 
 def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
-    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(bare_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
 
-    prompt = "STABLE BASE" + bare_module._PEER_CACHE_BREAK + "ROUND 2 DELTA"
+    prompt = "STABLE BASE" + model_call_module._PEER_CACHE_BREAK + "ROUND 2 DELTA"
     result = asyncio.run(
-        bare_module._run_worker(
+        model_call_module._run_worker(
             {
                 "provider": "kunavo",
                 "model": "claude-opus-5",
@@ -152,19 +152,19 @@ def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) 
 
 def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
-    monkeypatch.setattr(bare_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(bare_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
     original_response = _FakeResult.response
     _FakeResult.response = SimpleNamespace(
         finish_reason="length", provider_details={"finish_reason": "max_tokens"}
     )
     try:
         result = asyncio.run(
-            bare_module._run_worker(
+            model_call_module._run_worker(
                 {
                     "provider": "kunavo",
                     "model": "claude-opus-5",
-                    "prompt": "STABLE" + bare_module._PEER_CACHE_BREAK + "DELTA",
+                    "prompt": "STABLE" + model_call_module._PEER_CACHE_BREAK + "DELTA",
                     "peer_review": True,
                     "workspace_dir": str(tmp_path),
                 }
@@ -177,3 +177,106 @@ def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> 
     assert result["finish_reason"] == "length"
     assert result["provider_finish_reason"] == "max_tokens"
     assert result["truncated"] is True
+
+
+def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> None:
+
+    def _fail_agent(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Agent must not be built for an unknown model")
+
+    async def _fake_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+        return {"checked": True, "exists": False, "available": ["claude-opus-5"]}
+
+    monkeypatch.setattr(model_call_module, "Agent", _fail_agent)
+    monkeypatch.setattr(model_call_module, "verify_provider_model", _fake_verify)
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": "nope-1",
+                "prompt": "review this",
+                "workspace_dir": "/tmp/opencode",
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["mode"] == "peer-review"
+    assert "not offered by provider" in result["error"]
+    assert result["available_models"] == ["claude-opus-5"]
+
+
+def test_peer_review_worker_resolves_provider_default_model(monkeypatch, tmp_path) -> None:
+    sentinel_model = object()
+    listing_calls: list[str] = []
+
+    async def _fail_verify(provider: str, model_name: str, **_kwargs: object) -> dict[str, object]:
+        listing_calls.append(model_name)
+        return {"checked": True, "exists": True, "available": []}
+
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "build_provider_model", lambda provider, model: sentinel_model)
+    monkeypatch.setattr(model_call_module, "verify_provider_model", _fail_verify)
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": None,
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["model_name"] == "claude-haiku-4-5-20251001"
+    assert listing_calls == []
+
+
+def test_peer_review_worker_falls_back_to_default_output_tokens_limit(
+    monkeypatch, tmp_path
+) -> None:
+    sentinel_model = object()
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(
+        model_call_module,
+        "build_provider_model",
+        lambda provider, model: sentinel_model,
+    )
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "aiapiflow",
+                "model": "brand-new-model-1",
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
+    assert usage_limits.output_tokens_limit == 8_192
+
+
+def test_peer_review_worker_rejects_unknown_provider(tmp_path) -> None:
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "not-a-provider",
+                "model": None,
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert "registered providers" in result["error"]

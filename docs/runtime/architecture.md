@@ -46,7 +46,7 @@ Shell
   run_command / start_command / check_command / stop_command
 
 Model / orchestration
-  subagent_call / agy_worker / bare / m3_evidence / council_emit
+  subagent_call / agy_worker / peer_review / m3_evidence / council_emit
 
 Task awareness
   task_list / task_collect / task_cancel / task_ack
@@ -108,15 +108,16 @@ GPT Dive can integrate with the MCP Tasks lifecycle when the client negotiates `
 
 ```text
 src/gpt_dive/
-├── __init__.py
+├── __init__.py         # lazy app exports; worker import stays MCP-free
 ├── __main__.py
-├── app.py
+├── app.py              # MCP tools + singletons; capability registry lives in code_capabilities
+├── code_capabilities.py
 ├── code_runtime.py
 ├── code_mode_worker.py
 ├── command_runtime.py
 ├── execution_manager.py
 ├── task_store.py
-├── task_runtime.py
+├── task_runtime.py     # shared Task lifecycle + background result normalizer (@dive/@c)
 ├── conduit/
 ├── subagent_runtime.py
 ├── subagent_worker.py
