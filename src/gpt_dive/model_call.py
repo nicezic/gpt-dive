@@ -29,6 +29,8 @@ UV = Path.home() / ".local" / "bin" / "uv"
 _PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
 _PEER_DEFAULT_OUTPUT_TOKENS_LIMIT = 8_192
 
+_EMPTY_PROMPT_ERROR = "prompt must not be empty"
+
 _PEER_REVIEW_INSTRUCTIONS = (
     "Act as an independent peer reviewer. Use the supplied packet as the primary evidence path. "
     "Do not reread evidence already embedded in the packet. Read/write file tools are available inside the scoped workspace only when extra evidence is materially necessary. "
@@ -85,7 +87,7 @@ def _validate(
 ) -> ModelAlias:
     alias = resolve_model(model, lane="peer_review")
     if not prompt.strip():
-        raise ValueError("prompt must not be empty")
+        raise ValueError(_EMPTY_PROMPT_ERROR)
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
     if output_tokens_limit is not None and output_tokens_limit <= 0:
@@ -112,8 +114,11 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             }
         explicit_model = bool(payload.get("model") and str(payload["model"]).strip())
         model_name = str(payload["model"]).strip() if explicit_model else route.default_model
+        # Defense line across the process boundary: this worker is spawned with
+        # stdin JSON, so it re-checks what the host already validated in case a
+        # future spawner skips the host-side gate.
         if not prompt.strip():
-            raise ValueError("prompt must not be empty")
+            raise ValueError(_EMPTY_PROMPT_ERROR)
         if not workspace_dir:
             raise ValueError("workspace_dir is required for peer-review mode")
 
@@ -213,7 +218,7 @@ async def invoke_model_call(
 ) -> dict[str, Any]:
     """Run a model call, using provider + exact model name for peer review."""
     if not prompt.strip():
-        raise ValueError("prompt must not be empty")
+        raise ValueError(_EMPTY_PROMPT_ERROR)
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
 
