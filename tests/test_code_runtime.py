@@ -843,7 +843,9 @@ def test_task_status_display_falls_back_without_changing_state(
             "EMPTYBACK",
         ]
         assert all(task["state"] == "working" for task in tasks)
-        assert calls == [("fail", 1.0), ("timeout", 1.0), ("empty", 1.0)]
+        # Probes run concurrently (probe_status_labels), so only the multiset of
+        # (command, timeout) calls is deterministic — not their completion order.
+        assert sorted(calls) == [("empty", 1.0), ("fail", 1.0), ("timeout", 1.0)]
     finally:
         app_module.task_store = original_task_store
 
