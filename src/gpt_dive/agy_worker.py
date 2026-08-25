@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .worker_subprocess import run_bounded_worker
+from .worker_subprocess import run_bounded_worker, stderr_tail
 
 AGY = Path.home() / ".local" / "bin" / "agy"
 DEFAULT_MODEL = "gemini-3.7-flash-high"
@@ -171,7 +171,7 @@ async def invoke_agy_worker(
         if stdout_text:
             payload["stdout"] = stdout_text[-4000:]
         if stderr_text:
-            payload["stderr"] = stderr_text[-2000:]
+            payload["stderr"] = stderr_tail(stderr_text)
         return payload
 
     if outcome["returncode"] != 0:
@@ -181,7 +181,7 @@ async def invoke_agy_worker(
             "model_name": model,
             "error": f"agy exited with code {outcome['returncode']}",
             "stdout": stdout_text[-2000:],
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     try:
@@ -193,7 +193,7 @@ async def invoke_agy_worker(
             "model_name": model,
             "error": str(exc),
             "stdout": stdout_text[-2000:],
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     status = str(result.get("status", ""))
@@ -207,7 +207,7 @@ async def invoke_agy_worker(
             "status": status or None,
             "error": "agy did not return a successful terminal result",
             "response": response,
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     payload: dict[str, Any] = {
@@ -221,5 +221,5 @@ async def invoke_agy_worker(
     if isinstance(usage, dict):
         payload["usage"] = usage
     if stderr_text:
-        payload["worker_stderr"] = stderr_text[-2000:]
+        payload["worker_stderr"] = stderr_tail(stderr_text)
     return payload

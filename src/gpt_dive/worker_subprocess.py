@@ -11,9 +11,9 @@ logger = logging.getLogger("gpt_dive.runtime")
 _STDERR_TAIL_CHARS = 2000
 
 
-def stderr_tail(stderr_text: str, *, limit: int = _STDERR_TAIL_CHARS) -> str:
+def stderr_tail(stderr_text: str) -> str:
     """Best-effort diagnostics tail shared by every worker caller."""
-    return stderr_text[-limit:]
+    return stderr_text[-_STDERR_TAIL_CHARS:]
 
 
 async def _terminate_and_reap(

@@ -103,9 +103,9 @@ async def invoke_subagent(
             "provider": alias.provider,
             "error": f"invalid subagent worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     if stderr_text:
-        result["worker_stderr"] = stderr_text[-2000:]
+        result["worker_stderr"] = stderr_tail(stderr_text)
     return result

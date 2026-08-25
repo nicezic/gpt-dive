@@ -9,6 +9,7 @@ from typing import Any
 from .command_runtime import run_command
 from .execution_manager import ExecutionManager, ExecutionNotFoundError
 from .task_store import TaskStore
+from .worker_subprocess import stderr_tail
 
 CODE_MODE_WORKER_PROTOCOL = 2
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled"}
@@ -51,7 +52,7 @@ def _background_error(
     }
     stderr = str(raw.get("stderr") or "").strip()
     if stderr:
-        result["worker_stderr"] = stderr[-2000:]
+        result["worker_stderr"] = stderr_tail(stderr)
     return result
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .runtime_env import build_runtime_path
+from .worker_subprocess import stderr_tail
 
 
 def _compact_probe_result(data: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -106,7 +107,7 @@ async def search_repo(
             "query": query,
             "path": str(root),
             "error": f"probe search exited with code {proc.returncode}",
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     try:
@@ -119,7 +120,7 @@ async def search_repo(
             "path": str(root),
             "error": f"invalid probe JSON: {exc}",
             "stdout": stdout_text[-2000:],
-            "stderr": stderr_text[-2000:],
+            "stderr": stderr_tail(stderr_text),
         }
 
     compact = _compact_probe_result(data, root)
