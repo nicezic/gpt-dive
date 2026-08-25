@@ -1,4 +1,4 @@
-# ruff: noqa: BLE001, UP047
+# ruff: noqa: UP047
 # Adapted from pydantic/pydantic-ai PR #6433 at af055625bf67217a5839d6255900475d9576aa13.
 
 from __future__ import annotations as _annotations
@@ -10,7 +10,7 @@ import math
 import secrets
 import socket
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 from urllib.parse import parse_qs, urlsplit
@@ -809,10 +809,8 @@ async def _send_callback_response(
         "Connection: close\r\n"
         "\r\n"
     ).encode() + body
-    try:
+    with suppress(anyio.BrokenResourceError, anyio.ClosedResourceError):
         await connection.send(response)
-    except anyio.BrokenResourceError, anyio.ClosedResourceError:
-        pass
 
 
 def _single_query_value(query: dict[str, list[str]], key: str) -> str | None:
@@ -827,8 +825,9 @@ def _collapse_single_exception_group() -> Generator[None]:
     except BaseExceptionGroup as group:
         if len(group.exceptions) == 1:
             error = group.exceptions[0]
-            error.__suppress_context__ = True
-            raise error
+            # `from None` sets __suppress_context__, replacing the manual flag
+            # while keeping the unwrapped exception's own traceback.
+            raise error from None
         raise
 
 

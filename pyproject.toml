@@ -20,7 +20,7 @@ dependencies = [
 dev = [
     "pyright>=1.1.411",
     "pytest>=8.0",
-    "ruff>=0.16.2",
+    "ruff>=0.16.4",
 ]
 
 [project.scripts]
@@ -42,3 +42,20 @@ typeCheckingMode = "basic"
 
 [tool.ruff]
 target-version = "py314"
+# Keep docs' Python snippets untouched (0.16 formats Markdown code blocks by default).
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Conservative, explicit rule set: immune to future default-set changes
+# (0.16.0 jumped defaults from 59 to 413 rules). Stable prefixes only.
+preview = false
+select = [
+  "E4", "E7", "E9", # pycodestyle errors
+  "F",              # pyflakes
+  "I",              # isort
+  "UP",             # pyupgrade
+  "B",              # flake8-bugbear
+  "SIM",            # flake8-simplify
+  "C4",             # flake8-comprehensions
+  "RUF",            # ruff-specific
+]

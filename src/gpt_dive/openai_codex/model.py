@@ -70,7 +70,7 @@ class OpenAICodexResponsesModel(OpenAIResponsesModel):
                 yield streamed_response
         except ModelAPIError as error:
             if login_required := _find_login_required(error):
-                raise login_required
+                raise login_required from error
             raise
 
     async def count_tokens(
