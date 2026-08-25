@@ -83,6 +83,7 @@ Current units:
 6. Exact retrieved-chunk hashes plus fresh-schema baseline column.
 7. Explicit source-scope preservation.
 8. Source revision provenance.
+9. Python top-level decorated-class semantic chunking.
 
 The overlay deliberately does **not** register a local migration number in GBrain's official migration registry.
 

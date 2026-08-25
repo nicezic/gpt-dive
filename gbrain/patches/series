@@ -6,3 +6,4 @@
 006-eval-exact-chunk-hashes.patch
 007-preserve-explicit-source-scope.patch
 008-source-revision-provenance.patch
+009-python-decorated-class-chunks.patch

@@ -1,0 +1,51 @@
+diff --git a/src/core/chunkers/code.ts b/src/core/chunkers/code.ts
+index 7cb32a4f..2bd4a4f1 100644
+--- a/src/core/chunkers/code.ts
++++ b/src/core/chunkers/code.ts
+@@ -355,7 +355,7 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
+     'variable_declaration', 'export_statement',
+   ]),
+   python: new Set([
+-    'function_definition', 'class_definition',
++    'function_definition', 'class_definition', 'decorated_definition',
+     'import_statement', 'import_from_statement', 'assignment',
+   ]),
+   ruby: new Set(['class', 'module', 'method', 'singleton_method', 'assignment']),
+diff --git a/test/parent-scope.test.ts b/test/parent-scope.test.ts
+index 05c225f6..4b893c40 100644
+--- a/test/parent-scope.test.ts
++++ b/test/parent-scope.test.ts
+@@ -98,6 +98,33 @@ class UserService:
+   });
+ });
+ 
++describe('Layer 6 (A3) — Python decorated class', () => {
++  const source = `
++from dataclasses import dataclass
++
++@dataclass
++class Shell:
++    name: str
++
++    def __post_init__(self):
++        self.ready = True
++
++    def get_toolset(self):
++        return self.name
++`.trim();
++
++  test('unwraps a top-level decorator and emits class + method chunks', async () => {
++    const chunks = await chunkCodeText(source, 'src/shell.py');
++    const symbols = chunks.map(c => c.metadata.symbolName);
++    expect(symbols).toContain('Shell');
++    expect(symbols).toContain('__post_init__');
++    expect(symbols).toContain('get_toolset');
++
++    const method = chunks.find(c => c.metadata.symbolName === 'get_toolset');
++    expect(method!.metadata.parentSymbolPath).toEqual(['Shell']);
++  });
++});
++
+ describe('Layer 6 (A3) — Ruby class + module (Rubyist coverage)', () => {
+   const source = `
+ module Admin
