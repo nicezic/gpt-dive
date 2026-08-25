@@ -32,6 +32,16 @@ class _FakeAgent:
         return _FakeResult()
 
 
+def test_peer_model_label_prefers_explicit_then_route_default() -> None:
+    from gpt_dive.model_call import _peer_model_label
+    from gpt_dive.model_registry import PROVIDER_ROUTES
+
+    known = next(iter(PROVIDER_ROUTES))
+    assert _peer_model_label("explicit-id", known) == "explicit-id"
+    assert _peer_model_label(None, known) == PROVIDER_ROUTES[known].default_model
+    assert _peer_model_label(None, "not-a-registered-provider") == ""
+
+
 def test_model_call_worker_builds_agent_without_tools_or_capabilities(monkeypatch) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
