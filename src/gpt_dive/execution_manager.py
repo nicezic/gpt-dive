@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shlex
@@ -314,12 +315,10 @@ class ExecutionManager:
             pid = int(meta["pid"])
         except KeyError, TypeError, ValueError:
             return
-        try:
+        # After an MCP restart the runner is no longer our child; init/systemd
+        # owns reaping it. The durable marker/PID checks still recover state.
+        with contextlib.suppress(ChildProcessError, ProcessLookupError):
             os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError, ProcessLookupError:
-            # After an MCP restart the runner is no longer our child; init/systemd
-            # owns reaping it. The durable marker/PID checks still recover state.
-            pass
 
     @staticmethod
     def _detect_user_systemd() -> bool:

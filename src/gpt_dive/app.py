@@ -353,7 +353,7 @@ async def _tracked_tasks_middleware(
         if not tasks:
             return result
         text = _render_tracked_tasks(tasks)
-    except Exception:  # noqa: BLE001 - awareness must never fail the primary tool result
+    except Exception:
         text = "TrackedTasks unavailable"
 
     awareness = TextContent(type="text", text=f"\n\n{text}\n")

@@ -196,7 +196,7 @@ async def verify_provider_model(
             return [model.id async for model in client.models.list()]
 
         available: list[str] = await asyncio.wait_for(_list_ids(), timeout=timeout)
-    except Exception:  # noqa: BLE001 - verification must never block a call
+    except Exception:
         return {"checked": False, "exists": False, "available": []}
     return {"checked": True, "exists": model_name in available, "available": available}
 
