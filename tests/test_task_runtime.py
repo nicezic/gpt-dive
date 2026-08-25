@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from gpt_dive.execution_manager import ExecutionManager
 from gpt_dive.task_runtime import ack_task, collect_task, refresh_task
 from gpt_dive.task_store import TaskStore
@@ -89,3 +91,34 @@ def test_probe_status_labels_runs_concurrently(tmp_path: Path) -> None:
     assert all(label == "slow-probe" for label in labels.values()), labels
     assert len(labels) == 4
     assert elapsed < 1.4, f"probes appear serialized: {elapsed:.2f}s"
+
+
+def test_probe_status_labels_reuses_a_shared_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Snapshots run on every task_list call; the probe pool must be built once."""
+    import gpt_dive.task_runtime as task_runtime_module
+
+    monkeypatch.setattr(
+        task_runtime_module,
+        "run_command",
+        lambda command, cwd=None, timeout=600.0, stdin=None, env=None: {
+            "returncode": 0,
+            "stdout": "ok",
+            "stderr": "",
+        },
+    )
+    tasks = [
+        {"task_id": str(i), "state": "working", "status": "", "status_cmd": "echo ok"}
+        for i in range(2)
+    ]
+
+    first = task_runtime_module.probe_status_labels(tasks)
+    pool_seen = task_runtime_module._PROBE_POOL
+
+    second = task_runtime_module.probe_status_labels(tasks)
+
+    assert first == {"0": "ok", "1": "ok"}
+    assert second == {"0": "ok", "1": "ok"}
+    assert pool_seen is not None
+    assert task_runtime_module._PROBE_POOL is pool_seen

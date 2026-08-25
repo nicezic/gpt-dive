@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -225,13 +226,32 @@ def probe_status_labels(tasks: list[dict[str, Any]]) -> dict[str, str | None]:
     candidates = [task for task in tasks if task["state"] == "working"]
     if not candidates:
         return {}
-    workers = min(len(candidates), 8)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            str(task["task_id"]): pool.submit(task_status_label, task)
-            for task in candidates
-        }
-        return {task_id: future.result() for task_id, future in futures.items()}
+    pool = _probe_pool()
+    futures = {
+        str(task["task_id"]): pool.submit(task_status_label, task)
+        for task in candidates
+    }
+    return {task_id: future.result() for task_id, future in futures.items()}
+
+
+_PROBE_POOL: ThreadPoolExecutor | None = None
+_PROBE_POOL_LOCK = threading.Lock()
+
+
+def _probe_pool() -> ThreadPoolExecutor:
+    """Lazily build and reuse one shared probe pool.
+
+    Snapshots run on every task_list / @c call; constructing a fresh
+    ThreadPoolExecutor per invocation churned threads for no benefit.
+    Idle pool threads cost nothing between snapshots.
+    """
+    global _PROBE_POOL
+    with _PROBE_POOL_LOCK:
+        if _PROBE_POOL is None:
+            _PROBE_POOL = ThreadPoolExecutor(
+                max_workers=8, thread_name_prefix="status-probe"
+            )
+        return _PROBE_POOL
 
 
 def list_projected_tasks(
