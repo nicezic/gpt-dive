@@ -71,30 +71,32 @@ def test_missing_execution_becomes_lost_and_can_be_acked(tmp_path: Path) -> None
     assert store.list_tasks() == []
 
 
-def test_probe_status_labels_runs_concurrently(tmp_path: Path) -> None:
-    import time as time_module
+def test_probe_status_labels_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probes must overlap, proven structurally — no wall-clock thresholds.
 
+    A threading.Barrier of party-size 4 only releases if all four fakes run
+    at the same time; a serialized pool would strand the first arrival until
+    the 2s timeout breaks the barrier and fails the test.
+    """
+    import threading
+
+    import gpt_dive.task_runtime as task_runtime_module
     from gpt_dive.task_runtime import probe_status_labels
 
-    executions = ExecutionManager(tmp_path / "executions")
-    executions._systemd_available = False
-    store = TaskStore(tmp_path / "tasks.sqlite3")
+    tasks = [
+        {"task_id": str(i), "state": "working", "status": "", "status_cmd": "probe"}
+        for i in range(4)
+    ]
+    barrier = threading.Barrier(4)
 
-    for index in range(4):
-        execution_id = str(executions.start("sleep 0.1", timeout=5)["execution_id"])
-        store.create(
-            execution_id=execution_id,
-            label=f"task-{index}",
-            status_cmd="sleep 0.5 && echo slow-probe",
-        )
+    def fake_run(command: str, cwd=None, timeout: float = 600.0, stdin=None, env=None):
+        barrier.wait(timeout=2.0)
+        return {"returncode": 0, "stdout": "ok", "stderr": ""}
 
-    started = time_module.monotonic()
-    labels = probe_status_labels(store.list_tasks())
-    elapsed = time_module.monotonic() - started
+    monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
 
-    assert all(label == "slow-probe" for label in labels.values()), labels
-    assert len(labels) == 4
-    assert elapsed < 1.4, f"probes appear serialized: {elapsed:.2f}s"
+    labels = probe_status_labels(tasks)
+    assert labels == {"0": "ok", "1": "ok", "2": "ok", "3": "ok"}
 
 
 def test_probe_status_labels_reuses_a_shared_pool(
