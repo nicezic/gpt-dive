@@ -17,14 +17,14 @@ ChatGPT Web
   -> local WSL2
 ```
 
-`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). Long model-visible background Code Mode work uses `background=True` with a human-readable `label`, which creates a durable Runtime Task while reusing the existing process execution path. `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async` remains the low-level durable process-lifecycle surface.
+`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). Detached work is always tracked: passing a `task` object (`{label, status_cmd?, status?}`) runs the program as a durable detached execution and creates a Runtime Task on the existing process execution path; omitting `task` stays synchronous. `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async start` requires the same task object and remains the low-level durable process-lifecycle surface.
 
 ## Stable Web MCP Surface
 
 Exactly four top-level tools are exposed:
 
 - `bootstrap` — loads trusted fresh-session context from the user's local WSL2 wiki.
-- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports foreground execution, raw durable background execution, and Task-aware background execution when `label` is supplied.
+- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports synchronous foreground execution (`task=None`) and detached tracked execution via the `task` object.
 - `wsl2_sync` — exceptional short synchronous shell path for transport/smoke checks or explicit cases where Code Mode is not appropriate.
 - `wsl2_async` — durable shell/process lifecycle interface, normally backed by `systemd --user`.
 
