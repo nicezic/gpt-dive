@@ -69,3 +69,14 @@ User approved B-depth rename and requested provider verification. New commits:
 - `436424a` S4: exact peer models soft-verified via provider `/v1/models` inside the credentialed worker (host-side check impossible: creds inject keys per-spawn by design). Unknown id → fail-fast with real `available_models`; listing failure never blocks.
 
 Live evidence: wrong model on aiapiflow returns clean error with 17-model catalog; correct haiku passes verification and returns S4_OK. Wiki synced (`f39684b`). Final gates: 228 tests / ruff / pyright / diff --check green.
+
+> Note: S4's SHA above (`436424a`) predates the rebase; it is now `f78fa45`.
+
+## Addendum 2 — post-report commits (recorded 2026-08-25)
+
+Two commits landed after this report was last updated, found by the morning `/code-review`. Kept per user decision; recorded here so the branch report matches reality.
+
+- `d463b38` S5: per-provider default models — `PROVIDER_ROUTES` entries carry `default_model`; omitting `model` resolves to the provider default and passes the same explicit-model verification. A resolved default without `output_tokens_limit` metadata now falls back to `_PEER_DEFAULT_OUTPUT_TOKENS_LIMIT = 8_192` instead of failing fast. Behavior change vs S4's strict path; no test asserted the old variant.
+- `904af71` S6: Task `status_cmd` probes run concurrently (max 8 threads) through one shared `probe_status_labels` helper used by both `@dive` awareness and `@c` snapshots — wall time ≈ one probe instead of N × 1s while background work runs. Each probe keeps its own 1s bound.
+
+Final gates after both: **232 tests** / ruff / pyright / diff --check green.
