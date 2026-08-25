@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp_types import CallToolResult, TextContent
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .code_capabilities import build_code_registry, code_runtime
 from .command_runtime import run_command as _run_command
@@ -69,8 +69,9 @@ mcp = MCPServer(
         "external and current. Use /grill-me only when deeper "
         "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke, "
         "explicit user requests, exceptional WSL/Win11 maintenance, or cases where Code Mode is genuinely inapplicable; use "
-        "wsl2_async for durable background execution "
-        "lifecycle operations. Background executions survive MCP server restarts and completed execution "
+        "wsl2_async for durable detached execution "
+        "lifecycle operations; detached work is always tracked through a required task object. "
+        "Detached executions survive MCP server restarts and completed execution "
         "logs are retained for 5 days. When the client negotiates "
         "io.modelcontextprotocol/tasks, wsl2_async start can use the standard MCP Tasks "
         "lifecycle."
@@ -399,6 +400,47 @@ mcp.middleware.append(_tracked_tasks_middleware)
 _DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
 
 
+class TaskLaunch(BaseModel):
+    """Task-aware detachment request: detached work is always tracked."""
+
+    label: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=80,
+            description="Human-readable Task label (max 80 characters).",
+        ),
+    ]
+    status_cmd: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional bounded local command whose stdout decorates a working Task."
+            )
+        ),
+    ] = None
+    status: Annotated[
+        str | None,
+        Field(
+            description="Optional static Task display status used when status_cmd has no usable output."
+        ),
+    ] = None
+
+
+def _coerce_task_launch(
+    task: TaskLaunch | dict[str, Any] | None,
+) -> TaskLaunch | None:
+    """Accept both validated models (MCP path) and raw dicts (direct calls)."""
+    if task is None or isinstance(task, TaskLaunch):
+        return task
+    return TaskLaunch.model_validate(task)
+
+
+def _clean_optional(value: str | None) -> str | None:
+    """Whitespace-only optional display fields normalize to None."""
+    return (value.strip() or None) if value else None
+
+
 @mcp.tool(
     title="Synchronous WSL2",
     description=(
@@ -485,9 +527,7 @@ def _start_background_code_mode(
     code: str,
     cwd: str | None,
     payload: str | None,
-    label: str | None,
-    status_cmd: str | None,
-    status: str | None,
+    task: TaskLaunch,
 ) -> dict[str, Any]:
     request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
@@ -521,24 +561,22 @@ def _start_background_code_mode(
             executions.cancel(execution_id)
             request_path.unlink(missing_ok=True)
             raise
-        if label is None:
-            return started
         try:
-            task = task_store.create(
+            task_record = task_store.create(
                 execution_id=execution_id,
-                label=label,
-                status_cmd=status_cmd,
-                status=status,
+                label=task.label.strip(),
+                status_cmd=_clean_optional(task.status_cmd),
+                status=_clean_optional(task.status),
             )
         except Exception:
             _cleanup_code_mode_request(execution_id)
             executions.cancel(execution_id)
             raise
         return {
-            "task_id": task["task_id"],
-            "execution_id": task["execution_id"],
-            "label": task["label"],
-            "state": task["state"],
+            "task_id": task_record["task_id"],
+            "execution_id": task_record["execution_id"],
+            "label": task_record["label"],
+            "state": task_record["state"],
         }
     except Exception:
         if request_path is not None:
@@ -591,58 +629,31 @@ async def code_mode(
             )
         ),
     ] = None,
-    background: Annotated[
-        bool,
+    task: Annotated[
+        TaskLaunch | None,
         Field(
-            description="Detach this Code Mode program as a durable background execution."
-        ),
-    ] = False,
-    label: Annotated[
-        str | None,
-        Field(
-            description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).",
-            max_length=80,
-        ),
-    ] = None,
-    status_cmd: Annotated[
-        str | None,
-        Field(
-            description="Optional bounded local command whose stdout decorates a working Task."
-        ),
-    ] = None,
-    status: Annotated[
-        str | None,
-        Field(
-            description="Optional static Task display status used when status_cmd has no usable output."
+            description=(
+                "Detached tracked launch: provide {label, status_cmd?, status?} to run this "
+                "program as a durable detached execution that creates a Task. Omit (None) for "
+                "a synchronous foreground run. Detached work is always tracked."
+            )
         ),
     ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(
-            description="Lifecycle action for a background Code Mode execution: status, result, or cancel."
+            description="Lifecycle action for a detached Code Mode execution: status, result, or cancel."
         ),
     ] = None,
     execution_id: Annotated[
         str | None,
-        Field(description="Background Code Mode execution ID for lifecycle actions."),
+        Field(description="Detached Code Mode execution ID for lifecycle actions."),
     ] = None,
 ) -> dict[str, Any]:
     """Execute or manage one stateless Monty program."""
+    task = _coerce_task_launch(task)
     normalized_action = action.strip().lower() if action is not None else None
     has_code = code is not None and bool(code.strip())
-    clean_label = label.strip() if label is not None else None
-    clean_status_cmd = (
-        status_cmd.strip() if status_cmd is not None and status_cmd.strip() else None
-    )
-    clean_status = status.strip() if status is not None and status.strip() else None
-    if label is not None and not clean_label:
-        raise ValueError("label must not be empty")
-    if clean_label is not None and len(clean_label) > 80:
-        raise ValueError("label must be 80 characters or fewer")
-    if (
-        clean_status_cmd is not None or clean_status is not None
-    ) and clean_label is None:
-        raise ValueError("status fields require a labeled background Task")
 
     if normalized_action is None:
         if not has_code:
@@ -651,18 +662,16 @@ async def code_mode(
             )
         if execution_id is not None:
             raise ValueError("execution_id is only valid with a lifecycle action")
-        if background:
+        if task is not None:
+            if not task.label.strip():
+                raise ValueError("task.label must not be empty")
             return await asyncio.to_thread(
                 _start_background_code_mode,
                 str(code),
                 cwd,
                 payload,
-                clean_label,
-                clean_status_cmd,
-                clean_status,
+                task,
             )
-        if clean_label is not None:
-            raise ValueError("label is only valid with background code")
         return await code_runtime.run(
             str(code),
             build_code_registry(
@@ -679,12 +688,8 @@ async def code_mode(
 
     if has_code:
         raise ValueError("code and lifecycle action are mutually exclusive")
-    if background:
-        raise ValueError("background is only valid when launching code")
-    if clean_label is not None:
-        raise ValueError("label is only valid with background code")
-    if clean_status_cmd is not None or clean_status is not None:
-        raise ValueError("status fields require a labeled background Task")
+    if task is not None:
+        raise ValueError("task is only valid when launching code")
     if cwd is not None:
         raise ValueError("cwd is only valid when launching code")
     if payload is not None:
@@ -721,7 +726,7 @@ async def code_mode(
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
         "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
         "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
-        "- Use background=True only for detached Code Mode executions."
+        "- Detached runs always create a tracked Task: pass task={label, status_cmd?, status?}; omit task for a synchronous run."
     ),
 )
 async def _mcp_code_mode(
@@ -757,40 +762,25 @@ async def _mcp_code_mode(
             )
         ),
     ] = None,
-    background: Annotated[
-        bool,
+    task: Annotated[
+        TaskLaunch | None,
         Field(
-            description="Detach this Code Mode program as a durable background execution; the actual mode is exposed inside Monty as BACKGROUND."
-        ),
-    ] = False,
-    label: Annotated[
-        str | None,
-        Field(
-            description="Optional non-empty Task label for a Task-aware background launch (max 80 characters).",
-            max_length=80,
-        ),
-    ] = None,
-    status_cmd: Annotated[
-        str | None,
-        Field(
-            description="Optional bounded local command whose stdout decorates a working Task."
-        ),
-    ] = None,
-    status: Annotated[
-        str | None,
-        Field(
-            description="Optional static Task display status used when status_cmd has no usable output."
+            description=(
+                "Detached tracked launch: provide {label, status_cmd?, status?} to run this "
+                "program as a durable detached execution that creates a Task. Omit (None) for "
+                "a synchronous foreground run. Detached work is always tracked."
+            )
         ),
     ] = None,
     action: Annotated[
         Literal["status", "result", "cancel"] | None,
         Field(
-            description="Lifecycle action for a background Code Mode execution: status, result, or cancel."
+            description="Lifecycle action for a detached Code Mode execution: status, result, or cancel."
         ),
     ] = None,
     execution_id: Annotated[
         str | None,
-        Field(description="Background Code Mode execution ID for lifecycle actions."),
+        Field(description="Detached Code Mode execution ID for lifecycle actions."),
     ] = None,
 ) -> dict[str, Any]:
     """Model-facing Code Mode wrapper with an explicit payload/PAYLOAD contract."""
@@ -802,10 +792,7 @@ async def _mcp_code_mode(
         code=code,
         cwd=cwd,
         payload=payload if action is None else None,
-        background=background,
-        label=label,
-        status_cmd=status_cmd,
-        status=status,
+        task=task,
         action=action,
         execution_id=execution_id,
     )
@@ -822,6 +809,8 @@ def _required_execution_id(action: str, execution_id: str | None) -> str:
     description=(
         "Operate durable asynchronous WSL2 executions through one stable action-based interface. "
         "Use action='capabilities' to discover the actions supported by the current backend. "
+        "action='start' requires task={label, status_cmd?, status?}: detached work is always "
+        "tracked and returns the created Task. "
         "Long-running executions survive MCP server restarts; completed logs are retained for 5 days."
     ),
 )
@@ -860,14 +849,24 @@ def wsl2_async(
             description="Maximum runtime in seconds for start (default: 600).",
         ),
     ] = 600.0,
+    task: Annotated[
+        TaskLaunch | None,
+        Field(
+            description=(
+                "Required Task-aware detachment for start: {label, status_cmd?, status?}. "
+                "The launch creates a Task so the work stays visible in TrackedTasks."
+            )
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Dispatch a durable WSL2 execution lifecycle action."""
+    task = _coerce_task_launch(task)
     normalized = action.strip().lower()
     if normalized == "capabilities":
         return {
             "actions": {
                 "start": {
-                    "requires": ["command", "permission"],
+                    "requires": ["command", "permission", "task"],
                     "optional": ["cwd", "timeout"],
                 },
                 "status": {"requires": ["execution_id"]},
@@ -875,6 +874,8 @@ def wsl2_async(
                 "cancel": {"requires": ["execution_id"]},
             }
         }
+    if task is not None and normalized != "start":
+        raise ValueError("task is only valid with action='start'")
     if normalized == "start":
         if command is None or not command.strip():
             raise ValueError("wsl2_async action='start' requires command")
@@ -882,7 +883,31 @@ def wsl2_async(
             raise ValueError(
                 "wsl2_async permission mismatch; use the exact harness declaration from the live schema"
             )
-        return executions.start(command, cwd, timeout)
+        if task is None:
+            raise ValueError(
+                "wsl2_async action='start' requires a labeled task object; detached work is always tracked"
+            )
+        clean_label = task.label.strip()
+        if not clean_label:
+            raise ValueError("task.label must not be empty")
+        started = executions.start(command, cwd, timeout)
+        execution_id = str(started["execution_id"])
+        try:
+            task_record = task_store.create(
+                execution_id=execution_id,
+                label=clean_label,
+                status_cmd=_clean_optional(task.status_cmd),
+                status=_clean_optional(task.status),
+            )
+        except Exception:
+            executions.cancel(execution_id)
+            raise
+        return {
+            "task_id": task_record["task_id"],
+            "execution_id": task_record["execution_id"],
+            "label": task_record["label"],
+            "state": task_record["state"],
+        }
     if normalized == "status":
         return executions.status(_required_execution_id(normalized, execution_id))
     if normalized == "result":

@@ -58,11 +58,17 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     )
     assert "payload" in tool.input_schema["required"]
     assert tool.input_schema["properties"]["payload"]["type"] == "string"
-    label_variants = tool.input_schema["properties"]["label"]["anyOf"]
-    assert {variant.get("type") for variant in label_variants} >= {"string", "null"}
-    assert any(variant.get("maxLength") == 80 for variant in label_variants)
-    assert "status_cmd" in tool.input_schema["properties"]
-    assert "status" in tool.input_schema["properties"]
+    task_schema = tool.input_schema["properties"]["task"]
+    task_variants = {
+        variant.get("$ref") or variant.get("type") for variant in task_schema["anyOf"]
+    }
+    assert "#/$defs/TaskLaunch" in task_variants and "null" in task_variants
+    launch = tool.input_schema["$defs"]["TaskLaunch"]["properties"]
+    assert launch["label"]["maxLength"] == 80
+    assert launch["label"]["minLength"] == 1
+    assert "status_cmd" in launch
+    assert "status" in launch
+    assert "background" not in tool.input_schema["properties"]
     assert "execution_id" in tool.input_schema["properties"]
     assert "job_id" not in tool.input_schema["properties"]
     action_variants = tool.input_schema["properties"]["action"]["anyOf"]
@@ -292,12 +298,15 @@ def test_wsl2_async_capabilities_are_runtime_discoverable() -> None:
     payload = gpt_dive.wsl2_async("capabilities")
     assert set(payload["actions"]) == {"start", "status", "result", "cancel"}
     assert payload["actions"]["start"] == {
-        "requires": ["command", "permission"],
+        "requires": ["command", "permission", "task"],
         "optional": ["cwd", "timeout"],
     }
 
 
-def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
+def test_wsl2_async_routes_lifecycle(monkeypatch, tmp_path) -> None:
+    from gpt_dive.task_store import TaskStore
+
+    monkeypatch.setattr(app, "task_store", TaskStore(tmp_path / "tasks.sqlite3"))
     calls: list[tuple] = []
 
     monkeypatch.setattr(
@@ -339,6 +348,7 @@ def test_wsl2_async_routes_lifecycle(monkeypatch) -> None:
             cwd="/tmp",
             timeout=11,
             permission=app._DIRECT_WSL_PERMISSION,
+            task={"label": "routed canary"},
         )["execution_id"]
         == "j1"
     )
@@ -358,8 +368,16 @@ def test_wsl2_async_validates_action_specific_fields() -> None:
         gpt_dive.wsl2_async("start")
     with pytest.raises(ValueError, match="permission mismatch"):
         gpt_dive.wsl2_async("start", command="cmd")
-    with pytest.raises(ValueError, match="permission mismatch"):
-        gpt_dive.wsl2_async("start", command="cmd", permission="wrong")
+    with pytest.raises(ValueError, match="requires a labeled task"):
+        gpt_dive.wsl2_async(
+            "start", command="cmd", permission=app._DIRECT_WSL_PERMISSION
+        )
+    with pytest.raises(ValueError, match="only valid with action='start'"):
+        gpt_dive.wsl2_async(
+            "status",
+            execution_id="j1",
+            task={"label": "nope"},
+        )
     with pytest.raises(ValueError, match="requires execution_id"):
         gpt_dive.wsl2_async("status")
     with pytest.raises(ValueError, match="capabilities"):
@@ -422,16 +440,21 @@ def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
 def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> None:
     import time
 
+    from gpt_dive.task_store import TaskStore
+
     original_root = gpt_dive.executions.root
     original_systemd = gpt_dive.executions._systemd_available
+    original_task_store = app.task_store
     try:
         gpt_dive.executions.root = tmp_path
         gpt_dive.executions._systemd_available = False
+        app.task_store = TaskStore(tmp_path / "tasks.sqlite3")
         started = gpt_dive.wsl2_async(
             "start",
             command="python --version",
             timeout=5,
             permission=app._DIRECT_WSL_PERMISSION,
+            task={"label": "guard python reroute"},
         )
         deadline = time.monotonic() + 3
         state = started
@@ -446,6 +469,7 @@ def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> Non
         assert "Python 3.14" in result["stdout"]
         assert "auto-reroute" in result["stderr"]
     finally:
+        app.task_store = original_task_store
         gpt_dive.executions.root = original_root
         gpt_dive.executions._systemd_available = original_systemd
 
@@ -453,16 +477,21 @@ def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> Non
 def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
     import time
 
+    from gpt_dive.task_store import TaskStore
+
     original_root = gpt_dive.executions.root
     original_systemd = gpt_dive.executions._systemd_available
+    original_task_store = app.task_store
     try:
         gpt_dive.executions.root = tmp_path
         gpt_dive.executions._systemd_available = False
+        app.task_store = TaskStore(tmp_path / "tasks.sqlite3")
         started = gpt_dive.wsl2_async(
             "start",
             command="pytest --version",
             timeout=5,
             permission=app._DIRECT_WSL_PERMISSION,
+            task={"label": "guard pytest block"},
         )
         deadline = time.monotonic() + 3
         state = started
@@ -476,5 +505,6 @@ def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
         assert result["exit_code"] == 2
         assert "Direct 'pytest' execution is prohibited" in result["stderr"]
     finally:
+        app.task_store = original_task_store
         gpt_dive.executions.root = original_root
         gpt_dive.executions._systemd_available = original_systemd

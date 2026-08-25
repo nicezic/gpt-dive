@@ -1,7 +1,15 @@
 # GPT Dive — Current Continuation
 
-> Updated: 2026-08-24
+> Updated: 2026-08-26
 > Purpose: compact fresh-session handoff. Durable Why/history belongs in `docs/`; implementation decisions/evidence belong in `specs/` and `plans/`.
+
+## Task-Object Detachment — branch `improve/260826-task-object-detachment`
+
+Implemented and verified on 2026-08-26 (commit `4b8096d`): the `background` flag is gone; one optional `task` object (`{label, status_cmd?, status?}`) now controls both detached-work surfaces. `code_mode(task=None)` stays synchronous; a present `task` detaches and always creates a Task. `wsl2_async start` requires the same object and returns the unified `{task_id, execution_id, label, state}` result on both tools. No compatibility alias. Service restarted and live schema confirmed (background gone, task present).
+
+- Decision SSOT: `docs/runtime/adr/0002-task-object-detachment.md` — delta over runtime ADR 0001, which stays untouched as shipped-v1 history
+- Spec/evidence: `plans/runtime/2026-08-26-task-object-detachment.md`, `plans/runtime/2026-08-26-task-object-detachment-v1.md`
+- **Not merged to main yet**; independent AGY review returned ACCEPT.
 
 ## Completed Runtime Work — Task / Execution / TrackedTasks v1
 

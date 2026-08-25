@@ -195,9 +195,10 @@ def test_dive_and_conduit_share_task_domain(tmp_path: Path) -> None:
         dive_started = asyncio.run(
             gpt_dive.code_mode(
                 'await run_command("sleep 0.3")\n{"origin": "dive"}',
-                background=True,
-                label="from-dive",
-                status_cmd="printf 'TODOS 3/9'",
+                task={
+                    "label": "from-dive",
+                    "status_cmd": "printf 'TODOS 3/9'",
+                },
             )
         )
         dive_task_id = str(dive_started["task_id"])

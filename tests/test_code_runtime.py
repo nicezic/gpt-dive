@@ -416,10 +416,10 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
         started = asyncio.run(
             gpt_dive.code_mode(
                 'await run_command("sleep 0.15")\nprint("BG_STDOUT")\n1 + 2',
-                background=True,
+                task={"label": "bg-lifecycle"},
             )
         )
-        assert started["status"] == "running"
+        assert started["state"] == "working"
         assert "result" not in started
 
         state = _wait_code_mode_job(str(started["execution_id"]))
@@ -447,7 +447,9 @@ def test_code_mode_background_exposes_background_flag(tmp_path: Path) -> None:
         gpt_dive.executions.root.mkdir()
         gpt_dive.executions._systemd_available = False
 
-        started = asyncio.run(gpt_dive.code_mode("BACKGROUND", background=True))
+        started = asyncio.run(
+            gpt_dive.code_mode("BACKGROUND", task={"label": "bg-flag"})
+        )
         _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
             gpt_dive.code_mode(
@@ -475,7 +477,7 @@ def test_code_mode_background_preserves_payload(tmp_path: Path) -> None:
             gpt_dive.code_mode(
                 "PAYLOAD",
                 payload=payload,
-                background=True,
+                task={"label": "bg-payload"},
             )
         )
         _wait_code_mode_job(str(started["execution_id"]))
@@ -531,7 +533,9 @@ def test_code_mode_background_exception_is_structured(tmp_path: Path) -> None:
         gpt_dive.executions._systemd_available = False
 
         started = asyncio.run(
-            gpt_dive.code_mode('raise ValueError("BG_BOOM")', background=True)
+            gpt_dive.code_mode(
+                'raise ValueError("BG_BOOM")', task={"label": "bg-error"}
+            )
         )
         _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
@@ -557,7 +561,9 @@ def test_code_mode_background_rejects_non_json_result(tmp_path: Path) -> None:
         gpt_dive.executions.root.mkdir()
         gpt_dive.executions._systemd_available = False
 
-        started = asyncio.run(gpt_dive.code_mode('float("nan")', background=True))
+        started = asyncio.run(
+            gpt_dive.code_mode('float("nan")', task={"label": "bg-nonjson"})
+        )
         _wait_code_mode_job(str(started["execution_id"]))
         result = asyncio.run(
             gpt_dive.code_mode(
@@ -584,7 +590,7 @@ def test_code_mode_background_cancel(tmp_path: Path) -> None:
         started = asyncio.run(
             gpt_dive.code_mode(
                 'await run_command("sleep 30")\n"never"',
-                background=True,
+                task={"label": "bg-cancel"},
             )
         )
         asyncio.run(
@@ -618,8 +624,8 @@ a, b = await asyncio.gather(
 )
 [a, b]
 """
-        first = asyncio.run(gpt_dive.code_mode(code, background=True))
-        second = asyncio.run(gpt_dive.code_mode(code, background=True))
+        first = asyncio.run(gpt_dive.code_mode(code, task={"label": "gather-a"}))
+        second = asyncio.run(gpt_dive.code_mode(code, task={"label": "gather-b"}))
         first_while_second_running = asyncio.run(
             gpt_dive.code_mode(action="status", execution_id=str(first["execution_id"]))
         )
@@ -657,8 +663,7 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
         started = asyncio.run(
             code_mode(
                 'await run_command("sleep 0.1")\n7',
-                background=True,
-                label="task canary",
+                task={"label": "task canary"},
             )
         )
 
@@ -703,9 +708,7 @@ def test_task_collect_is_non_destructive_and_ack_preserves_execution_result(
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
-            code_mode(
-                'await run_command("sleep 0.1")\n21', background=True, label="collect"
-            )
+            code_mode('await run_command("sleep 0.1")\n21', task={"label": "collect"})
         )
         task_id = str(started["task_id"])
         execution_id = str(started["execution_id"])
@@ -758,7 +761,7 @@ def test_task_refresh_uses_worker_failure_semantics(tmp_path: Path) -> None:
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
-            code_mode('raise ValueError("TASK_FAIL")', background=True, label="failure")
+            code_mode('raise ValueError("TASK_FAIL")', task={"label": "failure"})
         )
         task_id = str(started["task_id"])
         _wait_code_mode_job(str(started["execution_id"]))
@@ -792,7 +795,7 @@ def test_task_cancel_forwards_and_becomes_cancelled(tmp_path: Path) -> None:
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
-            code_mode('await run_command("sleep 30")', background=True, label="cancel")
+            code_mode('await run_command("sleep 30")', task={"label": "cancel"})
         )
         task_id = str(started["task_id"])
         execution_id = str(started["execution_id"])
@@ -828,7 +831,7 @@ def test_terminal_task_becomes_lost_when_execution_disappears(tmp_path: Path) ->
         gpt_dive.executions._systemd_available = False
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
-        started = asyncio.run(code_mode("42", background=True, label="lost"))
+        started = asyncio.run(code_mode("42", task={"label": "lost"}))
         task_id = str(started["task_id"])
         execution_id = str(started["execution_id"])
         _wait_code_mode_job(execution_id)
@@ -874,10 +877,11 @@ def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
         started = asyncio.run(
             code_mode(
                 'await run_command("sleep 30")',
-                background=True,
-                label="AGY worker",
-                status_cmd="printf 'TODOS 3/9'",
-                status="STATIC",
+                task={
+                    "label": "AGY worker",
+                    "status_cmd": "printf 'TODOS 3/9'",
+                    "status": "STATIC",
+                },
             )
         )
         task_id = str(started["task_id"])
@@ -950,15 +954,13 @@ def test_task_status_display_falls_back_without_changing_state(
         app_module.task_store = original_task_store
 
 
-def test_code_mode_task_label_validation() -> None:
-    with pytest.raises(ValueError, match="label must not be empty"):
-        asyncio.run(code_mode("1", background=True, label="   "))
-    with pytest.raises(ValueError, match="label is only valid with background"):
-        asyncio.run(code_mode("1", label="foreground"))
-    with pytest.raises(
-        ValueError, match="status fields require a labeled background Task"
-    ):
-        asyncio.run(code_mode("1", background=True, status="orphan"))
+def test_code_mode_task_launch_validation() -> None:
+    with pytest.raises(ValueError, match=r"task\.label must not be empty"):
+        asyncio.run(code_mode("1", task={"label": "   "}))
+    with pytest.raises(ValueError, match="task is only valid when launching"):
+        asyncio.run(
+            code_mode(action="status", execution_id="x", task={"label": "nope"})
+        )
 
 
 def test_code_mode_cancels_execution_when_task_persistence_fails(
@@ -991,7 +993,8 @@ def test_code_mode_cancels_execution_when_task_persistence_fails(
         with pytest.raises(OSError, match="task db unavailable"):
             asyncio.run(
                 code_mode(
-                    'await run_command("sleep 30")', background=True, label="fails"
+                    'await run_command("sleep 30")',
+                    task={"label": "fails"},
                 )
             )
 
