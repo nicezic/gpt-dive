@@ -36,7 +36,7 @@ Local MCP bridge
 
 **Change**
 - Added `code_mode` as the primary programmable MCP execution root, backed by a fresh Monty runtime and a per-run `CallableRegistry`.
-- Preserved the four-tool Web MCP surface instead of adding one top-level tool per local capability.
+- Reduced the current Web MCP surface to `bootstrap` and `code_mode` instead of adding one top-level tool per local capability.
 
 **Why**
 - Multiple operations can be composed or run concurrently inside one model-visible call.
@@ -74,7 +74,7 @@ GPT Dive still owns lower local execution policy such as `guard-bin` PATH preced
 **Change**
 - Registered the Harness FileSystem toolset directly in the Code Mode registry: read/write/edit/list/search/find/create/info.
 - Completely removed direct Shell command capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) from Code Mode.
-- Enforced deterministic server-side execution deadlines: 110.0s for foreground Code Mode (with structured `code_mode_timeout` error on expiry) and 600.0s for detached background Code Mode.
+- Enforced deterministic server-side execution deadlines: a 110.0s foreground response deadline split into a 100s execution cutoff and 10s cleanup window, plus a 600.0s detached background deadline. See `docs/runtime/timeouts.md`.
 
 **Why**
 - Ordinary file work no longer needs shell quoting or custom wrappers.

@@ -39,7 +39,7 @@ hidden from MCP
 └─ wsl2_async
 ```
 
-They may remain as internal Python/runtime functions during this change. They must not appear in MCP tool discovery, MCP instructions, or model-facing schemas. Their internal process primitive may continue to serve runtime-owned work such as bounded Task status probes.
+The old direct WSL functions may remain as internal Python/runtime functions only while a production owner exists. In the implemented design their public registrations and package exports are removed; the now-ownerless command runtime and dynamic Task status probe are deleted.
 
 The fixed deadlines are selected by deterministic GPT Dive application code. No AI chooses, infers, or supplies these values.
 

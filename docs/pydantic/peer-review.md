@@ -10,7 +10,7 @@ GPT Dive exposes outer Code Mode `peer_review(...)` as the current peer-review l
 
 ```text
 Web SOL
-  -> code_mode(background=True, label="Peer review: …")
+  -> code_mode(task={label: "Peer review: …"})
        -> Task / TrackedTasks awareness
        -> peer_review(provider, model, prompt, timeout, cwd)
             -> invoke_model_call(peer_review=True)
@@ -173,7 +173,7 @@ if result.get("ok"):
     await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-The actual paid route runs only in outer Task-aware `code_mode(background=True, label="Peer review: …")` after the skill's provider/model preflight and explicit user approval gate. The outer call returns a `task_id` immediately; Web SOL continues foreground work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. Result collection uses `task_collect(task_id)` non-destructively, cancellation uses `task_cancel(task_id)`, and explicit handling ends with `task_ack(task_id)`. No peer-review-specific tracker or execution runtime is added. `peer_review` has no timeout default; each review call supplies its timeout explicitly.
+The actual paid route runs only in outer Task-aware `code_mode(task={label: "Peer review: …"})` after the skill's provider/model preflight and explicit user approval gate. The outer call returns a `task_id` immediately; Web SOL continues foreground work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. Result collection uses `task_collect(task_id)` non-destructively, cancellation uses `task_cancel(task_id)`, and explicit handling ends with `task_ack(task_id)`. No peer-review-specific tracker or execution runtime is added. `peer_review` has no timeout default; each review call supplies its timeout explicitly and keeps it within the outer 600-second Task deadline.
 
 ## Failure semantics
 

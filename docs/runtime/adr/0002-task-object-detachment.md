@@ -8,6 +8,8 @@ status: proposed
 
 # ADR 0002 - Task-Object Detachment Surface
 
+> Current-contract note: ADR 0003 removed dynamic `status_cmd` probing and direct `wsl2_async` launch. The current Task object is `{label, status?}` and is accepted only by detached `code_mode`. Older sections below are retained as design history.
+
 ## Decision
 
 GPT Dive replaces the boolean detachment flag with one **task-object launch contract** shared by both detached-work surfaces:

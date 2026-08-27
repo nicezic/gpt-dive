@@ -28,6 +28,8 @@ Exactly two top-level tools are exposed:
 
 Foreground timeout results expose `cleanup_status=complete|failed|pending`. Pending cleanup remains explicitly owned by the runtime; worker cleanup reports an un-reaped process without synthesizing an exit code.
 
+Deadline ownership and child-timeout composition are defined in `docs/runtime/timeouts.md`.
+
 The surface stays intentionally minimal. Reusable behavior belongs as registered `code_mode` capabilities instead of top-level MCP tools.
 
 ## Code Mode

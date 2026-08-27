@@ -35,6 +35,8 @@ Code Mode enforces fixed execution deadlines:
 - **Foreground:** fixed 110.0s response deadline: 100s execution cutoff plus a 10s cleanup window. Timeout returns `{ok: false, error: {code: "code_mode_timeout", cleanup_status: "complete" | "failed" | "pending", ...}}`; pending cleanup remains runtime-owned.
 - **Detached background (`task` object provided):** fixed 600.0s deadline tracked in SQLite TaskStore.
 
+Canonical deadline, cleanup, and nested-worker boundaries: `docs/runtime/timeouts.md`.
+
 ## Direct Harness FileSystem
 
 GPT Dive constructs:

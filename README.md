@@ -17,6 +17,8 @@ Code Mode enforces deterministic server-side execution deadlines (not AI argumen
 - **Foreground Code Mode (`task=None`):** fixed 110.0-second response deadline, divided into a 100-second execution cutoff and a 10-second cleanup window. The structured `code_mode_timeout` result reports `cleanup_status=complete|failed|pending`; pending cleanup remains runtime-owned until it finishes.
 - **Detached Code Mode (`task={label, ...}`):** fixed 600.0-second deadline backed by durable background execution and persistent Task tracking. Direct shell execution capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) are completely removed; use registered domain capabilities or delegate to AGY / subagents.
 
+The full lifetime and cleanup contract is in [`docs/runtime/timeouts.md`](docs/runtime/timeouts.md).
+
 ## OpenAI Codex subscription compatibility
 
 GPT Dive consumes official Pydantic AI. Subscription-backed `sol` / `terra` / `luna` models route through the optional local `gpt_dive.openai_codex` compatibility layer rather than a downstream Pydantic AI fork. The local layer owns only Codex-specific OAuth, credential rotation, provider transport, and the narrow Responses adaptation needed to preserve ordinary `Agent.run()`. Non-Codex providers remain ordinary Pydantic AI paths.

@@ -38,6 +38,20 @@ Durable execution state and logs live under:
 
 Completed execution logs are retained for 5 days. The normal backend is `systemd --user`; a detached-process fallback exists for environments where user systemd is unavailable.
 
+## Deadline diagnostics
+
+Use `docs/runtime/timeouts.md` as the current timeout contract. Operationally, distinguish the first failing boundary:
+
+```text
+structured code_mode_timeout
+└─ request reached GPT Dive; inspect cleanup_status
+
+tunnel 502 / no MCP REQUEST START
+└─ request did not reach the Code Mode deadline owner; inspect tunnel/session/stdio
+```
+
+For foreground timeout results, `complete` means cleanup finished before response, `failed` means cleanup returned an explicit error, and `pending` means the server retained cleanup ownership past the response deadline. Do not treat `pending` as a detached Task ID.
+
 ## Council Browser Bridge
 
 Council v1 routes SOL input through `gpt_dive.council.SolBridge` -> the named `msedge` Playwright CLI session -> the official Playwright Extension -> the user's existing logged-in Edge tab. `SolBridge` reuses an already-open CLI session or attaches it through the stored Extension token, and it gates each send on the ChatGPT composer being READY before inserting text and pressing Enter. Playwright remains input-only; SOL output returns explicitly through `code_mode -> council_emit`.

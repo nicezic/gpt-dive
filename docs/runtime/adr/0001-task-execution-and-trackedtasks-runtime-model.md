@@ -8,6 +8,8 @@ status: proposed
 
 # ADR 0001 - Task, Execution, and TrackedTasks Runtime Model
 
+> Current-contract note: ADR 0003 removed dynamic `status_cmd` probing and the direct WSL/Shell launch surfaces. The current Task launch object is `{label, status?}` and detached Code Mode is the only model-visible launch path. Older sections below are retained as design history.
+
 ## Decision summary
 
 GPT Dive will add a **thin Task-awareness layer on top of its existing durable background execution path**.
