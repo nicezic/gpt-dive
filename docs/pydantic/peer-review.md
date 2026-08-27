@@ -1,7 +1,7 @@
 # GPT Dive Peer Review
 
 > Status: **Draft / experimental**
-> Updated: 2026-08-21
+> Updated: 2026-08-28
 > Scope: GPT Dive implementation contract. Workflow policy SSOT is `~/wiki/skills/web/peer-review.md`.
 
 ## Purpose
@@ -10,9 +10,9 @@ GPT Dive exposes outer Code Mode `peer_review(...)` as the current peer-review l
 
 ```text
 Web SOL
-  -> code_mode(task={label: "Peer review: …"})
+  -> code_mode(label="Peer review: …", mode="task")
        -> Task / TrackedTasks awareness
-       -> peer_review(provider, model, prompt, timeout, cwd)
+       -> peer_review(provider, model, prompt, cwd)
             -> invoke_model_call(peer_review=True)
                  -> Pydantic Agent
                  -> independent review
@@ -165,7 +165,6 @@ result = await peer_review(
     provider=review_provider,
     model=review_model,
     prompt=packet,
-    timeout=review_timeout,
     cwd=CWD,
 )
 
@@ -173,7 +172,7 @@ if result.get("ok"):
     await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-The actual paid route runs only in outer Task-aware `code_mode(task={label: "Peer review: …"})` after the skill's provider/model preflight and explicit user approval gate. The outer call returns a `task_id` immediately; Web SOL continues foreground work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. Result collection uses `task_collect(task_id)` non-destructively, cancellation uses `task_cancel(task_id)`, and explicit handling ends with `task_ack(task_id)`. No peer-review-specific tracker or execution runtime is added. `peer_review` has no timeout default; each review call supplies its timeout explicitly and keeps it within the outer 600-second Task deadline.
+The actual paid route runs only in an outer `code_mode(label="Peer review: …", mode="task")` call after the skill's provider/model preflight and explicit user approval gate. The outer call returns the Execution's single `execution_id`; Web SOL continues its own work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. `task(get)` reads the result non-destructively, `task(cancel)` is the explicit cancellation path, and `task(dismiss)` removes terminal awareness after handling. No peer-review-specific tracker or execution runtime is added. `peer_review` has no model-supplied timeout: Runtime clamps its underlying worker to the lesser of the 600-second capability policy and the remaining Execution work budget.
 
 ## Failure semantics
 

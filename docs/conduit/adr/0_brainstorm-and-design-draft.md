@@ -1,6 +1,6 @@
 # Conduit 0 — Brainstorm and Design Draft
 
-> Status: pre-ADR design workspace. This file contains active design ideas, canary shape, and future directions that may still change. It is intentionally prefixed `0_` so it is not mistaken for a settled ADR.
+> Status: archived pre-ADR design workspace. It preserves the canary reasoning but is no longer an active TODO source. Runtime identity, Task lifecycle, and the rejected `Job` proposal were resolved by `../../runtime/adr/0004-always-durable-code-mode-runtime.md`.
 >
 > Stable causal context belongs in `../bootstrap.md`. Durable decisions that survive implementation pressure should later graduate into numbered ADRs.
 

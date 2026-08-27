@@ -1,295 +1,84 @@
-# GPT Dive — Current Continuation
+# GPT Dive — 현재 Continuation
 
-> Updated: 2026-08-26
-> Purpose: compact fresh-session handoff. Durable Why/history belongs in `docs/`; implementation decisions/evidence belong in `specs/` and `plans/`.
+> 갱신: 2026-08-28  
+> 용도: Runtime renewal을 새 세션에서 이어가기 위한 handoff. 설계 근거의 권위는 `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`에 있다.
 
-## Task-Object Detachment — branch `improve/260826-task-object-detachment`
+## 현재 목표
 
-Implemented and verified on 2026-08-26 (commit `4b8096d`): the `background` flag is gone; one optional `task` object (`{label, status_cmd?, status?}`) now controls both detached-work surfaces. `code_mode(task=None)` stays synchronous; a present `task` detaches and always creates a Task. `wsl2_async start` requires the same object and returns the unified `{task_id, execution_id, label, state}` result on both tools. No compatibility alias. Service restarted and live schema confirmed (background gone, task present).
-
-- Decision SSOT: `docs/runtime/adr/0002-task-object-detachment.md` — delta over runtime ADR 0001, which stays untouched as shipped-v1 history
-- Spec/evidence: `plans/runtime/2026-08-26-task-object-detachment.md`, `plans/runtime/2026-08-26-task-object-detachment-v1.md`
-- Merged to main (`15ba39d`) after an independent AGY review returned ACCEPT; local commits not pushed to origin yet.
-
-## Completed Runtime Work — Task / Execution / TrackedTasks v1
-
-Implemented and verified on 2026-08-24 (commits `4f7f30d`..`7cdd1a7`): Task-aware background Code Mode, Task lifecycle controls (`task_list/collect/cancel/ack`), automatic TrackedTasks awareness with bounded status probes, peer-review + AGY lifecycle migration, shared Conduit Task domain over one TaskStore/task_runtime projection, and the Job→Execution terminology cleanup with no compatibility shim.
-
-- Decision/design SSOT: `docs/runtime/adr/0001-task-execution-and-trackedtasks-runtime-model.md`
-- Ticket/plan history: `plans/plan-260824-task-execution-awareness-v1.md`, `plans/runtime/`
-- Do not re-introduce `JobManager`/`job_id` naming or a second TrackedTask manager; rejected alternatives are recorded in that ADR.
-
-## Night Sweep 2026-08-24 — branch `improve/260824-night-sweep`
-
-Autonomous opencode improvement branch on top of `3f73998`; all gates green at each commit (pytest / ruff / pyright / git diff --check). Merged to main as `d437e3c` after review.
-
-- Background Code Mode result normalization unified into `task_runtime.read_execution_result`; duplicated parser in `app.py` removed. Behavior note: `code_mode action=result` on a raw shell execution now returns the honest raw result instead of a misleading `worker_protocol_error`.
-- Capability registry construction extracted to `code_capabilities.py`; `code_mode_worker` wires its own deps and no longer imports the MCP server module.
-- Lazy package exports (PEP 562) keep worker imports MCP-free (~223 fewer modules).
-- Live-contract docs updated to the new module layout (`code-mode.md`, `architecture.md`, `peer-review.md`, runtime source layout).
-- Worker lifecycle unified in `worker_subprocess.run_bounded_worker` (agy/bare/subagent); cancellation now terminates all worker classes, not just agy.
-- `bare` renamed: `model_call` primitive (`invoke_model_call`, `model_call_worker`) + Code Mode `peer_review(...)` capability; registry lane `peer_review`.
-- `PROVIDER_ROUTES` table is the provider connection SSOT; exact peer models are soft-verified against the provider `/v1/models` listing inside the credentialed worker, failing fast with `available_models`. Verified live against aiapiflow.
-
-## Completed External Work — GBrain Voyage Guard + Stable Index
-
-The GBrain-side work that motivated the browser investigation is complete. Do not carry its old implementation TODOs into a fresh GPT Dive session.
-
-- Voyage free-quota runtime is browserless: managed `voyage.dashboard-session` -> direct backend HTTPS quota lookup -> strict `voyage-code-3` PASS/BLOCK. Edge/Playwright/CDP/dashboard tabs/socket are not runtime dependencies.
-- Enrollment/recovery may use the generic Edge Playwright Extension, but normal quota lookup does not.
-- Stable Index Filter v1 is now production: `1204 pages / 21368 chunks / 21368 embedded`, stale `0`, source FAILS/QUEUE `0`.
-- Production `~/.gbrain` is a symlink to `~/.cache/gbrain-stable-index-v1/.gbrain`; previous production is preserved at `~/.gbrain.rollback-pre-stable-index-20260814`.
-- GBrain authorities: `~/gpt-dive/gbrain/docs/reconstruction.md`, `~/gpt-dive/gbrain/plans/plan-260814-stable-index-upgrade.md`, and clean upstream `~/ref/gbrain`.
-- Generic Edge automation remains a separate completed browser capability. Do not route Voyage quota runtime back through it.
-
-## Immediate Handoff — ToolOutputLimits Study / Live Validation
-
-Purpose: verify and understand the **already-integrated** Pydantic Harness `ToolOutputLimits` before designing any GPT Dive-specific output-limiting code.
-
-### Verified state
-
-- Study authority: `~/wiki/pydantic/study/patterns/tool-output-failure-policy.md`.
-- Upstream authority: `~/ref/pydantic-ai-harness/docs/tool-output-limits.md`, `docs/guardrails.md`, implementation under `pydantic_ai_harness/tool_output_limits/`, and its tests.
-- `src/gpt_dive/subagent_worker.py::_build_worker_capabilities()` already includes `ToolOutputLimits()` after `FileSystem`, `Shell`, and `RepoContext`.
-- `tests/test_subagent_worker_capabilities.py` verifies that `ToolOutputLimits` is present in the default coding-worker capability bundle, but no GPT Dive test found yet proves real spill/read-back behavior.
-- Current study evidence says the Harness default reduces oversized successful tool returns at production time using `Spill(then=Truncate())` at 10,000 characters; failure/retry signals are intentionally treated differently. Re-verify exact current behavior from the installed/upstream source before relying on this remembered threshold.
-
-### Exact remaining task
-
-1. Read the current Harness `ToolOutputLimits` public API, source, and tests to establish exact defaults, spill storage/lifecycle, `read_tool_result`, structured/binary behavior, and interaction/order with `ToolGuardrail`.
-2. Trace how the existing default `ToolOutputLimits()` behaves inside GPT Dive's real `subagent_worker` capability bundle. Distinguish the Harness Shell `max_output_chars=50_000` boundary from `ToolOutputLimits`; they operate at different layers.
-3. Run the smallest controlled local acceptance that produces a successful tool result above the ToolOutputLimits threshold and verify what the subagent/model actually sees, whether a spill handle is exposed, whether `read_tool_result` is usable, and whether persistent model-visible context stays bounded.
-4. Separately verify an error/retry path so output limiting does not hide recovery diagnostics.
-5. Report whether GPT Dive should use the Harness behavior **as-is**, configure it differently, compose it with another existing Harness capability, or only then consider a thin local adaptation.
-
-### Constraints / non-goals
-
-- Start read-only and evidence-first. Do **not** add a new custom output-limiter merely because the feature is unfamiliar.
-- Do not modify GPT Dive code/config until the existing behavior and any actual gap are demonstrated; use `/grill-me` before a consequential design change.
-- Do not conflate `ToolOutputLimits` with compaction: output limiting shapes a tool result when produced; compaction rewrites already accumulated history.
-- Preserve full failure diagnostics needed for recovery; bounded-context policy must not create convincing but unrecoverable failures.
-- Do not touch the unrelated current untracked `docs/pydantic/` tree unless its contents are explicitly needed and verified.
-
-Suggested next skill: `/grill-me` only if live acceptance exposes a real configuration/design choice; otherwise this is primarily a study + acceptance task.
-
-
-## Immediate Handoff — Code Mode Files + Shell
-
-- Implementation commit: `e0f6f1f` (`feat: expose harness files and shell in code mode`).
-- Plan / decision / validation record: `plans/code_mode/plan-260814-files-and-shell.md`.
-- Code Mode uses Harness FileSystem 8 tools + Shell 4 tools directly; `run_command()` is the single normal foreground shell path. Shell keeps guard-bin/provider-secret stripping, run-owned background cleanup, and the 50k output cap.
-- Validation before commit: targeted Code Mode tests **30 passed**; full suite **78 passed**; touched-file Ruff PASS; `git diff --check` PASS.
-
-### Verified live acceptance state — PASS
-
-Fresh-session acceptance completed on **2026-08-14**.
-
-- The active MCP/tunnel service had already restarted at **06:36:42 KST** (`MainPID=1357599` at acceptance time). The prior 05:28 process state in this handoff was stale historical state, not a reason to restart again.
-- Live `CAPABILITIES` exposes all 12 new FileSystem + Shell names with native signatures/descriptions.
-- Live smoke PASS: `read_file`, stale-hash `write_file`/`edit_file` rejection with unchanged content, `run_command`, `start_command -> check_command -> stop_command`, and run-end background cleanup.
-- No additional MCP restart is pending for this rollout. Re-check live state before proposing any future restart rather than carrying forward this completed reload task.
-
-## Current Position
-
-- **v1 Local MCP Runtime**: stable.
-- **v2 Pydantic AI Harness**: stable and extensible.
-- **v3 Council / Council v1 product slice**: implemented / FULL PASS.
-- Council compact map: `docs/council/README.md`.
-- Council implementation/decision SSOT: `specs/council.md`.
-- Council causal history: `docs/council/history.md`.
-- Current post-v1 start/reopen direction: `docs/council/startup.md`.
-- Completed implementation tickets: `plans/council/2026-08-12-council-v3-tickets.md`.
-
-Do not redo the completed Council design interview, Web SOL feasibility probe, or v1 implementation acceptance unless new evidence exposes a regression.
-
-## Stable Web MCP Surface
-
-Exactly four top-level tools remain:
+저장소 안의 clean replacement와 로컬 검증은 끝났다. 남은 경계는 실제 서비스에 새 schema를 반영하고 fresh ChatGPT session에서 수용 확인하는 일이다.
 
 ```text
-bootstrap
-code_mode
-wsl2_sync
-wsl2_async
+설계 grilling 완료
+        │
+        ▼
+glossary + ADR 확정
+        │
+        ▼
+구현 + 로컬 검증 완료
+        │
+        ▼
+서비스 reload + fresh-session acceptance 대기
 ```
 
-Council does **not** add a fifth Web-facing tool. Web SOL output continues through the registered `council_emit` Code Mode capability.
+제거한 API나 기존 Task DB를 위한 호환 계층은 만들지 않는다.
 
-The newly approved startup/reopen direction follows the same rule: reusable Council lifecycle mechanics should grow as a **registered `code_mode` capability**.
-
-## Council Mental Model
+## 현재 계약
 
 ```text
-Shared Council Room
+Web MCP tools
+├─ bootstrap
+├─ code_mode(label, code, payload?, cwd?, mode=auto|task)
+└─ task({action: list|get|cancel|dismiss, execution_id?})
 
-USER = moderator / domain owner
-SOL  = existing ChatGPT Web primary engineer
-OPUS = independent peer through Pydantic AI
+Execution 1 → Task 0..1
+공개 identity          = execution_id
+control-plane 권위     = SQLite runtime-v2.sqlite3
+filesystem            = 보존 artifact 전용
 ```
 
-Principles:
+모든 Code Mode 호출은 사용자 code보다 먼저 durable(응답 연결이 끊겨도 실행 소유권이 남는 상태)해진다. Worker는 원자적 `accepted → running` 전이를 이겨야만 code를 실행한다. Inline 전달은 100초, MCP 응답 처리는 110초, 사용자 작업은 3,590초, 정리를 포함한 절대 수명은 3,600초로 제한한다. Transport loss는 Task를 publish하며, 오직 명시적 `task(cancel)`만 실행을 취소한다.
 
-- **Shared Context**
-- **Judgment Independence**
-- **Preserve Why**
-- **Human Controls Turns**
-- **Automate transport, not judgment**
-- no automatic transcript summarization/compression in v1
+## 반영된 source delta
 
-The important historical lesson is that a strong peer can challenge the wrong problem when causal context is incomplete. The first Council materially improved only after the user supplied missing economics, platform constraints, existing implementation facts, and real workflow pain.
+- `execution_store.py`, `execution_worker.py`, `execution_context.py`를 추가해 SQLite SSOT(Single Source of Truth, 단일 상태 권위), claim-before-code 경계, 상속 deadline, process-tree containment를 구현했다.
+- `ExecutionManager`를 accepted-row journal, 단일 ID, 고정 deadline, outcome 복구, 5일 retention 기준으로 재구성했다.
+- 공개 `code_mode`와 `task`를 strict typed contract로 교체했다. 알 수 없는 인자는 거부한다.
+- 내부 `task_list/task_collect/task_cancel/task_ack`, `BACKGROUND`, caller timeout, 기존 lifecycle action, `TaskStore`를 제거했다.
+- awaited `run_command` 하나를 복원했다. guard-bin, secret 환경변수 제거, bounded live spool, 8,000자 context 출력, spill, TERM/KILL/reap을 적용한다.
+- `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `repo_search`, `council_emit`은 Code Mode 내부에 유지했다. Child budget은 Runtime이 공급한다.
+- Conduit를 같은 Execution/Task row와 단일 `execution_id` 위로 옮겼다. 현재 action은 `start/sync/get/cancel/dismiss/emit`이다.
 
-## Delivered Storage / Protocol
+## 로컬 검증
 
-```text
-init.md
-chat.md
-.git/commits
-refs/council/context/sol
-refs/council/context/opus
-```
+- 전체 pytest: `191 passed`
+- Ruff: 통과
+- Pyright: 통과
+- `git diff --check`: 통과
+- Popen smoke: 정상 완료, 명시적 취소, deadline 실패, `setsid` descendant 정리 통과
+- 실제 `systemd --user` smoke: `accepted → completed` 및 출력 보존 통과
+- 생성된 MCP schema: tool 3개와 고정 request object의 `additionalProperties:false` 확인
 
-- `chat.md` is append-only and human-readable.
-- one USER/SOL/OPUS speaking event = one Git commit.
-- participant refs are synchronization cursors, not access-control markers.
-- unread input is the pure appended transcript suffix between cursor snapshot and target HEAD.
-- non-append mutation and dirty transcript state are rejected.
-- cursor advances only after a successful participant response commit.
-- Git backend remains the official `git` CLI behind a narrow subprocess seam.
+이 checkpoint 뒤 source가 바뀌면 위 gate를 다시 실행한다.
 
-## Delivered Participant Paths
+## 배포 경계
 
-### To OPUS
+저장소 작업 완료만으로 live schema가 수용된 것은 아니다. ChatGPT Web의 기존 conversation은 이전 tool contract를 cache할 수 있다.
 
-```text
-Council UI / REST
-  -> USER commit
-  -> Pydantic `opus5`
-  -> OPUS commit
-  -> context/opus advance
-```
+1. 사용자가 요청하면 `git diff`를 검토하고 commit한다.
+2. `docs/runtime/operations.md` 절차로 지연 MCP/tunnel restart를 보낸다.
+3. restart를 보낸 응답에서는 추가 MCP call을 하지 않는다.
+4. 새 ChatGPT session을 연다.
+5. bootstrap, tool 3개 schema, inline 완료, 즉시 Task, 비파괴 get, cancel, dismiss, change-only TrackedTasks, `run_command`를 확인한다.
 
-Pydantic worker calls are stateless across invocations, so the adapter reconstructs the participant context required by the Git synchronization contract.
+## 문서 권위
 
-### To SOL
+- `docs/runtime/CONTEXT.md`
+  - Execution, Worker, Task, Task publication, Inline wait, TrackedTasks, Lost의 canonical language.
+- `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
+  - 확정 설계, 근거, 폐기안, deadline, delivery order.
+- `docs/runtime/architecture.md`, `docs/runtime/timeouts.md`, `docs/runtime/operations.md`
+  - 현재 구현 구조, clock 계약, 운영 절차.
+- `docs/conduit/CONTINUATION.md`
+  - Conduit renewal 변화와 다음 작업.
 
-```text
-Council UI / REST
-  -> USER commit
-  -> persistent input-only Playwright / Edge CDP
-  -> existing ChatGPT Web SOL
-  -> code_mode -> council_emit(expected_head=...)
-  -> SOL commit
-  -> context/sol advance
-```
-
-Playwright never scrapes assistant output, Copy buttons, clipboard data, or streaming completion. Git commit is the completion signal.
-
-## Local UI / Runtime
-
-- Frontend: Svelte 5 + Vite + TypeScript under `web/`.
-- Backend: Starlette + Uvicorn REST in `src/gpt_dive/council/server.py`.
-- CLI: `gpt-dive-council`.
-- Default bind: `127.0.0.1:8791`.
-- One room / one turn at a time in v1.
-
-Current delivered invocation:
-
-```text
-gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>
-```
-
-## Final v1 Acceptance
-
-```text
-Ruff                       PASS
-pytest                     PASS — 60 passed
-Council/App Pyright        PASS — 0 errors, 0 warnings
-Svelte check               PASS — 0 errors, 0 warnings
-Vite build                 PASS
-Repo protocol              PASS
-Real OPUS provider E2E     PASS
-Real Svelte To OPUS E2E    PASS
-Real Web SOL E2E            PASS
-```
-
-Key implementation commits:
-
-```text
-597f79e docs: define Council v3 implementation tickets
-e4713ec feat: implement Council repo protocol
-afcbf07 feat: scaffold Council room UI
-3423723 feat: implement Council Opus turn
-79484ad fix: retry Council Opus turn without duplicate user commit
-d4aa608 feat: implement Council Web SOL turn
-80ac9fe feat: integrate Council shared room UI
-a8fdf9f fix: preserve subagent failure diagnostics
-7118d18 docs: close Council v1 implementation
-```
-
-## Post-v1 Decisions — Start / Reopen
-
-These are approved direction but **not yet delivered as the final ergonomic runtime**.
-
-### Room root
-
-```text
-~/council/<YYMMDD-title>/
-```
-
-### SOL identity
-
-The **current ChatGPT Web conversation remains SOL**. Starting Council must not create a fresh SOL conversation and discard the causal context already present in the current session.
-
-### `init.md` ownership
-
-SOL authors the initial `init.md` from the current conversation plus relevant live/project/source evidence.
-
-Default information shape:
-
-```text
-Why
-Background Knowledge
-Current Situation
-Problem / Questions
-Constraints
-Decisions Already Made       # when meaningful
-Rejected Alternatives        # when meaningful
-Original References
-Council Goal
-```
-
-`Background Knowledge` is the compact understanding map. `Original References` point to source material so SOL's paraphrase is not the only truth.
-
-The peer is not forced to ask questions first. The reason to make questions easy is that **incomplete causal context can make an intelligent reviewer reason correctly about the wrong problem**.
-
-### Lifecycle boundary
-
-Startup/reopen mechanics should be implemented behind a **Council capability registered in `code_mode`**. Exact capability action names/schema remain an implementation detail.
-
-### Reopen
-
-Reopen must distinguish room-state recovery from Web SOL native-context rehydration. A fresh ChatGPT session can have correct Git room state while still not knowing the earlier Council reasoning.
-
-See `docs/council/startup.md`.
-
-## Deferred / Not Approved by v1 Success
-
-- Independent Challenge mode
-- transcript/context compression
-- richer history/navigation
-- multiple simultaneous rooms / dashboard
-- automatic room naming/management beyond the simple path convention
-- more participants
-- autonomous debate/routing
-- speculative recovery/bridge hardening
-
-## Next Work
-
-Continue `/grill-me` only for the remaining consequential start/reopen decisions, especially:
-
-1. exact `code_mode` Council lifecycle capability API;
-2. how to resolve the existing/current SOL conversation without manual URL friction;
-3. reopen/rehydration semantics for a fresh Web SOL session;
-4. smallest validation boundary for the startup flow.
-
-Do not implement unrelated Council v2 features while these boundaries remain open.
+Council, GBrain, provider, Pydantic compatibility 작업은 이번 Runtime renewal의 범위 밖이다. 이전 handoff의 완료된 TODO를 되살리지 말고 각 context 문서로 routing한다.

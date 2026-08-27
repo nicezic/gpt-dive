@@ -1,61 +1,178 @@
-# GPT Dive Runtime Operations
+# GPT Dive Runtime 운영 가이드
 
-## Development
+## 목적
+
+Always-durable Runtime의 로컬 검증, state 확인, 안전한 service reload, failure 진단 절차를 다룬다. Architecture는 `architecture.md`, clock 의미는 `timeouts.md`가 소유한다.
+
+## 로컬 검증
+
+```text
+source / schema 변경
+        │
+        ▼
+format / lint / type / test
+        │
+        ▼
+생성된 MCP schema 확인
+        │
+        ▼
+service를 안전하게 reload
+        │
+        ▼
+fresh ChatGPT session acceptance
+```
+
+Repository gate:
 
 ```bash
 uv sync --python 3.14
-uv run --python 3.14 python -m pytest -q
-uv run --python 3.14 python -m gpt_dive
+uv run ruff check .
+uv run pyright
+uv run pytest -q
+git diff --check
 ```
 
-`pydantic-ai-slim` resolves from official stable releases. Subscription-backed Codex behavior is isolated in GPT Dive's local compatibility layer; see `README.patch.openai.provider.md` before changing provider wiring or upgrading Pydantic AI.
-
-## ChatGPT Web Schema Cache
-
-ChatGPT Web can cache the MCP tool schema for the current conversation. After a schema-changing server update, an existing conversation may continue to expose the old signature.
-
-Validate source changes locally first. Use a fresh ChatGPT Web session for live schema acceptance when the top-level MCP schema changes.
-
-## Safe MCP Service Reload
-
-Use a detached delayed restart so the current MCP response can finish before the service exits:
+Service를 건드리기 전에 생성된 tool contract를 확인한다.
 
 ```bash
-nohup bash -lc 'sleep 3; sudo systemctl restart gpt-dive-tunnel.service' >/tmp/gpt-dive-mcp-restart.log 2>&1 &
+uv run python - <<'PY'
+import asyncio
+from gpt_dive.app import mcp
+
+for tool in asyncio.run(mcp.list_tools()):
+    print(tool.name, tool.input_schema)
+PY
 ```
 
-- `sleep 3` gives the initiating MCP response time to clear the transport.
-- Do not wrap this restart handoff in detached Code Mode; its transient execution may clean up the detached child before the restart runs. Run the restart command directly in local bash.
-- **Do not automatically verify after dispatch.** Return control to the user and wait for an explicit follow-up before checking PID, bootstrap, schema, or runtime state.
+예상 top-level set은 `bootstrap`, `code_mode`, `task`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 둘 다 알 수 없는 인자를 거부해야 한다.
 
-## Durable Executions
-
-Durable execution state and logs live under:
+## Runtime state
 
 ```text
-~/.local/state/gpt-dive/executions/
+~/.local/state/gpt-dive/
+├─ runtime-v2.sqlite3          lifecycle + Task awareness SSOT
+├─ runtime-v2.sqlite3-wal      active SQLite WAL
+├─ runtime-v2.sqlite3-shm
+├─ executions-v2/<id>/
+│  ├─ request.json             Worker가 읽으면 삭제
+│  ├─ stdout.log
+│  ├─ stderr.log
+│  ├─ outcome.json             recovery evidence
+│  ├─ input.json               짧게 존재하는 Code Mode input
+│  └─ capability-output/       bounded run_command spill
 ```
 
-Completed execution logs are retained for 5 days. The normal backend is `systemd --user`; a detached-process fallback exists for environments where user systemd is unavailable.
+Database가 lifecycle state를 소유한다. Artifact directory나 systemd unit만 보고 상태를 추론하지 않는다.
 
-## Deadline diagnostics
+현재 row를 read-only Python으로 확인한다.
 
-Use `docs/runtime/timeouts.md` as the current timeout contract. Operationally, distinguish the first failing boundary:
+```bash
+uv run python - <<'PY'
+from gpt_dive.execution_store import ExecutionStore
+
+store = ExecutionStore()
+for row in store.list_executions():
+    print(
+        row['execution_id'],
+        row['label'],
+        row['state'],
+        row['reason'],
+        'published' if row['published_at'] else 'inline-only',
+    )
+PY
+```
+
+정상 transient unit 이름은 `gpt-dive-execution-<execution_id>.service`다.
+
+## 안전한 MCP service reload
+
+ChatGPT Web은 현재 conversation에 tool schema를 cache할 수 있다. Server restart만으로 기존 conversation이 새 schema를 읽는다고 가정하지 않는다. 최종 acceptance는 fresh ChatGPT Web session에서 한다.
+
+`run_command` 내부에서 restart를 보낼 때는, 중단될 Execution의 descendant로 handoff가 남지 않도록 sibling user unit을 사용한다.
+
+```bash
+systemd-run --user --collect --unit=gd-mcp-restart \
+  bash -lc 'sleep 3; sudo systemctl restart gpt-dive-tunnel.service'
+```
+
+독립 local terminal에서는 delayed command도 충분하다.
+
+```bash
+nohup bash -lc 'sleep 3; sudo systemctl restart gpt-dive-tunnel.service' \
+  >/tmp/gpt-dive-mcp-restart.log 2>&1 &
+```
+
+Delay는 initiating response가 transport를 빠져나갈 시간을 준다. Restart를 보낸 뒤에는 사용자에게 control을 돌려주며, 교체 중인 server에 같은 응답에서 MCP call을 다시 보내지 않는다.
+
+## Live acceptance
+
+Fresh ChatGPT session에서 다음 순서로 확인한다.
+
+1. `bootstrap`을 호출한다.
+2. live `code_mode`와 `task` schema를 확인한다.
+3. 필수 label이 있는 짧은 `code_mode`를 실행해 `kind=completed`를 확인한다.
+4. `mode=task`로 실행한 뒤 다른 일을 계속하고, `task(get)`을 두 번 호출해 비파괴 조회를 증명한다.
+5. Terminal Task를 dismiss하고 `task(list)`에서 사라졌는지 확인한다.
+6. `run_command`를 실행해 stdout/stderr whitespace와 structured field를 확인한다.
+7. Transport loss를 시험할 때는 inline waiter만 중단하고, Execution이 cancel되지 않고 Task로 나타나는지 확인한다.
+
+첫 acceptance probe로 production repository를 변경하지 않는다.
+
+## Failure 진단
 
 ```text
-structured code_mode_timeout
-└─ request reached GPT Dive; inspect cleanup_status
-
-tunnel 502 / no MCP REQUEST START
-└─ request did not reach the Code Mode deadline owner; inspect tunnel/session/stdio
+call 실패
+├─ GPT Dive request-entry log 없음
+│  └─ tunnel/session/stdio 경계; Runtime은 작업을 수락하지 못함
+├─ Execution state = failed
+│  ├─ launch_interrupted  → Worker가 실행 권한을 얻지 못함
+│  ├─ deadline_exceeded   → 3590초 work cutoff
+│  ├─ worker_error        → stderr artifact 확인
+│  └─ exit_code_<n>       → stdout/stderr 확인
+├─ Execution state = cancelled
+│  └─ 명시적 lifecycle cancellation이 terminal race에서 이김
+└─ Execution state = lost
+   ├─ worker_disappeared
+   ├─ outcome_marker_invalid
+   ├─ retained_result_missing
+   ├─ cleanup_unconfirmed
+   └─ retention_expired
 ```
 
-For foreground timeout results, `complete` means cleanup finished before response, `failed` means cleanup returned an explicit error, and `pending` means the server retained cleanup ownership past the response deadline. Do not treat `pending` as a detached Task ID.
+`lost`를 replay로 수리하지 않는다. 사용자가 manual rerun이 안전한지 판단할 때까지 row와 증거를 보존한다.
 
-## Council Browser Bridge
+## Runtime 밖의 명시적 작업
 
-Council v1 routes SOL input through `gpt_dive.council.SolBridge` -> the named `msedge` Playwright CLI session -> the official Playwright Extension -> the user's existing logged-in Edge tab. `SolBridge` reuses an already-open CLI session or attaches it through the stored Extension token, and it gates each send on the ChatGPT composer being READY before inserting text and pressing Enter. Playwright remains input-only; SOL output returns explicitly through `code_mode -> council_emit`.
+긴 download처럼 독립 supervisor에 맡길 command:
 
-The historical feasibility experiment used direct Edge CDP plus a Unix-socket bridge and exposed a 600-second generic async-execution timeout and stale-socket failure. That transport is historical evidence only. The integrated Council runtime uses the current Extension transport and owns only its `SolBridge` lifecycle; if it created the `msedge` session it detaches it on close, while a pre-existing shared session is left alive. Keep `experiments/council_web_sol_e2e/` as historical evidence rather than production operations guidance.
+```bash
+systemd-run --user --unit=gd-detached-download --collect \
+  bash -lc 'wget -O ~/large.iso <URL>'
+```
 
-Current manual Council startup remains `gpt-dive-council --council-dir <path> --sol-url <exact ChatGPT conversation URL>` until the post-v1 start/reopen capability is implemented. See `docs/council/startup.md`.
+Systemd로 관찰하고 취소한다.
+
+```bash
+systemctl --user status gd-detached-download.service
+journalctl --user-unit gd-detached-download.service
+systemctl --user stop gd-detached-download.service
+```
+
+이 sibling unit은 GPT Dive 밖에 있으므로 Execution row, Task, 자동 결과 보존, Runtime deadline이 없다. `setsid nohup ... &`은 동등한 대체가 아니다. Systemd service cgroup 안에는 남지만 Popen process group에서는 벗어날 수 있어 backend마다 결과가 달라진다.
+
+## Retention
+
+Terminal artifact는 5일 보존한다. Dismissal은 awareness만 없애며 retained result는 즉시 삭제하지 않는다. Artifact가 만료된 undismissed Task는 `lost(reason=retention_expired)`로 바뀌어 명시적 dismiss 전까지 정직하게 남는다.
+
+## Council 참고
+
+Council은 Playwright Extension을 통해 SOL input을 보내고 `code_mode → council_emit` 경로로 SOL output을 받는다. Browser/session 운영은 `docs/council/`이 소유하며 Runtime Execution/Task 의미를 바꾸지 않는다.
+
+## 참고 문서
+
+- `docs/runtime/architecture.md`
+  - 여기서 관찰하는 state의 ownership과 source map.
+- `docs/runtime/timeouts.md`
+  - Response, work, cleanup, retention clock의 의미.
+- `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
+  - Replay, `setsid` escape, caller timeout, two-store authority를 거부한 이유.

@@ -1,48 +1,64 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import shlex
 import sys
-import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .code_capabilities import build_code_registry, code_runtime
 from .execution_manager import ExecutionManager
 from .runtime_diagnostics import request_lifecycle_middleware
-from .task_runtime import CODE_MODE_WORKER_PROTOCOL, TaskRuntime
-from .task_runtime import ack_task as runtime_ack_task
-from .task_runtime import cancel_task as runtime_cancel_task
 from .task_runtime import (
-    cleanup_code_mode_request as _runtime_cleanup_code_mode_request,
+    CODE_MODE_WORKER_PROTOCOL,
+    TRACKED_TASKS_LIMIT,
 )
-from .task_runtime import code_mode_request_dir as _runtime_code_mode_request_dir
-from .task_runtime import code_mode_request_ref as _runtime_code_mode_request_ref
-from .task_runtime import collect_task as runtime_collect_task
-from .task_runtime import list_projected_tasks as _runtime_list_projected_tasks
-from .task_runtime import read_execution_result as _runtime_read_execution_result
-from .task_runtime import render_tracked_tasks as runtime_render_tracked_tasks
-from .task_store import TaskStore
+from .task_runtime import (
+    cancel_task as runtime_cancel_task,
+)
+from .task_runtime import (
+    dismiss_task as runtime_dismiss_task,
+)
+from .task_runtime import (
+    get_task as runtime_get_task,
+)
+from .task_runtime import (
+    list_projected_tasks as runtime_list_projected_tasks,
+)
+from .task_runtime import (
+    projection_revision as runtime_projection_revision,
+)
+from .task_runtime import (
+    read_execution_result as runtime_read_execution_result,
+)
+from .task_runtime import (
+    render_tracked_tasks as runtime_render_tracked_tasks,
+)
 
-_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS = 110.0
-_FOREGROUND_CODE_MODE_CLEANUP_SECONDS = 10.0
-_BACKGROUND_CODE_MODE_TIMEOUT_SECONDS = 600.0
+_INLINE_WAIT_SECONDS = 100.0
+_INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
+_TASK_LIST_LIMIT = 50
+_TRACKED_TASKS_REVISION_STATE_KEY = "gpt_dive_tracked_tasks_revision"
+
+# MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
+# the base before tool registration makes both validation and advertised schemas strict.
+ArgModelBase.model_config["extra"] = "forbid"
 
 logger = logging.getLogger("gpt_dive.runtime")
-_FOREGROUND_CLEANUP_TASKS: set[asyncio.Task[Any]] = set()
 
 executions = ExecutionManager()
-task_store = TaskStore()
 
 mcp = MCPServer(
     name="gpt-dive",
@@ -50,8 +66,8 @@ mcp = MCPServer(
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
         "default programmable root for normal local work: compose registered capabilities in "
-        "Monty/Python, and prefer direct capabilities over shell reimplementation. "
-        "Every MCP code_mode call requires string payload; use payload='' when there is no data. "
+        "Monty/Python, and prefer direct capabilities over shell reimplementation. Every run "
+        "requires a short label and starts as one durable Execution; payload is optional. "
         "Never guess capability names, arguments, or return shapes: inspect the live contract first. "
         "On tool errors, inspect the live contract and local evidence before retrying; use Web Search "
         "when the missing fact is external and current."
@@ -64,17 +80,16 @@ mcp = MCPServer(
         "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
         "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
         "for independent work. Do not rebuild file/search/edit operations in shell. "
-        "Every Web MCP code_mode call must explicitly provide payload as a string; use payload='' "
-        "when there is no payload or for lifecycle calls. Never pass an object/list as payload; "
-        "serialize structured payloads to text and parse them inside Code Mode if needed. "
+        "Every Web MCP code_mode call must provide a short label. When opaque input is needed, "
+        "pass payload as a string; serialize objects/lists to text and parse PAYLOAD inside Code Mode. "
         "Never invent capability names, parameter names, optional arguments, or return shapes from "
         "memory. Inspect the live MCP schema/CAPABILITIES contract first whenever uncertain. "
         "On tool errors or assistant mistakes, report them immediately and inspect the live contract "
         "plus local state before retrying. Use Web Search only when the missing evidence is external "
         "and current. Use /grill-me only when deeper diagnosis is still useful after that evidence pass. "
-        "For long-running work, launch code_mode with a task object; detached work is always tracked "
-        "through a required task object. Detached executions survive MCP server restarts and completed "
-        "execution logs are retained for 5 days."
+        "Use mode='task' for immediate Task awareness; otherwise code_mode waits briefly and publishes "
+        "the same continuing Execution only when inline delivery ends first. Transport loss never "
+        "cancels work. Use the task tool for list/get/cancel/dismiss. Results are retained for 5 days."
     ),
 )
 
@@ -349,12 +364,19 @@ async def _tracked_tasks_middleware(
         return result
 
     try:
-        tasks = await asyncio.to_thread(_task_list, limit=8)
-        if not tasks:
+        tasks = await asyncio.to_thread(_task_list, limit=None)
+        revision = runtime_projection_revision(tasks)
+        state = _periodic_reminder_state(ctx)
+        previous = state.get(_TRACKED_TASKS_REVISION_STATE_KEY)
+        state[_TRACKED_TASKS_REVISION_STATE_KEY] = revision
+        if tool_name == "task" or revision == previous:
             return result
-        text = _render_tracked_tasks(tasks)
+        if previous is None and not tasks:
+            return result
+        text = _render_tracked_tasks(tasks) if tasks else "TrackedTasks\n(none)"
     except Exception:
-        text = "TrackedTasks unavailable"
+        logger.exception("TRACKED TASKS PROJECTION FAILED")
+        return result
 
     awareness = TextContent(type="text", text=f"\n\n{text}\n")
     return result.model_copy(update={"content": [*result.content, awareness]})
@@ -396,81 +418,36 @@ mcp.middleware.append(_periodic_reminder_middleware)
 mcp.middleware.append(_tracked_tasks_middleware)
 
 
-class TaskLaunch(BaseModel):
-    """Task-aware detachment request: detached work is always tracked."""
-
-    label: Annotated[
-        str,
-        Field(
-            min_length=1,
-            max_length=80,
-            description="Human-readable Task label (max 80 characters).",
-        ),
-    ]
-    status: Annotated[
-        str | None,
-        Field(description="Optional static Task display status used in Task listings."),
-    ] = None
-
-
-def _coerce_task_launch(
-    task: TaskLaunch | dict[str, Any] | None,
-) -> TaskLaunch | None:
-    """Accept both validated models (MCP path) and raw dicts (direct calls)."""
-    if task is None or isinstance(task, TaskLaunch):
-        return task
-    return TaskLaunch.model_validate(task)
-
-
-def _clean_optional(value: str | None) -> str | None:
-    """Whitespace-only optional display fields normalize to None."""
-    return (value.strip() or None) if value else None
-
-
-def _code_mode_request_dir() -> Path:
-    path = _runtime_code_mode_request_dir(executions)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _code_mode_request_ref(execution_id: str) -> Path:
-    return _runtime_code_mode_request_ref(executions, execution_id)
-
-
-def _cleanup_code_mode_request(execution_id: str) -> None:
-    _runtime_cleanup_code_mode_request(executions, execution_id)
-
-
-def _task_runtime() -> TaskRuntime:
-    """Assemble the pair at call time so tests can swap either half."""
-    return TaskRuntime(executions, task_store)
-
-
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-    return _runtime_list_projected_tasks(_task_runtime(), limit=limit)
+    return runtime_list_projected_tasks(executions, limit=limit)
 
 
-def _render_tracked_tasks(tasks: list[dict[str, Any]], *, limit: int = 8) -> str:
+def _render_tracked_tasks(
+    tasks: list[dict[str, Any]], *, limit: int = TRACKED_TASKS_LIMIT
+) -> str:
     return runtime_render_tracked_tasks(tasks, limit=limit)
 
 
-def _task_collect(task_id: str) -> dict[str, Any]:
-    return runtime_collect_task(_task_runtime(), task_id)
+def _task_get(execution_id: str) -> dict[str, Any]:
+    return runtime_get_task(executions, execution_id)
 
 
-def _task_cancel(task_id: str) -> dict[str, Any]:
-    return runtime_cancel_task(_task_runtime(), task_id)
+def _task_cancel(execution_id: str) -> dict[str, Any]:
+    return runtime_cancel_task(executions, execution_id)
 
 
-def _task_ack(task_id: str) -> dict[str, Any]:
-    return runtime_ack_task(_task_runtime(), task_id)
+def _task_dismiss(execution_id: str) -> dict[str, Any]:
+    return runtime_dismiss_task(executions, execution_id)
 
 
-def _start_background_code_mode(
+def _start_code_mode_execution(
+    *,
+    execution_id: str,
+    label: str,
     code: str,
     cwd: str | None,
     payload: str | None,
-    task: TaskLaunch,
+    publish: bool,
 ) -> dict[str, Any]:
     request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
@@ -478,328 +455,227 @@ def _start_background_code_mode(
         "cwd": cwd,
         "payload": payload,
     }
-    request_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            suffix=".json",
-            prefix="code-mode-",
-            dir=_code_mode_request_dir(),
-            delete=False,
-        ) as fh:
-            json.dump(request, fh, ensure_ascii=False, allow_nan=False)
-            fh.write("\n")
-            request_path = Path(fh.name)
-
-        request_arg = shlex.quote(str(request_path))
-        command = (
-            f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {request_arg}"
-        )
-        started = executions.start(command, cwd, _BACKGROUND_CODE_MODE_TIMEOUT_SECONDS)
-        execution_id = str(started["execution_id"])
-        try:
-            _code_mode_request_ref(execution_id).write_text(str(request_path) + "\n")
-        except OSError:
-            executions.cancel(execution_id)
-            request_path.unlink(missing_ok=True)
-            raise
-        try:
-            task_record = task_store.create(
-                execution_id=execution_id,
-                label=task.label.strip(),
-                status=_clean_optional(task.status),
-            )
-        except Exception:
-            _cleanup_code_mode_request(execution_id)
-            executions.cancel(execution_id)
-            raise
-        return {
-            "task_id": task_record["task_id"],
-            "execution_id": task_record["execution_id"],
-            "label": task_record["label"],
-            "state": task_record["state"],
-        }
-    except Exception:
-        if request_path is not None:
-            request_path.unlink(missing_ok=True)
-        raise
-
-
-def _background_code_mode_result(execution_id: str) -> dict[str, Any]:
-    result = _runtime_read_execution_result(executions, execution_id)
-    if result.get("ready") is False:
-        raise RuntimeError(
-            f"code_mode background execution {execution_id!r} is still running"
-        )
-    return result
-
-
-def _consume_foreground_cleanup(task: asyncio.Task[Any]) -> None:
-    """Retrieve a deferred foreground task result and release its ownership."""
-    _FOREGROUND_CLEANUP_TASKS.discard(task)
-    if task.cancelled():
-        return
-    try:
-        task.result()
-    except Exception:
-        logger.exception("FOREGROUND CODE MODE DEFERRED CLEANUP FAILED")
-
-
-def _retain_foreground_cleanup(task: asyncio.Task[Any]) -> None:
-    """Retain cleanup that outlives the response deadline until it finishes."""
-    if task.done():
-        _consume_foreground_cleanup(task)
-        return
-    _FOREGROUND_CLEANUP_TASKS.add(task)
-    task.add_done_callback(_consume_foreground_cleanup)
-    logger.error(
-        "FOREGROUND CODE MODE CLEANUP PENDING retained_tasks=%d",
-        len(_FOREGROUND_CLEANUP_TASKS),
+    request_path = executions.root / execution_id / "input.json"
+    command = (
+        f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker "
+        f"--store {shlex.quote(str(executions.store.path))} "
+        f"--execution {shlex.quote(execution_id)} "
+        f"--request {shlex.quote(str(request_path))}"
+    )
+    return executions.start(
+        command,
+        execution_id=execution_id,
+        label=label,
+        cwd=cwd,
+        kind="code_mode",
+        publish=publish,
+        input_payload=request,
     )
 
 
-def _foreground_cleanup_status(
-    task: asyncio.Task[Any],
-) -> Literal["complete", "failed"]:
-    """Classify a completed cancellation task without leaking its exception."""
-    if task.cancelled():
-        return "complete"
-    try:
-        task.result()
-    except Exception:
-        logger.exception("FOREGROUND CODE MODE CLEANUP FAILED")
-        return "failed"
-    return "complete"
+def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
+    return runtime_read_execution_result(executions, execution_id)
 
 
-async def _run_foreground_code_mode(
-    code: str,
-    cwd: str | None,
-    payload: str | None,
+async def _wait_for_execution(
+    execution_id: str, *, wait_deadline: float
 ) -> dict[str, Any]:
-    start_time = time.monotonic()
-    deadline = start_time + _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS
-    registry = build_code_registry(
-        cwd,
-        task_list=_task_list,
-        task_collect=_task_collect,
-        task_cancel=_task_cancel,
-        task_ack=_task_ack,
-    )
-    runner_task = asyncio.create_task(
-        code_runtime.run(
-            code,
-            registry,
-            cwd=cwd,
-            payload=payload,
-        )
-    )
-    cleanup_budget = min(
-        _FOREGROUND_CODE_MODE_CLEANUP_SECONDS,
-        _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS * 0.2,
-    )
-    exec_budget = max(0.0, _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS - cleanup_budget)
     try:
-        done, _ = await asyncio.wait([runner_task], timeout=exec_budget)
-        if runner_task in done:
-            return runner_task.result()
+        while True:
+            record = await asyncio.to_thread(executions.store.get, execution_id)
+            if record["state"] not in {"accepted", "running"}:
+                return await asyncio.to_thread(
+                    _code_mode_execution_result, execution_id
+                )
+            remaining = wait_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.2, remaining))
 
-        runner_task.cancel()
-        remaining_for_cleanup = max(0.0, deadline - time.monotonic())
-        if remaining_for_cleanup > 0:
-            await asyncio.wait([runner_task], timeout=remaining_for_cleanup)
-        if runner_task.done():
-            cleanup_status: Literal["complete", "failed", "pending"] = (
-                _foreground_cleanup_status(runner_task)
-            )
-        else:
-            _retain_foreground_cleanup(runner_task)
-            cleanup_status = "pending"
-        timeout_val = _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS
-        seconds_display = int(timeout_val) if timeout_val.is_integer() else timeout_val
-        cutoff_display = int(exec_budget) if exec_budget.is_integer() else exec_budget
+        status = await asyncio.to_thread(executions.status, execution_id)
+        if status["state"] not in {"accepted", "running"}:
+            return await asyncio.to_thread(_code_mode_execution_result, execution_id)
+        task = await asyncio.to_thread(executions.publish, execution_id)
         return {
-            "ok": False,
-            "error": {
-                "code": "code_mode_timeout",
-                "message": (
-                    f"Foreground Code Mode reached its {cutoff_display}-second execution cutoff "
-                    f"within the fixed {seconds_display}-second response deadline; relaunch with task."
-                ),
-                "timeout_seconds": timeout_val,
-                "execution_cutoff_seconds": exec_budget,
-                "retry_as_task": True,
-                "cleanup_status": cleanup_status,
-            },
+            "kind": "task",
+            "execution_id": execution_id,
+            "label": task["label"],
+            "state": task["state"],
         }
     except asyncio.CancelledError:
-        runner_task.cancel()
-        remaining_for_cleanup = max(0.0, deadline - time.monotonic())
-        cleanup_limit = (
-            min(_FOREGROUND_CODE_MODE_CLEANUP_SECONDS, remaining_for_cleanup)
-            if remaining_for_cleanup > 0
-            else _FOREGROUND_CODE_MODE_CLEANUP_SECONDS
-        )
-        try:
-            await asyncio.wait([runner_task], timeout=cleanup_limit)
-        finally:
-            if runner_task.done():
-                _foreground_cleanup_status(runner_task)
-            else:
-                _retain_foreground_cleanup(runner_task)
+        # Transport loss is not cancellation. Finish the short SQLite publication
+        # before propagating cancellation to the MCP request owner.
+        await asyncio.shield(asyncio.to_thread(executions.publish, execution_id))
         raise
+
+
+ExecutionState = Literal[
+    "accepted", "running", "completed", "failed", "cancelled", "lost"
+]
+
+
+class _ClosedModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CodeModeCompleted(_ClosedModel):
+    kind: Literal["completed"] = "completed"
+    execution_id: str
+    label: str
+    result: Any
+
+
+class CodeModeTask(_ClosedModel):
+    kind: Literal["task"] = "task"
+    execution_id: str
+    label: str
+    state: ExecutionState
+
+
+class CodeModeErrorDetail(_ClosedModel):
+    code: str
+    message: str
+    reason: str | None = None
+    worker_stderr: str | None = None
+
+
+class CodeModeError(_ClosedModel):
+    kind: Literal["error"] = "error"
+    execution_id: str
+    label: str
+    error: CodeModeErrorDetail
+
+
+CodeModeOutcome = Annotated[
+    CodeModeCompleted | CodeModeTask | CodeModeError,
+    Field(discriminator="kind"),
+]
+_CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
+
+
+def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
+    return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
 async def code_mode(
-    code: Annotated[
-        str | None,
-        Field(
-            description=(
-                "Monty/Python executable orchestration. Prefer registered capabilities that directly "
-                "match the operation instead of rebuilding them in shell. Keep multiline/quoted data in "
-                "payload and read it as PAYLOAD. Decide dependencies before calling: dependent work stays "
-                "sequential; independent awaits may use asyncio.gather(...). Process large results inside "
-                "Code Mode and make the final expression compact. CWD is a path string, not process chdir. "
-                "BACKGROUND is runtime-injected from the actual outer execution mode. Never guess capability "
-                "contracts; inspect CAPABILITIES when uncertain."
-            )
-        ),
-    ] = None,
-    cwd: Annotated[
-        str | None,
-        Field(
-            description=(
-                "Optional default WSL2 working directory exposed to code as CWD and inherited "
-                "by registered capabilities. Does not chdir Monty itself; prefer registered "
-                "FileSystem capabilities for workspace operations."
-            )
-        ),
-    ] = None,
-    payload: Annotated[
-        str | None,
-        Field(
-            description=(
-                "Optional opaque payload/data exposed to Monty code as PAYLOAD. Prefer payload for "
-                "multiline or quoted payloads, including code, JSON, Markdown, "
-                "quotes/backticks, instead of embedding them in code. Keep code as executable "
-                "logic and PAYLOAD as data to avoid parser/escaping failures."
-            )
-        ),
-    ] = None,
-    task: Annotated[
-        TaskLaunch | None,
-        Field(
-            description=(
-                "Detached tracked launch: provide {label, status?} to run this "
-                "program as a durable detached execution that creates a Task. Omit (None) for "
-                "a synchronous foreground run. Detached work is always tracked."
-            )
-        ),
-    ] = None,
-    action: Annotated[
-        Literal["status", "result", "cancel"] | None,
-        Field(
-            description="Lifecycle action for a detached Code Mode execution: status, result, or cancel."
-        ),
-    ] = None,
-    execution_id: Annotated[
-        str | None,
-        Field(description="Detached Code Mode execution ID for lifecycle actions."),
-    ] = None,
-) -> dict[str, Any]:
-    """Execute or manage one stateless Monty program."""
-    task = _coerce_task_launch(task)
-    normalized_action = action.strip().lower() if action is not None else None
-    has_code = code is not None and bool(code.strip())
+    *,
+    label: str,
+    code: str,
+    payload: str | None = None,
+    cwd: str | None = None,
+    mode: Literal["auto", "task"] = "auto",
+) -> CodeModeOutcome:
+    """Launch one always-durable Code Mode Execution."""
+    clean_label = label.strip()
+    if not clean_label:
+        raise ValueError("label must not be empty")
+    if len(clean_label) > 80:
+        raise ValueError("label must be 80 characters or fewer")
+    if not code.strip():
+        raise ValueError("code must not be empty")
 
-    if normalized_action is None:
-        if not has_code:
-            raise ValueError(
-                "code_mode requires code unless action + execution_id are provided"
-            )
-        if execution_id is not None:
-            raise ValueError("execution_id is only valid with a lifecycle action")
-        if task is not None:
-            if not task.label.strip():
-                raise ValueError("task.label must not be empty")
-            return await asyncio.to_thread(
-                _start_background_code_mode,
-                str(code),
-                cwd,
-                payload,
-                task,
-            )
-        return await _run_foreground_code_mode(
-            str(code),
+    execution_id = uuid.uuid4().hex
+    started_at = time.monotonic()
+    wait_deadline = started_at + _INLINE_WAIT_SECONDS
+    response_deadline = started_at + _INLINE_RESPONSE_DEADLINE_SECONDS
+    launch_task = asyncio.create_task(
+        asyncio.to_thread(
+            _start_code_mode_execution,
+            execution_id=execution_id,
+            label=clean_label,
+            code=code,
             cwd=cwd,
             payload=payload,
+            publish=mode == "task",
+        )
+    )
+    try:
+        await asyncio.shield(launch_task)
+    except asyncio.CancelledError:
+        try:
+            await launch_task
+        except Exception:
+            with contextlib.suppress(Exception):
+                await asyncio.shield(
+                    asyncio.to_thread(executions.publish, execution_id)
+                )
+        else:
+            await asyncio.shield(asyncio.to_thread(executions.publish, execution_id))
+        finally:
+            raise
+    except Exception as exc:
+        try:
+            record = executions.store.get(execution_id)
+        except KeyError:
+            raise exc from None
+        return CodeModeError(
+            execution_id=execution_id,
+            label=clean_label,
+            error=CodeModeErrorDetail(
+                code="launch_interrupted",
+                message=str(exc) or "Code Mode Worker could not be launched.",
+                reason=str(record.get("reason") or "launch_interrupted"),
+            ),
         )
 
-    if has_code:
-        raise ValueError("code and lifecycle action are mutually exclusive")
-    if task is not None:
-        raise ValueError("task is only valid when launching code")
-    if cwd is not None:
-        raise ValueError("cwd is only valid when launching code")
-    if payload is not None:
-        raise ValueError("payload is only valid when launching code")
-    if execution_id is None or not execution_id.strip():
-        raise ValueError(
-            f"code_mode action={normalized_action!r} requires execution_id"
+    if mode == "task":
+        task = await asyncio.to_thread(executions.task, execution_id)
+        return CodeModeTask(
+            execution_id=execution_id,
+            label=clean_label,
+            state=task["state"],
         )
-    if normalized_action == "status":
-        state = await asyncio.to_thread(executions.status, execution_id)
-        if state.get("status") != "running":
-            await asyncio.to_thread(_cleanup_code_mode_request, execution_id)
-        return state
-    if normalized_action == "result":
-        return await asyncio.to_thread(_background_code_mode_result, execution_id)
-    if normalized_action == "cancel":
-        state = await asyncio.to_thread(executions.cancel, execution_id)
-        await asyncio.to_thread(_cleanup_code_mode_request, execution_id)
-        return state
-    raise ValueError("unsupported code_mode action; choose status, result, or cancel")
+
+    remaining_response = max(0.0, response_deadline - time.monotonic())
+    try:
+        raw = await asyncio.wait_for(
+            _wait_for_execution(execution_id, wait_deadline=wait_deadline),
+            timeout=remaining_response,
+        )
+    except TimeoutError:
+        task = await asyncio.to_thread(executions.publish, execution_id)
+        raw = {
+            "kind": "task",
+            "execution_id": execution_id,
+            "label": task["label"],
+            "state": task["state"],
+        }
+    return _code_mode_outcome(raw)
 
 
 @mcp.tool(
     name="code_mode",
     title="Pydantic Monty Code Mode",
     description=(
-        "Primary programmable execution root for GPT Dive, backed by Pydantic Monty.\n"
-        "- Write code as Monty/Python orchestration, not as a shell script.\n"
-        "- Prefer registered capabilities directly for file, search, edit, and other matched operations.\n"
-        "- Decide dependencies first: await dependent work sequentially; use asyncio.gather(...) for independent work.\n"
-        "- Every MCP call requires payload as a string; use payload='' when there is no data.\n"
-        "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
-        "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
-        "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
-        "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
-        "- Detached runs always create a tracked Task: pass task={label, status?}; omit task for a synchronous run."
+        "Launch one always-durable Pydantic Monty Execution. label and code are required. "
+        "mode='auto' waits up to the bounded inline delivery window and otherwise returns "
+        "a Task handle for the same continuing Execution; mode='task' publishes that Task "
+        "immediately. Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
+        "arguments, use PAYLOAD for data, and use asyncio.gather only for independent work."
     ),
 )
 async def _mcp_code_mode(
-    payload: Annotated[
+    label: Annotated[
         str,
         Field(
-            description=(
-                "Required opaque string payload exposed to Monty code as PAYLOAD. Always provide this "
-                "field: use payload='' when no data is needed or for lifecycle actions. Never pass "
-                "an object/list directly. For structured data, serialize it to text first and parse "
-                "inside Code Mode. Payload is data."
-            )
+            min_length=1,
+            max_length=80,
+            description="Required short Execution label used by Preview and Task awareness.",
         ),
     ],
     code: Annotated[
-        str | None,
+        str,
         Field(
+            min_length=1,
             description=(
-                "Monty/Python executable orchestration. Call registered capabilities directly and do "
-                "not place shell scripts here. Keep payload/data in PAYLOAD. Decide dependencies before "
-                "calling: dependent work is sequential and independent work may use asyncio.gather(...). "
-                "Do not guess capability contracts; inspect CAPABILITIES/live schema when uncertain."
-            )
+                "Monty/Python orchestration. Call registered capabilities directly; keep opaque "
+                "or multiline data in payload/PAYLOAD and inspect CAPABILITIES when uncertain."
+            ),
         ),
+    ],
+    payload: Annotated[
+        str | None,
+        Field(description="Optional opaque string exposed to Monty code as PAYLOAD."),
     ] = None,
     cwd: Annotated[
         str | None,
@@ -810,40 +686,123 @@ async def _mcp_code_mode(
             )
         ),
     ] = None,
-    task: Annotated[
-        TaskLaunch | None,
+    mode: Annotated[
+        Literal["auto", "task"],
         Field(
             description=(
-                "Detached tracked launch: provide {label, status?} to run this "
-                "program as a durable detached execution that creates a Task. Omit (None) for "
-                "a synchronous foreground run. Detached work is always tracked."
+                "auto waits for bounded inline delivery; task publishes awareness immediately. "
+                "Both modes run the same always-durable Execution."
             )
         ),
-    ] = None,
-    action: Annotated[
-        Literal["status", "result", "cancel"] | None,
-        Field(
-            description="Lifecycle action for a detached Code Mode execution: status, result, or cancel."
-        ),
-    ] = None,
-    execution_id: Annotated[
-        str | None,
-        Field(description="Detached Code Mode execution ID for lifecycle actions."),
-    ] = None,
-) -> dict[str, Any]:
-    """Model-facing Code Mode wrapper with an explicit payload/PAYLOAD contract."""
-    if action is not None and payload != "":
-        raise ValueError(
-            "code_mode lifecycle calls require payload='' because lifecycle actions have no payload"
-        )
+    ] = "auto",
+) -> CodeModeOutcome:
     return await code_mode(
+        label=label,
         code=code,
         cwd=cwd,
-        payload=payload if action is None else None,
-        task=task,
-        action=action,
-        execution_id=execution_id,
+        payload=payload,
+        mode=mode,
     )
+
+
+class TaskListRequest(_ClosedModel):
+    action: Literal["list"]
+
+
+class TaskGetRequest(_ClosedModel):
+    action: Literal["get"]
+    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+class TaskCancelRequest(_ClosedModel):
+    action: Literal["cancel"]
+    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+class TaskDismissRequest(_ClosedModel):
+    action: Literal["dismiss"]
+    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+TaskRequest = Annotated[
+    TaskListRequest | TaskGetRequest | TaskCancelRequest | TaskDismissRequest,
+    Field(discriminator="action"),
+]
+
+
+class TaskView(_ClosedModel):
+    execution_id: str
+    label: str
+    state: ExecutionState
+    reason: str | None
+    accepted_at: str
+    finished_at: str | None
+    published_at: str
+    updated_at: str
+    elapsed_seconds: int
+
+
+class TaskListOutput(_ClosedModel):
+    action: Literal["list"] = "list"
+    tasks: list[TaskView]
+
+
+class TaskGetOutput(_ClosedModel):
+    action: Literal["get"] = "get"
+    task: TaskView
+    ready: bool
+    unavailable: bool = False
+    result: Any | None = None
+
+
+class TaskCancelOutput(_ClosedModel):
+    action: Literal["cancel"] = "cancel"
+    task: TaskView
+
+
+class TaskDismissOutput(_ClosedModel):
+    action: Literal["dismiss"] = "dismiss"
+    execution_id: str
+    state: ExecutionState
+    dismissed: bool
+
+
+TaskOutcome = Annotated[
+    TaskListOutput | TaskGetOutput | TaskCancelOutput | TaskDismissOutput,
+    Field(discriminator="action"),
+]
+
+
+def _task_view(value: dict[str, Any]) -> TaskView:
+    return TaskView.model_validate(value)
+
+
+@mcp.tool(
+    name="task",
+    title="GPT Dive Task Lifecycle",
+    description=(
+        "Operate a published Code Mode Task by its single execution_id. list returns "
+        "outstanding awareness, get reads status/result non-destructively, cancel explicitly "
+        "cancels running work, and dismiss removes terminal awareness without deleting retention."
+    ),
+)
+async def task(request: TaskRequest) -> TaskOutcome:
+    if isinstance(request, TaskListRequest):
+        rows = await asyncio.to_thread(_task_list, limit=_TASK_LIST_LIMIT)
+        return TaskListOutput(tasks=[_task_view(row) for row in rows])
+    if isinstance(request, TaskGetRequest):
+        result = await asyncio.to_thread(_task_get, request.execution_id)
+        return TaskGetOutput(
+            task=_task_view(result["task"]),
+            ready=bool(result["ready"]),
+            unavailable=bool(result.get("unavailable", False)),
+            result=result.get("result"),
+        )
+    if isinstance(request, TaskCancelRequest):
+        result = await asyncio.to_thread(_task_cancel, request.execution_id)
+        return TaskCancelOutput(task=_task_view(result["task"]))
+    result = await asyncio.to_thread(_task_dismiss, request.execution_id)
+    return TaskDismissOutput.model_validate({"action": "dismiss", **result})
 
 
 @mcp.tool(

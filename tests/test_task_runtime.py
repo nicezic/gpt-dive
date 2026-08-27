@@ -3,95 +3,113 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from gpt_dive.execution_manager import ExecutionManager
-from gpt_dive.task_runtime import TaskRuntime, ack_task, collect_task, refresh_task
-from gpt_dive.task_store import TaskStore
+import pytest
+
+from gpt_dive.execution_manager import ExecutionManager, ExecutionNotFoundError
+from gpt_dive.task_runtime import (
+    dismiss_task,
+    get_task,
+    list_projected_tasks,
+    projection_revision,
+    render_tracked_tasks,
+)
 
 
-def _wait_terminal(executions: ExecutionManager, execution_id: str) -> None:
-    deadline = time.monotonic() + 2
+def manager_for_test(root: Path) -> ExecutionManager:
+    manager = ExecutionManager(
+        root,
+        work_timeout_seconds=5,
+        cleanup_timeout_seconds=2,
+    )
+    manager._systemd_available = False
+    return manager
+
+
+def wait_ready(
+    manager: ExecutionManager, execution_id: str, *, timeout: float = 5.0
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if executions.status(execution_id)["status"] != "running":
-            return
-        time.sleep(0.02)
-    raise AssertionError("execution did not become terminal")
+        result = get_task(manager, execution_id)
+        if result["ready"] or result.get("unavailable"):
+            return result
+        time.sleep(0.03)
+    raise AssertionError("Task did not become ready")
 
 
-def test_raw_shell_task_success_and_failure_share_runtime(tmp_path: Path) -> None:
-    executions = ExecutionManager(tmp_path / "executions")
-    executions._systemd_available = False
-    store = TaskStore(tmp_path / "tasks.sqlite3")
-
-    ok_execution = str(executions.start("printf OK", timeout=3)["execution_id"])
-    ok = store.create(execution_id=ok_execution, label="raw-ok")
-    failed_execution = str(
-        executions.start("printf BAD; exit 7", timeout=3)["execution_id"]
+def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
+    tmp_path: Path,
+) -> None:
+    manager = manager_for_test(tmp_path / "executions")
+    started = manager.start(
+        "printf TASK_OK",
+        label="task result",
+        kind="conduit",
+        publish=True,
     )
-    failed = store.create(execution_id=failed_execution, label="raw-fail")
+    execution_id = str(started["execution_id"])
 
-    _wait_terminal(executions, ok_execution)
-    _wait_terminal(executions, failed_execution)
+    first = wait_ready(manager, execution_id)
+    second = get_task(manager, execution_id)
 
-    ok_task = refresh_task(TaskRuntime(executions, store), ok)
-    failed_task = refresh_task(TaskRuntime(executions, store), failed)
-    assert ok_task["state"] == "completed"
-    assert failed_task["state"] == "failed"
-
-    collected = collect_task(TaskRuntime(executions, store), str(ok["task_id"]))
-    assert collected["ready"] is True
-    assert collected["result"]["stdout"] == "OK"
-
-    text_execution = str(
-        executions.start("printf '%s' '-m gpt_dive.code_mode_worker'", timeout=3)[
-            "execution_id"
-        ]
-    )
-    text_task = store.create(execution_id=text_execution, label="raw-text")
-    _wait_terminal(executions, text_execution)
-    text_collected = collect_task(
-        TaskRuntime(executions, store), str(text_task["task_id"])
-    )
-    assert text_collected["task"]["state"] == "completed"
-    assert text_collected["result"]["stdout"] == "-m gpt_dive.code_mode_worker"
+    assert isinstance(first["result"], dict)
+    assert isinstance(second["result"], dict)
+    assert first["result"]["stdout"] == "TASK_OK"
+    assert second["result"]["stdout"] == "TASK_OK"
+    dismissed = dismiss_task(manager, execution_id)
+    assert dismissed["dismissed"] is True
+    assert manager.result(execution_id)["stdout"] == "TASK_OK"
+    with pytest.raises(ExecutionNotFoundError):
+        get_task(manager, execution_id)
 
 
-def test_missing_execution_becomes_lost_and_can_be_acked(tmp_path: Path) -> None:
-    executions = ExecutionManager(tmp_path / "executions")
-    executions._systemd_available = False
-    store = TaskStore(tmp_path / "tasks.sqlite3")
-    task = store.create(execution_id="missing-execution", label="missing")
-
-    refreshed = refresh_task(TaskRuntime(executions, store), task)
-    assert refreshed["state"] == "lost"
-
-    acked = ack_task(TaskRuntime(executions, store), str(task["task_id"]))
-    assert acked == {"task_id": task["task_id"], "state": "lost", "acked": True}
-    assert store.list_tasks() == []
-
-
-def test_probe_status_labels_extracts_static_status() -> None:
-    from gpt_dive.task_runtime import probe_status_labels
-
-    tasks = [
-        {"task_id": str(i), "state": "working", "status": f"status-{i}"}
-        for i in range(4)
-    ]
-    labels = probe_status_labels(tasks)
-    assert labels == {
-        "0": "status-0",
-        "1": "status-1",
-        "2": "status-2",
-        "3": "status-3",
+def test_projection_revision_ignores_elapsed_time_but_tracks_state() -> None:
+    base = {
+        "execution_id": "a" * 32,
+        "label": "compile",
+        "state": "running",
+        "reason": None,
+        "finished_at": None,
+        "elapsed_seconds": 1,
+    }
+    later = {**base, "elapsed_seconds": 99}
+    completed = {
+        **later,
+        "state": "completed",
+        "finished_at": "2026-08-27T00:00:00Z",
     }
 
+    assert projection_revision([base]) == projection_revision([later])
+    assert projection_revision([base]) != projection_revision([completed])
 
-def test_probe_status_labels_only_probes_working_tasks() -> None:
-    from gpt_dive.task_runtime import probe_status_labels
 
+def test_tracked_tasks_is_bounded_and_uses_single_execution_id() -> None:
     tasks = [
-        {"task_id": "1", "state": "working", "status": "active"},
-        {"task_id": "2", "state": "completed", "status": "done"},
-        {"task_id": "3", "state": "cancelled", "status": "stopped"},
+        {
+            "execution_id": f"{index:032x}",
+            "label": f"task-{index}",
+            "state": "running",
+            "reason": None,
+            "elapsed_seconds": index,
+        }
+        for index in range(20)
     ]
-    labels = probe_status_labels(tasks)
-    assert labels == {"1": "active"}
+
+    rendered = render_tracked_tasks(tasks, limit=3, max_bytes=4096)
+
+    assert rendered.startswith("TrackedTasks\n")
+    assert "task-0" in rendered and "task-2" in rendered
+    assert "task-3" not in rendered
+    assert "task_id" not in rendered
+
+
+def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> None:
+    manager = manager_for_test(tmp_path / "executions")
+    completed = manager.start("true", label="old done", publish=True)
+    wait_ready(manager, str(completed["execution_id"]))
+    running = manager.start("sleep 2", label="active", publish=True)
+
+    projected = list_projected_tasks(manager, limit=1)
+
+    assert projected[0]["execution_id"] == running["execution_id"]
+    manager.cancel(str(running["execution_id"]))

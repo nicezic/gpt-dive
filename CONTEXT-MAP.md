@@ -1,11 +1,11 @@
 # GPT Dive Context Map
 
-## Contexts
+## Context
 
-- [Runtime](./docs/runtime/CONTEXT.md) — owns GPT Dive-wide Task, Execution, and asynchronous-work awareness language.
-- [Conduit](./docs/conduit/CONTEXT.md) — owns the `@c` conversation/control protocol and Conduit-specific conversation language.
+- [Runtime](./docs/runtime/CONTEXT.md) — GPT Dive 전체의 `Execution`, `Worker`, `Task`, 비동기 작업 인지(awareness) 언어를 소유한다.
+- [Conduit](./docs/conduit/CONTEXT.md) — `@c` 대화·제어 protocol과 Conduit 고유 대화 언어를 소유한다.
 
-## Relationships
+## 관계
 
-- **Conduit → Runtime**: Conduit consumes the shared Runtime Task/Execution model and TrackedTasks projection; it does not own those concepts.
-- **Runtime → Conduit**: Runtime exposes shared asynchronous-work awareness that Conduit may project through its separate tunnel/control surface.
+- **Conduit → Runtime**: Conduit는 공용 Execution/Task 모델과 TrackedTasks projection(축약 투영)을 사용한다. 이 개념이나 Worker lifecycle을 별도로 소유하지 않는다.
+- **Runtime → Conduit**: Runtime은 공용 비동기 작업 인지 정보를 제공하고, Conduit는 이를 별도 tunnel/control surface에 투영할 수 있다.

@@ -132,7 +132,7 @@ async def _terminate_and_reap(
     process_wait_grace_seconds: float = _PROCESS_WAIT_GRACE_SECONDS,
     log_label: str,
 ) -> CleanupOutcome:
-    """Terminate one detached process group and reap its stdio task with SIGKILL escalation."""
+    """Terminate one isolated process group and reap its stdio task with SIGKILL escalation."""
     logger.warning("%s TERMINATE (SIGTERM) pid=%s", log_label, proc.pid)
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -223,7 +223,7 @@ async def run_bounded_worker(
     termination_grace_seconds: float = 4.0,
     log_label: str = "WORKER",
 ) -> WorkerOutcome:
-    """Run one detached worker process under a bounded timeout.
+    """Run one isolated worker process under a bounded timeout.
 
     Lifecycle semantics (owned here once for every worker caller):
 

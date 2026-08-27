@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +9,9 @@ from pydantic_ai_harness import FileSystem
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
 from .code_runtime import CallableRegistry, MontyCodeRuntime
+from .command_runtime import run_command as run_runtime_command
 from .council import emit_sol_response
+from .execution_context import ExecutionContext
 from .filesystem_policy import harness_denied_patterns
 from .m3_evidence import invoke_m3_evidence
 from .model_call import invoke_model_call
@@ -19,7 +20,10 @@ from .subagent_runtime import invoke_subagent
 
 code_runtime = MontyCodeRuntime()
 
-TaskOpFn = Callable[..., Any]
+_AGY_WORKER_POLICY_SECONDS = 360.0
+_SUBAGENT_POLICY_SECONDS = 600.0
+_PEER_REVIEW_POLICY_SECONDS = 600.0
+_M3_EVIDENCE_POLICY_SECONDS = 180.0
 
 
 def code_mode_home_root() -> Path:
@@ -42,10 +46,7 @@ def reject_broad_search_root(path: Path, *, operation: str) -> None:
 def build_code_registry(
     default_cwd: str | None,
     *,
-    task_list: TaskOpFn,
-    task_collect: TaskOpFn,
-    task_cancel: TaskOpFn,
-    task_ack: TaskOpFn,
+    execution_context: ExecutionContext,
 ) -> CallableRegistry:
     registry = CallableRegistry()
     effective_cwd = (
@@ -126,7 +127,6 @@ def build_code_registry(
         *,
         task: str,
         model: str = DEFAULT_AGY_MODEL,
-        timeout: float,
         cwd: str | None = None,
         conversation_id: str | None = None,
     ) -> dict[str, Any]:
@@ -139,7 +139,7 @@ def build_code_registry(
         return await invoke_agy_worker(
             task=task,
             model=model,
-            timeout=timeout,
+            timeout=execution_context.child_budget(_AGY_WORKER_POLICY_SECONDS),
             workspace_dir=cwd if cwd is not None else default_cwd,
             conversation_id=conversation_id,
         )
@@ -148,7 +148,6 @@ def build_code_registry(
         *,
         model: str,
         task: str,
-        timeout: float,
         output_tokens_limit: int = 4096,
         cwd: str | None = None,
     ) -> dict[str, Any]:
@@ -160,7 +159,7 @@ def build_code_registry(
         return await invoke_subagent(
             model=model,
             task=task,
-            timeout=timeout,
+            timeout=execution_context.child_budget(_SUBAGENT_POLICY_SECONDS),
             output_tokens_limit=output_tokens_limit,
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
@@ -170,7 +169,6 @@ def build_code_registry(
         provider: str,
         model: str | None = None,
         prompt: str,
-        timeout: float,
         cwd: str | None = None,
     ) -> dict[str, Any]:
         """Call an independent peer reviewer; omit model to use the provider's default."""
@@ -178,7 +176,7 @@ def build_code_registry(
             provider=provider,
             model=model,
             prompt=prompt,
-            timeout=timeout,
+            timeout=execution_context.child_budget(_PEER_REVIEW_POLICY_SECONDS),
             peer_review=True,
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
@@ -190,7 +188,6 @@ def build_code_registry(
         round_number: int = 1,
         max_rounds: int = 3,
         max_queries: int = 3,
-        timeout: float,
         output_tokens_limit: int = 2048,
     ) -> dict[str, Any]:
         """Use tool-less MiniMax-M3 to assess evidence within a bounded research-round budget."""
@@ -200,9 +197,26 @@ def build_code_registry(
             round_number=round_number,
             max_rounds=max_rounds,
             max_queries=max_queries,
-            timeout=timeout,
+            timeout=execution_context.child_budget(_M3_EVIDENCE_POLICY_SECONDS),
             output_tokens_limit=output_tokens_limit,
         )
+
+    async def run_command(command: str) -> dict[str, Any]:
+        """Run one awaited local shell command under the owning Execution budget.
+
+        Output is spooled with hard bounds and truncated before entering model context.
+        Use an explicit systemd-run --user sibling unit only when intentionally handing
+        work outside GPT Dive Runtime and accepting loss of Task/deadline guarantees.
+        """
+        return await run_runtime_command(
+            command,
+            cwd=str(effective_cwd),
+            context=execution_context,
+        )
+
+    def deadline_remaining() -> float:
+        """Return the current read-only Execution work budget in seconds."""
+        return execution_context.remaining_seconds()
 
     async def repo_search(
         *,
@@ -242,22 +256,6 @@ def build_code_registry(
             emit_sol_response, council_dir, message, expected_head
         )
 
-    async def tracked_task_list() -> dict[str, Any]:
-        """Return complete structured outstanding Task records after local refresh."""
-        return {"tasks": await asyncio.to_thread(task_list)}
-
-    async def tracked_task_collect(task_id: str) -> dict[str, Any]:
-        """Collect retained Task result/evidence without acknowledging it."""
-        return await asyncio.to_thread(task_collect, task_id)
-
-    async def tracked_task_cancel(task_id: str) -> dict[str, Any]:
-        """Forward cancellation to a working Task's backing execution."""
-        return await asyncio.to_thread(task_cancel, task_id)
-
-    async def tracked_task_ack(task_id: str) -> dict[str, Any]:
-        """Remove terminal or lost Task awareness after handling."""
-        return await asyncio.to_thread(task_ack, task_id)
-
     registry.register("read_file", read_file)
     registry.register("write_file", write_file)
     registry.register("edit_file", edit_file)
@@ -272,8 +270,6 @@ def build_code_registry(
     registry.register("m3_evidence", m3_evidence)
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
-    registry.register("task_list", tracked_task_list)
-    registry.register("task_collect", tracked_task_collect)
-    registry.register("task_cancel", tracked_task_cancel)
-    registry.register("task_ack", tracked_task_ack)
+    registry.register("run_command", run_command)
+    registry.register("deadline_remaining", deadline_remaining)
     return registry
