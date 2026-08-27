@@ -7,12 +7,15 @@ ChatGPT Web
   -> Secure MCP Tunnel
   -> GPT Dive
        -> bootstrap
-       -> code_mode      # default local execution, payload string required on MCP calls
-       -> wsl2_sync      # transport/smoke or explicit exception
-       -> wsl2_async     # durable job lifecycle
+       -> code_mode      # single programmable execution root, payload string required on MCP calls
 ```
 
-Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and whole-file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map re-emits the full `USER_RULES.md` plus focused GPT Dive / Code Mode sections every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior should normally grow behind `code_mode` rather than expanding the Web-facing MCP surface.
+Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and whole-file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map re-emits the full `USER_RULES.md` plus focused GPT Dive / Code Mode sections every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior belongs behind `code_mode` as the single model-facing execution surface.
+
+Code Mode enforces deterministic server-side execution deadlines (not AI arguments):
+
+- **Foreground Code Mode (`task=None`):** fixed 110.0-second response deadline, divided into a 100-second execution cutoff and a 10-second cleanup window. The structured `code_mode_timeout` result reports `cleanup_status=complete|failed|pending`; pending cleanup remains runtime-owned until it finishes.
+- **Detached Code Mode (`task={label, ...}`):** fixed 600.0-second deadline backed by durable background execution and persistent Task tracking. Direct shell execution capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) are completely removed; use registered domain capabilities or delegate to AGY / subagents.
 
 ## OpenAI Codex subscription compatibility
 
@@ -39,7 +42,7 @@ Registered Code Mode capability signatures and callable docstrings are model-vis
 
 ```text
 v1  Local MCP Runtime
-     -> sync / async WSL2 control / gz64
+     -> programmable Code Mode root / durable Task domain
 
 v2  Pydantic AI Harness
      -> code_mode / background execution / subagents
@@ -78,7 +81,7 @@ For live MCP operations, see [`docs/runtime/operations.md`](docs/runtime/operati
 Standard MCP restart handoff:
 
 ```bash
-nohup bash -lc 'sleep 3; systemctl --user restart chatgpt-wsl2-mcp.service' >/tmp/gpt-dive-mcp-restart.log 2>&1 &
+nohup bash -lc 'sleep 3; sudo systemctl restart gpt-dive-tunnel.service' >/tmp/gpt-dive-mcp-restart.log 2>&1 &
 ```
 
 After dispatching this restart, **do not automatically verify or probe the restarted MCP from the same turn/session**. Return control to the user and wait for an explicit follow-up before checking PID, bootstrap, schema, or runtime state.

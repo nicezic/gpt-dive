@@ -1,18 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import fnmatch
-import functools
-import gzip
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai_harness import FileSystem, Shell
-from pydantic_ai_harness._output import truncate_tail
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+from pydantic_ai_harness import FileSystem
 
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
@@ -22,12 +15,10 @@ from .filesystem_policy import harness_denied_patterns
 from .m3_evidence import invoke_m3_evidence
 from .model_call import invoke_model_call
 from .repo_search import search_repo
-from .runtime_env import build_runtime_path
 from .subagent_runtime import invoke_subagent
 
 code_runtime = MontyCodeRuntime()
 
-RunCommandFn = Callable[..., dict[str, Any]]
 TaskOpFn = Callable[..., Any]
 
 
@@ -51,7 +42,6 @@ def reject_broad_search_root(path: Path, *, operation: str) -> None:
 def build_code_registry(
     default_cwd: str | None,
     *,
-    run_command: RunCommandFn,
     task_list: TaskOpFn,
     task_collect: TaskOpFn,
     task_cancel: TaskOpFn,
@@ -131,30 +121,6 @@ def build_code_registry(
     async def create_directory(path: str) -> str:
         """Create a directory and parents. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
         return await filesystem_toolset.create_directory(str(resolve_path(path)))
-
-    guard_bin = Path(__file__).resolve().parent / "guard-bin"
-    shell_denied_env_patterns = (
-        *LLM_API_KEY_ENV_PATTERNS,
-        "MINIMAX_*",
-        "AIAPIFLOW_*",
-    )
-    shell_env = {
-        name: value
-        for name, value in os.environ.items()
-        if not any(
-            fnmatch.fnmatchcase(name, pattern) for pattern in shell_denied_env_patterns
-        )
-    }
-    shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
-    shell_max_output_chars = 50_000
-    shell_toolset = Shell(
-        cwd=effective_cwd,
-        env=shell_env,
-        denied_commands=[],
-        denied_env_patterns=shell_denied_env_patterns,
-        default_timeout=60.0,
-        max_output_chars=shell_max_output_chars,
-    ).get_toolset()
 
     async def agy_worker(
         *,
@@ -276,12 +242,6 @@ def build_code_registry(
             emit_sol_response, council_dir, message, expected_head
         )
 
-    async def gz64(payload: str) -> dict[str, Any]:
-        """Last-resort command transport when normal execution is blocked by the OpenAI tunnel/filtering path."""
-        compressed = base64.b64decode(payload, validate=True)
-        command = gzip.decompress(compressed).decode("utf-8")
-        return await asyncio.to_thread(run_command, command, default_cwd, 600.0)
-
     async def tracked_task_list() -> dict[str, Any]:
         """Return complete structured outstanding Task records after local refresh."""
         return {"tasks": await asyncio.to_thread(task_list)}
@@ -306,27 +266,12 @@ def build_code_registry(
     registry.register("find_files", find_files)
     registry.register("create_directory", create_directory)
     registry.register("file_info", file_info)
-
-    def bounded_shell_method(name: str):
-        method = getattr(shell_toolset, name)
-
-        @functools.wraps(method)
-        async def invoke(*args: Any, **kwargs: Any) -> str:
-            return truncate_tail(await method(*args, **kwargs), shell_max_output_chars)
-
-        return invoke
-
-    for name in ("run_command", "start_command", "check_command", "stop_command"):
-        registry.register(name, bounded_shell_method(name))
-
-    registry.add_async_cleanup(shell_toolset.__aexit__)
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("peer_review", peer_review)
     registry.register("m3_evidence", m3_evidence)
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
-    registry.register("gz64", gz64)
     registry.register("task_list", tracked_task_list)
     registry.register("task_collect", tracked_task_collect)
     registry.register("task_cancel", tracked_task_cancel)

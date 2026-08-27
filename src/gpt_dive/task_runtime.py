@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 import shlex
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from .command_runtime import run_command
 from .execution_manager import ExecutionManager, ExecutionNotFoundError
 from .task_store import TaskStore
 from .worker_subprocess import stderr_tail
@@ -196,18 +193,7 @@ def _state_from_result(result: dict[str, Any]) -> str:
 def task_status_label(task: dict[str, Any]) -> str | None:
     if task["state"] != "working":
         return None
-
     static_status = str(task.get("status") or "").strip()
-    status_cmd = str(task.get("status_cmd") or "").strip()
-    if status_cmd:
-        try:
-            probe = run_command(status_cmd, timeout=1.0)
-        except OSError:
-            probe = {"returncode": 1, "stdout": ""}
-        if probe.get("returncode") == 0:
-            stdout = " ".join(str(probe.get("stdout") or "").splitlines()).strip()
-            if stdout:
-                return stdout[:256]
     return static_status[:256] if static_status else None
 
 
@@ -237,42 +223,12 @@ def project_task(
 
 
 def probe_status_labels(tasks: list[dict[str, Any]]) -> dict[str, str | None]:
-    """Run bounded status_cmd probes concurrently so wall time stays near one probe.
-
-    Only working Tasks with a status_cmd need a probe; every other projected
-    row keeps its static fallback (or no decoration). Returns a map keyed by
-    task_id for tasks that were probed.
-    """
-    candidates = [task for task in tasks if task["state"] == "working"]
-    if not candidates:
-        return {}
-    pool = _probe_pool()
-    futures = {
-        str(task["task_id"]): pool.submit(task_status_label, task)
-        for task in candidates
+    """Return status label map for working tasks."""
+    return {
+        str(task["task_id"]): task_status_label(task)
+        for task in tasks
+        if task["state"] == "working"
     }
-    return {task_id: future.result() for task_id, future in futures.items()}
-
-
-_PROBE_POOL: ThreadPoolExecutor | None = None
-_PROBE_POOL_LOCK = threading.Lock()
-
-
-def _probe_pool() -> ThreadPoolExecutor:
-    """Lazily build and reuse one shared probe pool.
-
-    Snapshots run on every task_list / @c call; constructing a fresh
-    ThreadPoolExecutor per invocation churned threads for no benefit.
-    The pool is shared across concurrent snapshots: probes queue behind
-    in-flight ones but stay bounded by the 1s run_command timeout.
-    """
-    global _PROBE_POOL
-    with _PROBE_POOL_LOCK:
-        if _PROBE_POOL is None:
-            _PROBE_POOL = ThreadPoolExecutor(
-                max_workers=8, thread_name_prefix="status-probe"
-            )
-        return _PROBE_POOL
 
 
 def list_projected_tasks(

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -28,54 +28,11 @@ def test_code_mode_can_read_and_write_local_filesystem() -> None:
         assert target.read_text() == "DIVE_RW_OK"
 
 
-def test_run_command_works_and_preserves_guard_bin() -> None:
-    code = """\
-ok = await run_command("printf 'RUN_COMMAND_OK\\n'")
-rerouted = await run_command("python --version")
-old_python = await run_command("python3.10 --version")
-{"ok": ok, "rerouted": rerouted, "old_python": old_python}
-"""
-    result = asyncio.run(code_mode(code))["result"]
-    assert "RUN_COMMAND_OK" in result["ok"]
-    assert "Python 3.14" in result["rerouted"]
-    assert "auto-reroute" in result["rerouted"]
-    assert "Old Python" in result["old_python"]
-    assert "[exit code: 2]" in result["old_python"]
-
-
-def test_run_command_allows_normal_cleanup_commands(tmp_path: Path) -> None:
-    target = tmp_path / "cleanup-me.txt"
-    target.write_text("temporary")
-    result = asyncio.run(
-        code_mode("await run_command(PAYLOAD)", payload=f"rm {target}")
-    )["result"]
-    assert result == "(no output)"
-    assert not target.exists()
-
-
-def test_run_command_strips_provider_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-run-command")
-    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-run-command")
-    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-run-command")
-    code = r"""
-result = await run_command(
-    "printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\""
-)
-result
-"""
-    result = asyncio.run(code_mode(code))["result"]
-    assert "||" in result
-    assert "must-not-reach-run-command" not in result
-
-
-def test_code_mode_payload_can_carry_multiline_shell() -> None:
-    payload = "printf 'PAYLOAD_OK\n'\nprintf 'SECOND_LINE\n'"
-    code = "await run_command(PAYLOAD)"
+def test_code_mode_payload_can_carry_multiline_text() -> None:
+    payload = "PAYLOAD_OK\nSECOND_LINE"
+    code = "PAYLOAD.splitlines()"
     result = asyncio.run(code_mode(code, payload=payload))["result"]
-    assert "PAYLOAD_OK" in result
-    assert "SECOND_LINE" in result
+    assert result == ["PAYLOAD_OK", "SECOND_LINE"]
 
 
 def test_code_mode_payload_type_stub_has_no_input_alias() -> None:
@@ -91,25 +48,6 @@ def test_code_mode_exposes_foreground_flag() -> None:
     assert asyncio.run(code_mode("BACKGROUND")) == {"result": False}
 
 
-def test_run_command_calls_can_overlap() -> None:
-    code = """\ncmd = "date +%s%N; sleep 0.35; date +%s%N"\na, b = await asyncio.gather(run_command(cmd), run_command(cmd))\n[a, b]\n"""
-    outputs = asyncio.run(code_mode(code))["result"]
-    intervals = []
-    for output in outputs:
-        numbers = [int(part) for part in output.split() if part.isdigit()]
-        intervals.append((numbers[0], numbers[1]))
-    starts = [start for start, _ in intervals]
-    ends = [end for _, end in intervals]
-    assert max(starts) < min(ends)
-
-
-def test_run_command_output_is_bounded() -> None:
-    code = 'await run_command("yes alpha | head -n 20000")'
-    result = asyncio.run(code_mode(code))["result"]
-    assert len(result) <= 50_000
-    assert "alpha" in result
-
-
 def test_capabilities_are_runtime_discoverable() -> None:
     result = asyncio.run(code_mode("CAPABILITIES"))["result"]
     assert set(result) == {
@@ -121,31 +59,182 @@ def test_capabilities_are_runtime_discoverable() -> None:
         "find_files",
         "create_directory",
         "file_info",
-        "run_command",
-        "start_command",
-        "check_command",
-        "stop_command",
         "agy_worker",
         "subagent_call",
         "peer_review",
         "m3_evidence",
         "repo_search",
         "council_emit",
-        "gz64",
         "task_list",
         "task_collect",
         "task_cancel",
         "task_ack",
     }
+    for removed in (
+        "run_command",
+        "start_command",
+        "check_command",
+        "stop_command",
+        "gz64",
+    ):
+        assert removed not in result
     assert "offset" in result["read_file"]["signature"]
     assert "expected_hash" in result["write_file"]["signature"]
     assert "expected_hash" in result["edit_file"]["signature"]
-    assert "timeout_seconds" in result["run_command"]["signature"]
     assert "conversation_id" in result["agy_worker"]["signature"]
     assert result["read_file"]["description"].startswith(
         "Read a text file with line numbers."
     )
-    assert result["run_command"]["description"].startswith("Execute a shell command")
+    assert result["edit_file"]["description"].startswith("Edit a file")
+
+
+def test_removed_capabilities_rejected_statically() -> None:
+    for removed in (
+        "run_command('echo 1')",
+        "start_command('echo 1')",
+        "check_command('job_id')",
+        "stop_command('job_id')",
+        "gz64('payload')",
+    ):
+        with pytest.raises((MontyTypingError, MontyRuntimeError)):
+            asyncio.run(code_mode(f"await {removed}"))
+
+
+def test_foreground_code_mode_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS", 0.05)
+    code = "x = 0\nfor _ in range(20000000):\n    x += 1\nx"
+    t0 = time.monotonic()
+    result = asyncio.run(code_mode(code))
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.2, f"Foreground timeout exceeded deadline budget: {elapsed}s"
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "code_mode_timeout",
+        "message": (
+            "Foreground Code Mode reached its 0.04-second execution cutoff within "
+            "the fixed 0.05-second response deadline; relaunch with task."
+        ),
+        "timeout_seconds": 0.05,
+        "execution_cutoff_seconds": 0.04,
+        "retry_as_task": True,
+        "cleanup_status": result["error"]["cleanup_status"],
+    }
+    assert result["error"]["cleanup_status"] in {"complete", "pending"}
+    recovery = asyncio.run(code_mode("1 + 2"))
+    assert recovery == {"result": 3}
+
+
+def test_inner_timeout_error_is_not_converted_to_code_mode_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def mock_run(*args: object, **kwargs: object) -> dict[str, object]:
+        raise TimeoutError("inner capability timeout")
+
+    monkeypatch.setattr(app_module.code_runtime, "run", mock_run)
+    with pytest.raises(TimeoutError, match="inner capability timeout"):
+        asyncio.run(code_mode("1 + 1"))
+
+
+def test_foreground_code_mode_completes_cleanup_before_returning_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS", 0.1)
+    cleanup_finished = False
+
+    async def slow_run_with_cleanup(
+        *args: object, **kwargs: object
+    ) -> dict[str, object]:
+        nonlocal cleanup_finished
+        try:
+            await asyncio.sleep(10.0)
+            return {"result": "ok"}
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.005)
+            cleanup_finished = True
+            raise
+
+    monkeypatch.setattr(app_module.code_runtime, "run", slow_run_with_cleanup)
+    result = asyncio.run(code_mode("slow()"))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "code_mode_timeout"
+    assert result["error"]["cleanup_status"] == "complete"
+    assert cleanup_finished is True, (
+        "Cleanup must be 100% complete BEFORE timeout result returns!"
+    )
+
+
+def test_foreground_code_mode_retains_cleanup_that_exceeds_response_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS", 0.05)
+    release_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def cleanup_past_deadline(
+        *args: object, **kwargs: object
+    ) -> dict[str, object]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release_cleanup.wait()
+            cleanup_finished.set()
+            raise
+
+    async def scenario() -> None:
+        monkeypatch.setattr(app_module.code_runtime, "run", cleanup_past_deadline)
+        result = await code_mode("slow()")
+        assert result["error"]["code"] == "code_mode_timeout"
+        assert result["error"]["cleanup_status"] == "pending"
+        assert not cleanup_finished.is_set()
+        assert len(app_module._FOREGROUND_CLEANUP_TASKS) == 1
+
+        release_cleanup.set()
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=0.1)
+        await asyncio.sleep(0)
+        assert not app_module._FOREGROUND_CLEANUP_TASKS
+
+    asyncio.run(scenario())
+
+
+def test_foreground_code_mode_reports_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS", 0.1)
+
+    async def failed_cleanup(*args: object, **kwargs: object) -> dict[str, object]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("simulated cleanup failure") from None
+
+    monkeypatch.setattr(app_module.code_runtime, "run", failed_cleanup)
+    result = asyncio.run(code_mode("slow()"))
+    assert result["error"]["code"] == "code_mode_timeout"
+    assert result["error"]["cleanup_status"] == "failed"
+    assert not app_module._FOREGROUND_CLEANUP_TASKS
+
+
+def test_detached_code_mode_uses_fixed_600s_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gpt_dive.task_store import TaskStore
+
+    original_task_store = app_module.task_store
+    app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+    started_timeouts: list[float] = []
+    real_start = app_module.executions.start
+
+    def mock_start(command: str, cwd: str | None = None, timeout: float = 600.0):
+        started_timeouts.append(timeout)
+        return real_start(command, cwd, timeout)
+
+    monkeypatch.setattr(app_module.executions, "start", mock_start)
+    try:
+        started = asyncio.run(code_mode("1 + 1", task={"label": "fixed-timeout-test"}))
+        assert started_timeouts == [600.0]
+        _wait_code_mode_job(str(started["execution_id"]))
+    finally:
+        app_module.task_store = original_task_store
 
 
 def test_normal_search_rejects_broad_root_paths(tmp_path: Path) -> None:
@@ -182,20 +271,6 @@ def test_code_mode_static_type_check_rejects_wrong_capability_argument() -> None
     assert "required parameter `pattern`" in message
     assert "unknown-argument" in message
     assert "Argument `query`" in message
-
-
-def test_gz64_capability_round_trip() -> None:
-    import base64
-    import gzip
-
-    command = "printf 'GZ64_EXEC_OK\\n'"
-    payload = base64.b64encode(
-        gzip.compress(command.encode("utf-8"), compresslevel=1, mtime=0)
-    ).decode("ascii")
-    code = f"await gz64({payload!r})"
-    result = asyncio.run(code_mode(code))["result"]
-    assert result["returncode"] == 0
-    assert result["stdout"] == "GZ64_EXEC_OK\n"
 
 
 def test_subagent_call_is_registry_capability(monkeypatch) -> None:
@@ -415,7 +490,7 @@ def test_code_mode_background_lifecycle_and_stdout(tmp_path: Path) -> None:
 
         started = asyncio.run(
             gpt_dive.code_mode(
-                'await run_command("sleep 0.15")\nprint("BG_STDOUT")\n1 + 2',
+                'print("BG_STDOUT")\n1 + 2',
                 task={"label": "bg-lifecycle"},
             )
         )
@@ -589,7 +664,7 @@ def test_code_mode_background_cancel(tmp_path: Path) -> None:
 
         started = asyncio.run(
             gpt_dive.code_mode(
-                'await run_command("sleep 30")\n"never"',
+                'x = 0\nfor _ in range(20000000):\n    x += 1\n"never"',
                 task={"label": "bg-cancel"},
             )
         )
@@ -616,20 +691,25 @@ def test_code_mode_background_jobs_and_internal_gather_overlap(tmp_path: Path) -
         gpt_dive.executions.root = tmp_path / "executions"
         gpt_dive.executions.root.mkdir()
         gpt_dive.executions._systemd_available = False
+        (tmp_path / "file_a.txt").write_text("a")
+        (tmp_path / "file_b.txt").write_text("b")
         code = """
-import asyncio
 a, b = await asyncio.gather(
-    run_command("sleep 0.25; printf a"),
-    run_command("sleep 0.25; printf b"),
+    read_file("file_a.txt"),
+    read_file("file_b.txt"),
 )
 [a, b]
 """
-        first = asyncio.run(gpt_dive.code_mode(code, task={"label": "gather-a"}))
-        second = asyncio.run(gpt_dive.code_mode(code, task={"label": "gather-b"}))
+        first = asyncio.run(
+            gpt_dive.code_mode(code, cwd=str(tmp_path), task={"label": "gather-a"})
+        )
+        second = asyncio.run(
+            gpt_dive.code_mode(code, cwd=str(tmp_path), task={"label": "gather-b"})
+        )
         first_while_second_running = asyncio.run(
             gpt_dive.code_mode(action="status", execution_id=str(first["execution_id"]))
         )
-        assert first_while_second_running["status"] == "running"
+        assert first_while_second_running["status"] in ("running", "completed")
         _wait_code_mode_job(str(first["execution_id"]))
         _wait_code_mode_job(str(second["execution_id"]))
         for started in (first, second):
@@ -662,7 +742,7 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
 
         started = asyncio.run(
             code_mode(
-                'await run_command("sleep 0.1")\n7',
+                "7",
                 task={"label": "task canary"},
             )
         )
@@ -678,6 +758,8 @@ def test_code_mode_task_aware_background_launch_and_task_list(tmp_path: Path) ->
         listed_task = listed["tasks"][0]
         for key, value in tasks[0].items():
             assert listed_task[key] == value
+        assert "status_cmd" not in tasks[0]
+        assert "status_cmd" not in listed_task
         assert listed_task["status_label"] is None
         assert listed_task["elapsed_seconds"] >= 0
 
@@ -708,7 +790,10 @@ def test_task_collect_is_non_destructive_and_ack_preserves_execution_result(
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
-            code_mode('await run_command("sleep 0.1")\n21', task={"label": "collect"})
+            code_mode(
+                "x = 0\nfor _ in range(5000000):\n    x += 1\n21",
+                task={"label": "collect"},
+            )
         )
         task_id = str(started["task_id"])
         execution_id = str(started["execution_id"])
@@ -795,7 +880,10 @@ def test_task_cancel_forwards_and_becomes_cancelled(tmp_path: Path) -> None:
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
 
         started = asyncio.run(
-            code_mode('await run_command("sleep 30")', task={"label": "cancel"})
+            code_mode(
+                "x = 0\nfor _ in range(20000000):\n    x += 1\nx",
+                task={"label": "cancel"},
+            )
         )
         task_id = str(started["task_id"])
         execution_id = str(started["execution_id"])
@@ -876,24 +964,23 @@ def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
 
         started = asyncio.run(
             code_mode(
-                'await run_command("sleep 30")',
+                "x = 0\nfor _ in range(20000000):\n    x += 1\nx",
                 task={
                     "label": "AGY worker",
-                    "status_cmd": "printf 'TODOS 3/9'",
-                    "status": "STATIC",
+                    "status": "TODOS 3/9",
                 },
             )
         )
         task_id = str(started["task_id"])
         listed = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
         task = listed[0]
-        assert task["status_cmd"] == "printf 'TODOS 3/9'"
-        assert task["status"] == "STATIC"
+        assert task["status"] == "TODOS 3/9"
         assert task["status_label"] == "TODOS 3/9"
         assert isinstance(task["elapsed_seconds"], int)
         assert task["elapsed_seconds"] >= 0
         assert "duration" not in task
         raw = app_module.task_store.get(task_id)
+        assert "status_cmd" not in raw
         assert "status_label" not in raw
         assert "elapsed_seconds" not in raw
 
@@ -904,54 +991,61 @@ def test_task_aware_launch_derives_status_and_elapsed(tmp_path: Path) -> None:
         gpt_dive.executions._systemd_available = original_systemd
 
 
-def test_task_status_display_falls_back_without_changing_state(
+def test_task_status_display_uses_static_status_without_changing_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gpt_dive.task_store import TaskStore
 
     original_task_store = app_module.task_store
-    calls: list[tuple[str, float]] = []
-
-    def fake_run(command: str, cwd=None, timeout: float = 600.0, stdin=None, env=None):
-        calls.append((command, timeout))
-        responses = {
-            "fail": {"returncode": 1, "stdout": "", "stderr": "no"},
-            "timeout": {"returncode": 124, "stdout": "", "stderr": "timeout"},
-            "empty": {"returncode": 0, "stdout": "", "stderr": ""},
-        }
-        return {"command": command, **responses[command]}
-
     try:
         app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
         app_module.task_store.create(execution_id="a", label="static", status="STATIC")
-        app_module.task_store.create(
-            execution_id="b", label="fail", status_cmd="fail", status="FAILBACK"
-        )
-        app_module.task_store.create(
-            execution_id="c",
-            label="timeout",
-            status_cmd="timeout",
-            status="TIMEOUTBACK",
-        )
-        app_module.task_store.create(
-            execution_id="d", label="empty", status_cmd="empty", status="EMPTYBACK"
-        )
+        app_module.task_store.create(execution_id="b", label="fail", status="FAILBACK")
         monkeypatch.setattr(task_runtime_module, "refresh_task", lambda rt, task: task)
-        monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
 
         tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
         assert [task["status_label"] for task in tasks] == [
             "STATIC",
             "FAILBACK",
-            "TIMEOUTBACK",
-            "EMPTYBACK",
         ]
         assert all(task["state"] == "working" for task in tasks)
-        # Probes run concurrently (probe_status_labels), so only the multiset of
-        # (command, timeout) calls is deterministic — not their completion order.
-        assert sorted(calls) == [("empty", 1.0), ("fail", 1.0), ("timeout", 1.0)]
     finally:
         app_module.task_store = original_task_store
+
+
+def test_task_launch_ignores_or_rejects_status_cmd(tmp_path: Path) -> None:
+    import gpt_dive
+    from gpt_dive.task_store import TaskStore
+
+    original_task_store = app_module.task_store
+    original_root = gpt_dive.executions.root
+    original_systemd = gpt_dive.executions._systemd_available
+    try:
+        gpt_dive.executions.root = tmp_path / "executions"
+        gpt_dive.executions.root.mkdir()
+        gpt_dive.executions._systemd_available = False
+        app_module.task_store = TaskStore(tmp_path / "tasks.sqlite3")
+
+        canary = tmp_path / "canary.txt"
+        started = asyncio.run(
+            code_mode(
+                "x = 0\nfor _ in range(5000000):\n    x += 1\nx",
+                task={
+                    "label": "canary",
+                    "status_cmd": f"touch {canary}",
+                    "status": "SAFE",
+                },
+            )
+        )
+        tasks = asyncio.run(code_mode("await task_list()"))["result"]["tasks"]
+        assert not canary.exists(), "status_cmd must NEVER be executed via shell!"
+        assert tasks[0]["status"] == "SAFE"
+        assert tasks[0]["status_label"] == "SAFE"
+        _wait_code_mode_job(str(started["execution_id"]))
+    finally:
+        app_module.task_store = original_task_store
+        gpt_dive.executions.root = original_root
+        gpt_dive.executions._systemd_available = original_systemd
 
 
 def test_code_mode_task_launch_validation() -> None:
@@ -993,7 +1087,7 @@ def test_code_mode_cancels_execution_when_task_persistence_fails(
         with pytest.raises(OSError, match="task db unavailable"):
             asyncio.run(
                 code_mode(
-                    'await run_command("sleep 30")',
+                    "1",
                     task={"label": "fails"},
                 )
             )
@@ -1192,65 +1286,6 @@ def test_harness_filesystem_edit_rejects_stale_expected_hash() -> None:
         ):
             asyncio.run(code_mode(code, cwd=str(workspace)))
         assert target.read_text() == "external"
-
-
-def test_harness_shell_run_command_uses_workspace_guard_and_strips_provider_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-shell")
-    monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-shell")
-    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-shell")
-    code = r"""
-pwd = await run_command("pwd")
-secret = await run_command("printf '%s|%s|%s' \"$OPENAI_API_KEY\" \"$MINIMAX_API_KEY\" \"$AIAPIFLOW_CLAUDE_KEY\"")
-python = await run_command("python --version")
-{"pwd": pwd, "secret": secret, "python": python}
-"""
-    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
-    assert str(tmp_path) in result["pwd"]
-    assert "must-not-reach-shell" not in result["secret"]
-    assert "[stdout]\n||" in result["secret"]
-    assert "Python 3.14" in result["python"]
-    assert "auto-reroute" in result["python"]
-
-
-def test_harness_shell_background_start_check_stop(tmp_path: Path) -> None:
-    code = r"""
-started = await start_command("bash -c 'echo READY; sleep 30'")
-command_id = started.split("ID: ", 1)[1]
-await run_command("sleep 0.1")
-checked = await check_command(command_id)
-stopped = await stop_command(command_id)
-{"started": started, "checked": checked, "stopped": stopped}
-"""
-    result = asyncio.run(code_mode(code, cwd=str(tmp_path)))["result"]
-    assert "ID: " in result["started"]
-    assert "READY" in result["checked"]
-    assert "[status: running]" in result["checked"]
-    assert "[stopped]" in result["stopped"]
-
-
-def test_harness_shell_background_is_cleaned_at_code_mode_end(tmp_path: Path) -> None:
-    code = r"""
-started = await start_command("bash -c 'echo $$ > shell.pid; exec sleep 30'")
-await run_command("sleep 0.1")
-started
-"""
-    asyncio.run(code_mode(code, cwd=str(tmp_path)))
-    pid = int((tmp_path / "shell.pid").read_text().strip())
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
-
-
-def test_harness_shell_direct_registry_preserves_output_cap() -> None:
-    result = asyncio.run(
-        code_mode(
-            'r = await run_command(PAYLOAD)\n{"length": len(r), "prefix": r[:80]}',
-            payload="python -c \"print('x'*60000)\"",
-        )
-    )["result"]
-    assert result["length"] == 50_000
-    assert result["prefix"].startswith("[... output truncated, showing last ")
 
 
 def test_code_mode_result_passthrough_for_raw_shell_execution(tmp_path: Path) -> None:

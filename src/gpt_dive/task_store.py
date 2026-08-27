@@ -38,7 +38,7 @@ class TaskStore:
                     execution_id TEXT NOT NULL UNIQUE,
                     label TEXT NOT NULL,
                     state TEXT NOT NULL,
-                    status_cmd TEXT,
+                    status_cmd TEXT, -- legacy inert column; retained for sqlite schema compatibility
                     status TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -52,7 +52,6 @@ class TaskStore:
         execution_id: str,
         label: str,
         state: str = "working",
-        status_cmd: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
         clean_execution_id = execution_id.strip()
@@ -73,7 +72,6 @@ class TaskStore:
             "execution_id": clean_execution_id,
             "label": clean_label,
             "state": state,
-            "status_cmd": status_cmd,
             "status": status,
             "created_at": now,
             "updated_at": now,
@@ -82,15 +80,14 @@ class TaskStore:
             connection.execute(
                 """
                 INSERT INTO tasks (
-                    task_id, execution_id, label, state, status_cmd, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    task_id, execution_id, label, state, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["task_id"],
                     record["execution_id"],
                     record["label"],
                     record["state"],
-                    record["status_cmd"],
                     record["status"],
                     record["created_at"],
                     record["updated_at"],
@@ -105,7 +102,7 @@ class TaskStore:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """
-                SELECT task_id, execution_id, label, state, status_cmd, status, created_at, updated_at
+                SELECT task_id, execution_id, label, state, status, created_at, updated_at
                 FROM tasks
                 WHERE task_id = ?
                 """,
@@ -142,7 +139,7 @@ class TaskStore:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT task_id, execution_id, label, state, status_cmd, status, created_at, updated_at
+                SELECT task_id, execution_id, label, state, status, created_at, updated_at
                 FROM tasks
                 ORDER BY created_at, task_id
                 """

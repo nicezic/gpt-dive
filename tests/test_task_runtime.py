@@ -3,8 +3,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
 from gpt_dive.execution_manager import ExecutionManager
 from gpt_dive.task_runtime import TaskRuntime, ack_task, collect_task, refresh_task
 from gpt_dive.task_store import TaskStore
@@ -71,63 +69,29 @@ def test_missing_execution_becomes_lost_and_can_be_acked(tmp_path: Path) -> None
     assert store.list_tasks() == []
 
 
-def test_probe_status_labels_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Probes must overlap, proven structurally — no wall-clock thresholds.
-
-    A threading.Barrier of party-size 4 only releases if all four fakes run
-    at the same time; a serialized pool would strand the first arrival until
-    the 2s timeout breaks the barrier and fails the test.
-    """
-    import threading
-
-    import gpt_dive.task_runtime as task_runtime_module
+def test_probe_status_labels_extracts_static_status() -> None:
     from gpt_dive.task_runtime import probe_status_labels
 
     tasks = [
-        {"task_id": str(i), "state": "working", "status": "", "status_cmd": "probe"}
+        {"task_id": str(i), "state": "working", "status": f"status-{i}"}
         for i in range(4)
     ]
-    barrier = threading.Barrier(4)
-
-    def fake_run(command: str, cwd=None, timeout: float = 600.0, stdin=None, env=None):
-        barrier.wait(timeout=2.0)
-        return {"returncode": 0, "stdout": "ok", "stderr": ""}
-
-    monkeypatch.setattr(task_runtime_module, "run_command", fake_run)
-
     labels = probe_status_labels(tasks)
-    assert labels == {"0": "ok", "1": "ok", "2": "ok", "3": "ok"}
+    assert labels == {
+        "0": "status-0",
+        "1": "status-1",
+        "2": "status-2",
+        "3": "status-3",
+    }
 
 
-def test_probe_status_labels_reuses_a_shared_pool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Snapshots run on every task_list call; the probe pool must be built once."""
-    import gpt_dive.task_runtime as task_runtime_module
+def test_probe_status_labels_only_probes_working_tasks() -> None:
+    from gpt_dive.task_runtime import probe_status_labels
 
-    monkeypatch.setattr(
-        task_runtime_module,
-        "run_command",
-        lambda command, cwd=None, timeout=600.0, stdin=None, env=None: {
-            "returncode": 0,
-            "stdout": "ok",
-            "stderr": "",
-        },
-    )
     tasks = [
-        {"task_id": str(i), "state": "working", "status": "", "status_cmd": "echo ok"}
-        for i in range(2)
+        {"task_id": "1", "state": "working", "status": "active"},
+        {"task_id": "2", "state": "completed", "status": "done"},
+        {"task_id": "3", "state": "cancelled", "status": "stopped"},
     ]
-    # Reset so lazy construction is genuinely exercised; monkeypatch restores
-    # the previous pool (or None) afterwards.
-    monkeypatch.setattr(task_runtime_module, "_PROBE_POOL", None)
-
-    first = task_runtime_module.probe_status_labels(tasks)
-    pool_seen = task_runtime_module._PROBE_POOL
-
-    second = task_runtime_module.probe_status_labels(tasks)
-
-    assert first == {"0": "ok", "1": "ok"}
-    assert second == {"0": "ok", "1": "ok"}
-    assert pool_seen is not None
-    assert task_runtime_module._PROBE_POOL is pool_seen
+    labels = probe_status_labels(tasks)
+    assert labels == {"1": "active"}

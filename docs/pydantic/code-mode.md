@@ -4,7 +4,7 @@
 
 ## Construction
 
-`build_code_registry(default_cwd, *, run_command, task_list, task_collect, task_cancel, task_ack)` in `src/gpt_dive/code_capabilities.py` constructs one `CallableRegistry` per Code Mode run. `src/gpt_dive/app.py` injects the MCP-side singletons; the background worker (`code_mode_worker.py`) injects its own wiring and imports this module instead of the MCP server.
+`build_code_registry(default_cwd, *, task_list, task_collect, task_cancel, task_ack)` in `src/gpt_dive/code_capabilities.py` constructs one `CallableRegistry` per Code Mode run. `src/gpt_dive/app.py` injects the MCP-side singletons; the background worker (`code_mode_worker.py`) injects its own wiring and imports this module instead of the MCP server.
 
 The effective workspace is:
 
@@ -16,7 +16,7 @@ workspace = (
 )
 ```
 
-That workspace drives the primary read/write Harness FileSystem root and Harness Shell cwd. Additional trusted reference trees are exposed only through read-side dispatch.
+That workspace drives the primary read/write Harness FileSystem root. Additional trusted reference trees are exposed only through read-side dispatch.
 
 ## Model-facing programming contract
 
@@ -26,11 +26,14 @@ That workspace drives the primary read/write Harness FileSystem root and Harness
 direct capability available → call it directly
 dependent operations        → sequential await
 independent operations      → asyncio.gather(...)
-command execution required  → run_command(...)
-multiline shell script      → run_command(PAYLOAD)
+long-running background job → pass task={label, ...}
+delegated deep execution    → subagent_call(...) or agy_worker(...)
 ```
 
-`run_command()` remains upstream-shaped; GPT Dive supplies Shell environment policy without redefining its signature or return contract.
+Code Mode enforces fixed execution deadlines:
+
+- **Foreground:** fixed 110.0s response deadline: 100s execution cutoff plus a 10s cleanup window. Timeout returns `{ok: false, error: {code: "code_mode_timeout", cleanup_status: "complete" | "failed" | "pending", ...}}`; pending cleanup remains runtime-owned.
+- **Detached background (`task` object provided):** fixed 600.0s deadline tracked in SQLite TaskStore.
 
 ## Direct Harness FileSystem
 
@@ -70,37 +73,13 @@ The same policy also applies to direct Monty filesystem primitives such as `Path
 
 Architecture decision and rejected alternatives: `adr/0004-code-mode-host-filesystem-policy.md`.
 
-## Direct Harness Shell
+## Removal of direct Harness Shell capabilities
 
-GPT Dive constructs `Shell(cwd=workspace, ...)` with repository-specific policy:
+Direct Shell capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) are completely removed from the direct Code Mode surface.
 
-- `guard-bin` is prepended to `PATH`.
-- provider credential environment patterns are stripped from spawned commands.
-- default timeout is configured for GPT Dive's Code Mode use.
-- output is bounded to the intended maximum.
-
-The direct registry registers:
-
-- `run_command`
-- `start_command`
-- `check_command`
-- `stop_command`
-
-Harness Shell command filtering is not treated as an OS sandbox. Hard local execution restrictions belong below the harness where possible.
-
-`run_command()` is the single normal foreground shell capability. Exceptional direct WSL/Win11 maintenance uses `wsl2_sync(permission=...)`; `gz64()` remains only as OpenAI tunnel transport recovery.
-
-### Direct-method output adapter
-
-Calling bound Shell methods directly bypasses the normal Harness `call_tool()` layer that would apply output truncation. GPT Dive therefore wraps direct Shell registry calls with Harness `truncate_tail` while preserving the native signature/docstring through `functools.wraps`.
-
-This adapter owns transport/lifecycle behavior only; it must not fork Harness command semantics.
-
-## Registry lifecycle
-
-Managed Harness background commands require cleanup even though Code Mode is not running inside a normal Pydantic Agent capability stack.
-
-`CallableRegistry` therefore owns async cleanup callbacks. The Shell toolset exit hook is registered so run-owned managed background processes are terminated when the Monty run finishes, including error paths.
+- Prevents dual-transport redundancy and confusing model execution paths.
+- Code Mode remains focused on Python/Monty orchestration and registered domain capabilities.
+- When shell execution is strictly required, delegate via `subagent_call` (which retains the Harness workspace coding bundle with `guard-bin` protection) or `agy_worker`.
 
 ## CAPABILITIES contract
 
@@ -110,7 +89,7 @@ Registered capability functions are inserted as top-level async names and are ca
 
 ```python
 content = await read_file("README.md")
-status = await run_command("git status --short")
+entries = await list_directory(".")
 ```
 
 This boundary matters because the outer MCP input schema cannot validate arbitrary inner Monty capability calls. Model-facing signatures/descriptions are part of the executable interface and require live acceptance when changed.
@@ -154,13 +133,13 @@ The direct Code Mode registry and child-agent capability bundle intentionally sh
 
 When changing the model-facing Code Mode capability surface, prove at minimum:
 
-1. registry discovery exposes the intended native signatures/descriptions;
-2. representative FileSystem and Shell calls work at the public Code Mode seam;
+1. registry discovery exposes the intended native signatures/descriptions (18 capabilities, no direct shell capabilities);
+2. representative FileSystem calls work at the public Code Mode seam;
 3. containment and protected/stale-write failures remain explicit;
-4. managed background processes are cleaned up;
-5. provider credentials are not inherited by ordinary Harness Shell subprocesses;
-6. `run_command`, `subagent_call`, background Code Mode, and the public MCP surface remain regression-green;
+4. detached background executions enforce fixed deadlines (600s) and Task tracking;
+5. foreground Code Mode enforces its 100s execution cutoff plus 10s cleanup window and reports complete/failed/pending cleanup without unowned tasks;
+6. `subagent_call`, background Code Mode, and the public MCP surface (`bootstrap`, `code_mode`) remain regression-green;
 7. statically invalid inner capability calls are rejected before host dispatch while representative valid calls still execute;
-8. fresh-session live `CAPABILITIES` discovery passes after any required service/schema refresh.
+8. fresh-session live schema and `CAPABILITIES` discovery pass after service restart.
 
 Completed Files + Shell acceptance: `plans/code_mode/plan-260814-files-and-shell.md`.

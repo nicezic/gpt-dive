@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__all__ = ["code_mode", "executions", "mcp", "wsl2_async", "wsl2_sync"]
+__all__ = ["code_mode", "executions", "mcp"]
 
 if TYPE_CHECKING:
-    from .app import code_mode, executions, mcp, wsl2_async, wsl2_sync
+    from .app import code_mode, executions, mcp
 
 
 def __getattr__(name: str) -> Any:

@@ -69,26 +69,21 @@ Primary implementation: `src/gpt_dive/subagent_runtime.py`, `src/gpt_dive/subage
 
 GPT Dive still owns lower local execution policy such as `guard-bin` PATH precedence and provider-credential stripping. Harness Shell is not treated as an OS sandbox.
 
-### 5. Direct FileSystem + Shell capabilities in Code Mode
+### 5. Direct FileSystem capabilities in Code Mode and single execution surface
 
 **Change**
 - Registered the Harness FileSystem toolset directly in the Code Mode registry: read/write/edit/list/search/find/create/info.
-- Registered Harness Shell run/start/check/stop capabilities directly; `run_command()` is the single normal foreground shell path.
-- Added registry-owned async cleanup for managed Harness background processes.
-- Added a thin output-limit adapter for direct Shell method calls because bypassing Harness `call_tool()` also bypasses its normal output limiting.
+- Completely removed direct Shell command capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) from Code Mode.
+- Enforced deterministic server-side execution deadlines: 110.0s for foreground Code Mode (with structured `code_mode_timeout` error on expiry) and 600.0s for detached background Code Mode.
 
 **Why**
 - Ordinary file work no longer needs shell quoting or custom wrappers.
-- GPT Dive inherits upstream containment and optimistic-concurrency behavior instead of duplicating it.
-- Managed Shell lifecycle is available without expanding the MCP surface.
-
-Implementation/acceptance history: `plans/code_mode/plan-260814-files-and-shell.md`.
+- Eliminates dual-transport command execution surfaces and prevents unbounded foreground hangs.
+- Simplifies model choice: Code Mode is the sole programmable execution surface; long-running operations are explicitly tracked via `task`.
 
 ### 6. Host filesystem boundary
 
-Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities and Monty direct filesystem primitives share this policy so one path cannot bypass the other.
-
-This FileSystem boundary is not equivalent to OS isolation because Shell remains a local process execution surface. Shell has separate environment stripping and executable guards, including Python toolchain routing.
+Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. Direct shell execution in Code Mode is removed. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
 
 ### 7. Local ChatGPT Codex subscription compatibility
 
@@ -117,7 +112,7 @@ Implementation: `src/gpt_dive/repo_search.py`.
 
 ```text
 Web MCP surface
-  bootstrap / code_mode / wsl2_sync / wsl2_async
+  bootstrap / code_mode
 
 GPT Dive runtime
   lifecycle + registry + local execution policy + provider routing

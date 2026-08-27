@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from gpt_dive.execution_manager import ExecutionManager
 
@@ -55,7 +56,11 @@ def test_completed_child_is_reaped(tmp_path):
     manager = ExecutionManager(tmp_path)
     started = manager.start("true", timeout=2)
     wait_done(manager, started["execution_id"])
+    deadline = time.monotonic() + 1.0
     proc = manager._proc_info(started["pid"])
+    while time.monotonic() < deadline and proc is not None and proc["state"] == "Z":
+        time.sleep(0.05)
+        proc = manager._proc_info(started["pid"])
     assert proc is None or proc["state"] != "Z"
 
 
@@ -74,3 +79,26 @@ def test_cancel_requested_wins_even_if_exit_marker_exists(tmp_path):
         import subprocess
 
         subprocess.run(["systemctl", "--user", "stop", unit], check=False)
+
+
+def test_refresh_recovers_when_exit_code_appears_after_orphan_detection(
+    tmp_path: Path,
+) -> None:
+    manager = ExecutionManager(tmp_path)
+    started = manager.start("echo hello", timeout=5)
+    execution_id = str(started["execution_id"])
+    execution_dir = tmp_path / execution_id
+
+    meta = manager._read_meta(execution_dir)
+    meta["status"] = "failed"
+    meta["status_message"] = (
+        "Runner disappeared without an exit marker; recovered as an orphaned execution."
+    )
+    manager._write_meta(execution_dir, meta)
+
+    (execution_dir / "exit_code").write_text("0\n")
+
+    state = manager.status(execution_id)
+    assert state["status"] == "completed"
+    assert state["exit_code"] == 0
+    assert state["status_message"] == "Command completed."

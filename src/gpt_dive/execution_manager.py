@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -182,7 +183,7 @@ class ExecutionManager:
             if meta["status"] not in TERMINAL_EXECUTION_STATUSES:
                 payload["ready"] = False
                 payload["message"] = (
-                    "Execution is still running; use wsl2_async action='status' later."
+                    "Execution is still running; use code_mode action='status' later."
                 )
                 return payload
             payload["ready"] = True
@@ -264,11 +265,29 @@ class ExecutionManager:
         return removed
 
     def _refresh(self, execution_dir: Path, meta: dict[str, Any]) -> dict[str, Any]:
+        exit_path = execution_dir / "exit_code"
         if meta.get("status") in TERMINAL_EXECUTION_STATUSES:
+            if (
+                meta.get("status") == "failed"
+                and "without an exit marker" in str(meta.get("status_message") or "")
+                and exit_path.is_file()
+            ):
+                try:
+                    exit_code = int(exit_path.read_text().strip())
+                except ValueError:
+                    exit_code = None
+                meta["exit_code"] = exit_code
+                if meta.get("cancel_requested"):
+                    meta["status"] = "cancelled"
+                    meta["status_message"] = "Command was cancelled."
+                else:
+                    meta["status"] = "completed"
+                    meta["status_message"] = "Command completed."
+                meta["updated_at"] = _iso()
+                self._write_meta(execution_dir, meta)
             self._reap_pid(meta)
             return meta
 
-        exit_path = execution_dir / "exit_code"
         if exit_path.is_file():
             try:
                 exit_code = int(exit_path.read_text().strip())
@@ -290,6 +309,29 @@ class ExecutionManager:
             if self._systemd_unit_running(str(meta.get("systemd_unit") or "")):
                 return meta
         elif self._pid_matches(meta):
+            return meta
+
+        # Process has stopped running; bounded check for exit_code in case it is being flushed
+        for _ in range(10):
+            if exit_path.is_file():
+                break
+            time.sleep(0.025)
+
+        if exit_path.is_file():
+            try:
+                exit_code = int(exit_path.read_text().strip())
+            except ValueError:
+                exit_code = None
+            self._reap_pid(meta)
+            meta["exit_code"] = exit_code
+            if meta.get("cancel_requested"):
+                meta["status"] = "cancelled"
+                meta["status_message"] = "Command was cancelled."
+            else:
+                meta["status"] = "completed"
+                meta["status_message"] = "Command completed."
+            meta["updated_at"] = _iso()
+            self._write_meta(execution_dir, meta)
             return meta
 
         self._reap_pid(meta)

@@ -4,20 +4,17 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from mcp_types import CallToolResult, TextContent
 
 import gpt_dive
 from gpt_dive import app
 
 
-def test_mcp_surface_v1_is_exactly_four_tools() -> None:
+def test_mcp_surface_is_exactly_two_tools() -> None:
     tools = asyncio.run(gpt_dive.mcp.list_tools())
     assert {tool.name for tool in tools} == {
         "bootstrap",
         "code_mode",
-        "wsl2_sync",
-        "wsl2_async",
     }
 
 
@@ -25,6 +22,9 @@ def test_server_description_requires_bootstrap_first() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
     assert "Call bootstrap first." in description
+    assert "run_command" not in description
+    assert "wsl2_sync" not in description
+    assert "wsl2_async" not in description
 
 
 def test_server_instructions_do_not_own_progress_presentation() -> None:
@@ -44,9 +44,9 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "Write code as Monty/Python orchestration" in description
     assert "Prefer registered capabilities directly" in description
     assert "Decide dependencies first" in description
-    assert (
-        "Use Pydantic run_command only when shell execution is required" in description
-    )
+    assert "run_command" not in description
+    assert "wsl2_sync" not in description
+    assert "wsl2_async" not in description
     assert "Every MCP call requires payload as a string" in description
     assert (
         "CAPABILITIES provides the live inner capability signatures + descriptions"
@@ -58,6 +58,7 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     )
     assert "payload" in tool.input_schema["required"]
     assert tool.input_schema["properties"]["payload"]["type"] == "string"
+    assert "timeout" not in tool.input_schema["properties"]
     task_schema = tool.input_schema["properties"]["task"]
     task_variants = {
         variant.get("$ref") or variant.get("type") for variant in task_schema["anyOf"]
@@ -66,7 +67,7 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     launch = tool.input_schema["$defs"]["TaskLaunch"]["properties"]
     assert launch["label"]["maxLength"] == 80
     assert launch["label"]["minLength"] == 1
-    assert "status_cmd" in launch
+    assert "status_cmd" not in launch
     assert "status" in launch
     assert "background" not in tool.input_schema["properties"]
     assert "execution_id" in tool.input_schema["properties"]
@@ -89,7 +90,9 @@ def test_server_instructions_require_web_first_error_response_and_code_mode_defa
         in instructions
     )
     assert "Never invent capability names" in instructions
-    assert "Use wsl2_sync only for transport/smoke" in instructions
+    assert "wsl2_sync" not in instructions
+    assert "wsl2_async" not in instructions
+    assert "run_command" not in instructions
 
 
 def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
@@ -150,7 +153,7 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
         structured_content={"answer": 3},
     )
 
-    result = asyncio.run(_call_tracked_tasks_middleware("wsl2_sync", primary))
+    result = asyncio.run(_call_tracked_tasks_middleware("code_mode", primary))
 
     assert result.structured_content == {"answer": 3}
     primary_content = result.content[0]
@@ -219,7 +222,7 @@ def test_periodic_reminder_appends_user_rules_section_on_third_tool_call(
         result = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
         assert len(result.content) == 1
 
-    third = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
+    third = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
     assert len(third.content) == 2
     assert isinstance(third.content[-1], TextContent)
     text = third.content[-1].text
@@ -285,226 +288,10 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
     assert len(explicit.content) == 1
 
     for _ in range(2):
-        result = asyncio.run(_call_periodic_reminder_middleware("wsl2_sync", state))
+        result = asyncio.run(_call_periodic_reminder_middleware("code_mode", state))
         assert len(result.content) == 1
 
     third_after_reset = asyncio.run(
-        _call_periodic_reminder_middleware("wsl2_async", state)
+        _call_periodic_reminder_middleware("code_mode", state)
     )
     assert len(third_after_reset.content) == 2
-
-
-def test_wsl2_async_capabilities_are_runtime_discoverable() -> None:
-    payload = gpt_dive.wsl2_async("capabilities")
-    assert set(payload["actions"]) == {"start", "status", "result", "cancel"}
-    assert payload["actions"]["start"] == {
-        "requires": ["command", "permission", "task"],
-        "optional": ["cwd", "timeout"],
-    }
-
-
-def test_wsl2_async_routes_lifecycle(monkeypatch, tmp_path) -> None:
-    from gpt_dive.task_store import TaskStore
-
-    monkeypatch.setattr(app, "task_store", TaskStore(tmp_path / "tasks.sqlite3"))
-    calls: list[tuple] = []
-
-    monkeypatch.setattr(
-        gpt_dive.executions,
-        "start",
-        lambda command, cwd, timeout: (
-            calls.append(("start", command, cwd, timeout)) or {"execution_id": "j1"}
-        ),
-    )
-    monkeypatch.setattr(
-        gpt_dive.executions,
-        "status",
-        lambda execution_id: (
-            calls.append(("status", execution_id))
-            or {"execution_id": execution_id, "status": "running"}
-        ),
-    )
-    monkeypatch.setattr(
-        gpt_dive.executions,
-        "result",
-        lambda execution_id: (
-            calls.append(("result", execution_id))
-            or {"execution_id": execution_id, "ready": True}
-        ),
-    )
-    monkeypatch.setattr(
-        gpt_dive.executions,
-        "cancel",
-        lambda execution_id: (
-            calls.append(("cancel", execution_id))
-            or {"execution_id": execution_id, "status": "cancelled"}
-        ),
-    )
-
-    assert (
-        gpt_dive.wsl2_async(
-            "start",
-            command="cmd",
-            cwd="/tmp",
-            timeout=11,
-            permission=app._DIRECT_WSL_PERMISSION,
-            task={"label": "routed canary"},
-        )["execution_id"]
-        == "j1"
-    )
-    assert gpt_dive.wsl2_async("status", execution_id="j1")["status"] == "running"
-    assert gpt_dive.wsl2_async("result", execution_id="j1")["ready"] is True
-    assert gpt_dive.wsl2_async("cancel", execution_id="j1")["status"] == "cancelled"
-    assert calls == [
-        ("start", "cmd", "/tmp", 11),
-        ("status", "j1"),
-        ("result", "j1"),
-        ("cancel", "j1"),
-    ]
-
-
-def test_wsl2_async_validates_action_specific_fields() -> None:
-    with pytest.raises(ValueError, match="requires command"):
-        gpt_dive.wsl2_async("start")
-    with pytest.raises(ValueError, match="permission mismatch"):
-        gpt_dive.wsl2_async("start", command="cmd")
-    with pytest.raises(ValueError, match="requires a labeled task"):
-        gpt_dive.wsl2_async(
-            "start", command="cmd", permission=app._DIRECT_WSL_PERMISSION
-        )
-    with pytest.raises(ValueError, match="only valid with action='start'"):
-        gpt_dive.wsl2_async(
-            "status",
-            execution_id="j1",
-            task={"label": "nope"},
-        )
-    with pytest.raises(ValueError, match="requires execution_id"):
-        gpt_dive.wsl2_async("status")
-    with pytest.raises(ValueError, match="capabilities"):
-        gpt_dive.wsl2_async("future-action")
-
-
-def test_wsl2_sync_requires_exact_permission() -> None:
-    with pytest.raises(ValueError, match="permission mismatch"):
-        gpt_dive.wsl2_sync("true", permission="wrong")
-
-
-def test_wsl2_sync_permission_is_required_in_live_schema() -> None:
-    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    schema = tools["wsl2_sync"].input_schema
-    assert "permission" in schema["required"]
-    assert (
-        app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
-    )
-
-
-def test_wsl2_async_permission_is_exposed_in_live_schema() -> None:
-    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    schema = tools["wsl2_async"].input_schema
-    assert "permission" in schema["properties"]
-    assert "permission" not in schema.get("required", [])
-    assert (
-        app._DIRECT_WSL_PERMISSION in schema["properties"]["permission"]["description"]
-    )
-    assert "execution_id" in schema["properties"]
-    assert "job_id" not in schema["properties"]
-
-
-def test_wsl2_sync_allows_intentional_root_inspection() -> None:
-    result = gpt_dive.wsl2_sync(
-        "find / -maxdepth 0 -print",
-        permission=app._DIRECT_WSL_PERMISSION,
-        timeout=5,
-    )
-    assert result["returncode"] == 0
-    assert result["stdout"].strip() == "/"
-
-
-def test_core_guard_policy_reroutes_native_python_on_sync_path() -> None:
-    result = gpt_dive.wsl2_sync(
-        "python --version", permission=app._DIRECT_WSL_PERMISSION, timeout=5
-    )
-    assert result["returncode"] == 0
-    assert "Python 3.14" in result["stdout"]
-    assert "auto-reroute" in result["stderr"]
-
-
-def test_core_guard_policy_blocks_direct_pytest_on_sync_path() -> None:
-    result = gpt_dive.wsl2_sync(
-        "pytest --version", permission=app._DIRECT_WSL_PERMISSION, timeout=5
-    )
-    assert result["returncode"] == 2
-    assert "Direct 'pytest' execution is prohibited" in result["stderr"]
-
-
-def test_core_guard_policy_reroutes_native_python_on_async_path(tmp_path) -> None:
-    import time
-
-    from gpt_dive.task_store import TaskStore
-
-    original_root = gpt_dive.executions.root
-    original_systemd = gpt_dive.executions._systemd_available
-    original_task_store = app.task_store
-    try:
-        gpt_dive.executions.root = tmp_path
-        gpt_dive.executions._systemd_available = False
-        app.task_store = TaskStore(tmp_path / "tasks.sqlite3")
-        started = gpt_dive.wsl2_async(
-            "start",
-            command="python --version",
-            timeout=5,
-            permission=app._DIRECT_WSL_PERMISSION,
-            task={"label": "guard python reroute"},
-        )
-        deadline = time.monotonic() + 3
-        state = started
-        while time.monotonic() < deadline:
-            state = gpt_dive.wsl2_async("status", execution_id=started["execution_id"])
-            if state["status"] != "running":
-                break
-            time.sleep(0.03)
-        result = gpt_dive.wsl2_async("result", execution_id=started["execution_id"])
-        assert result["ready"] is True
-        assert result["exit_code"] == 0
-        assert "Python 3.14" in result["stdout"]
-        assert "auto-reroute" in result["stderr"]
-    finally:
-        app.task_store = original_task_store
-        gpt_dive.executions.root = original_root
-        gpt_dive.executions._systemd_available = original_systemd
-
-
-def test_core_guard_policy_blocks_direct_pytest_on_async_path(tmp_path) -> None:
-    import time
-
-    from gpt_dive.task_store import TaskStore
-
-    original_root = gpt_dive.executions.root
-    original_systemd = gpt_dive.executions._systemd_available
-    original_task_store = app.task_store
-    try:
-        gpt_dive.executions.root = tmp_path
-        gpt_dive.executions._systemd_available = False
-        app.task_store = TaskStore(tmp_path / "tasks.sqlite3")
-        started = gpt_dive.wsl2_async(
-            "start",
-            command="pytest --version",
-            timeout=5,
-            permission=app._DIRECT_WSL_PERMISSION,
-            task={"label": "guard pytest block"},
-        )
-        deadline = time.monotonic() + 3
-        state = started
-        while time.monotonic() < deadline:
-            state = gpt_dive.wsl2_async("status", execution_id=started["execution_id"])
-            if state["status"] != "running":
-                break
-            time.sleep(0.03)
-        result = gpt_dive.wsl2_async("result", execution_id=started["execution_id"])
-        assert result["ready"] is True
-        assert result["exit_code"] == 2
-        assert "Direct 'pytest' execution is prohibited" in result["stderr"]
-    finally:
-        app.task_store = original_task_store
-        gpt_dive.executions.root = original_root
-        gpt_dive.executions._systemd_available = original_systemd

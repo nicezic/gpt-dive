@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shlex
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -16,7 +18,6 @@ from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, Field
 
 from .code_capabilities import build_code_registry, code_runtime
-from .command_runtime import run_command as _run_command
 from .execution_manager import ExecutionManager
 from .runtime_diagnostics import request_lifecycle_middleware
 from .task_runtime import CODE_MODE_WORKER_PROTOCOL, TaskRuntime
@@ -32,11 +33,16 @@ from .task_runtime import list_projected_tasks as _runtime_list_projected_tasks
 from .task_runtime import read_execution_result as _runtime_read_execution_result
 from .task_runtime import render_tracked_tasks as runtime_render_tracked_tasks
 from .task_store import TaskStore
-from .tasks_extension import TasksExtension
+
+_FOREGROUND_CODE_MODE_TIMEOUT_SECONDS = 110.0
+_FOREGROUND_CODE_MODE_CLEANUP_SECONDS = 10.0
+_BACKGROUND_CODE_MODE_TIMEOUT_SECONDS = 600.0
+
+logger = logging.getLogger("gpt_dive.runtime")
+_FOREGROUND_CLEANUP_TASKS: set[asyncio.Task[Any]] = set()
 
 executions = ExecutionManager()
 task_store = TaskStore()
-tasks_extension = TasksExtension(executions)
 
 mcp = MCPServer(
     name="gpt-dive",
@@ -44,12 +50,11 @@ mcp = MCPServer(
     description=(
         "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
         "default programmable root for normal local work: compose registered capabilities in "
-        "Monty/Python, prefer direct capabilities over shell reimplementation, and use the "
-        "Pydantic run_command capability for foreground shell execution. Every MCP code_mode call requires "
-        "string payload; use payload='' when there is no data. Never guess capability names, "
-        "arguments, or return shapes: inspect the live contract first. On tool errors, inspect "
-        "the live contract and local evidence before retrying; use Web Search when the missing "
-        "fact is external and current."
+        "Monty/Python, and prefer direct capabilities over shell reimplementation. "
+        "Every MCP code_mode call requires string payload; use payload='' when there is no data. "
+        "Never guess capability names, arguments, or return shapes: inspect the live contract first. "
+        "On tool errors, inspect the live contract and local evidence before retrying; use Web Search "
+        "when the missing fact is external and current."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
@@ -58,25 +63,19 @@ mcp = MCPServer(
         "session, call bootstrap first. After bootstrap, use code_mode as the default programmable "
         "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
         "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
-        "for independent work. Use Pydantic run_command only when shell execution is actually required; "
-        "do not rebuild file/search/edit operations in shell. Every Web MCP code_mode call must explicitly "
-        "provide payload as a string; use payload='' when there is no payload or for lifecycle calls. "
-        "Never pass an object/list as payload; serialize structured payloads to text and parse them "
-        "inside Code Mode if needed. Never invent capability names, parameter names, optional arguments, "
-        "or return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
-        "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the live "
-        "contract plus local state before retrying. Use Web Search only when the missing evidence is "
-        "external and current. Use /grill-me only when deeper "
-        "diagnosis is still useful after that evidence pass. Use wsl2_sync only for transport/smoke, "
-        "explicit user requests, exceptional WSL/Win11 maintenance, or cases where Code Mode is genuinely inapplicable; use "
-        "wsl2_async for durable detached execution "
-        "lifecycle operations; detached work is always tracked through a required task object. "
-        "Detached executions survive MCP server restarts and completed execution "
-        "logs are retained for 5 days. When the client negotiates "
-        "io.modelcontextprotocol/tasks, wsl2_async start can use the standard MCP Tasks "
-        "lifecycle."
+        "for independent work. Do not rebuild file/search/edit operations in shell. "
+        "Every Web MCP code_mode call must explicitly provide payload as a string; use payload='' "
+        "when there is no payload or for lifecycle calls. Never pass an object/list as payload; "
+        "serialize structured payloads to text and parse them inside Code Mode if needed. "
+        "Never invent capability names, parameter names, optional arguments, or return shapes from "
+        "memory. Inspect the live MCP schema/CAPABILITIES contract first whenever uncertain. "
+        "On tool errors or assistant mistakes, report them immediately and inspect the live contract "
+        "plus local state before retrying. Use Web Search only when the missing evidence is external "
+        "and current. Use /grill-me only when deeper diagnosis is still useful after that evidence pass. "
+        "For long-running work, launch code_mode with a task object; detached work is always tracked "
+        "through a required task object. Detached executions survive MCP server restarts and completed "
+        "execution logs are retained for 5 days."
     ),
-    extensions=[tasks_extension],
 )
 
 
@@ -397,9 +396,6 @@ mcp.middleware.append(_periodic_reminder_middleware)
 mcp.middleware.append(_tracked_tasks_middleware)
 
 
-_DIRECT_WSL_PERMISSION = "for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search"
-
-
 class TaskLaunch(BaseModel):
     """Task-aware detachment request: detached work is always tracked."""
 
@@ -411,19 +407,9 @@ class TaskLaunch(BaseModel):
             description="Human-readable Task label (max 80 characters).",
         ),
     ]
-    status_cmd: Annotated[
-        str | None,
-        Field(
-            description=(
-                "Optional bounded local command whose stdout decorates a working Task."
-            )
-        ),
-    ] = None
     status: Annotated[
         str | None,
-        Field(
-            description="Optional static Task display status used when status_cmd has no usable output."
-        ),
+        Field(description="Optional static Task display status used in Task listings."),
     ] = None
 
 
@@ -439,49 +425,6 @@ def _coerce_task_launch(
 def _clean_optional(value: str | None) -> str | None:
     """Whitespace-only optional display fields normalize to None."""
     return (value.strip() or None) if value else None
-
-
-@mcp.tool(
-    title="Synchronous WSL2",
-    description=(
-        "Execute a short shell command synchronously inside the user's local WSL2 and return "
-        "its result immediately. This is an exceptional direct-shell path for transport/smoke or "
-        "special WSL/Win11 maintenance; use code_mode for normal local work and wsl2_async for "
-        "durable background executions. Keep timeout only slightly above the expected runtime."
-    ),
-)
-def wsl2_sync(
-    command: Annotated[
-        str,
-        Field(description="Shell command to run via /bin/bash -lc."),
-    ],
-    permission: Annotated[
-        str,
-        Field(
-            description=(
-                "Required exact harness declaration for direct WSL execution: "
-                f"{_DIRECT_WSL_PERMISSION}"
-            )
-        ),
-    ],
-    cwd: Annotated[
-        str | None,
-        Field(description="Optional WSL2 working directory."),
-    ] = None,
-    timeout: Annotated[
-        float,
-        Field(
-            gt=0,
-            description="Maximum runtime in seconds (default: 600).",
-        ),
-    ] = 600.0,
-) -> dict[str, Any]:
-    """Run a short explicitly authorized shell command in the user's local WSL2."""
-    if permission != _DIRECT_WSL_PERMISSION:
-        raise ValueError(
-            "wsl2_sync permission mismatch; use the exact harness declaration from the live schema"
-        )
-    return _run_command(command, cwd, timeout)
 
 
 def _code_mode_request_dir() -> Path:
@@ -553,7 +496,7 @@ def _start_background_code_mode(
         command = (
             f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker {request_arg}"
         )
-        started = executions.start(command, cwd, 600.0)
+        started = executions.start(command, cwd, _BACKGROUND_CODE_MODE_TIMEOUT_SECONDS)
         execution_id = str(started["execution_id"])
         try:
             _code_mode_request_ref(execution_id).write_text(str(request_path) + "\n")
@@ -565,7 +508,6 @@ def _start_background_code_mode(
             task_record = task_store.create(
                 execution_id=execution_id,
                 label=task.label.strip(),
-                status_cmd=_clean_optional(task.status_cmd),
                 status=_clean_optional(task.status),
             )
         except Exception:
@@ -593,6 +535,122 @@ def _background_code_mode_result(execution_id: str) -> dict[str, Any]:
     return result
 
 
+def _consume_foreground_cleanup(task: asyncio.Task[Any]) -> None:
+    """Retrieve a deferred foreground task result and release its ownership."""
+    _FOREGROUND_CLEANUP_TASKS.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("FOREGROUND CODE MODE DEFERRED CLEANUP FAILED")
+
+
+def _retain_foreground_cleanup(task: asyncio.Task[Any]) -> None:
+    """Retain cleanup that outlives the response deadline until it finishes."""
+    if task.done():
+        _consume_foreground_cleanup(task)
+        return
+    _FOREGROUND_CLEANUP_TASKS.add(task)
+    task.add_done_callback(_consume_foreground_cleanup)
+    logger.error(
+        "FOREGROUND CODE MODE CLEANUP PENDING retained_tasks=%d",
+        len(_FOREGROUND_CLEANUP_TASKS),
+    )
+
+
+def _foreground_cleanup_status(
+    task: asyncio.Task[Any],
+) -> Literal["complete", "failed"]:
+    """Classify a completed cancellation task without leaking its exception."""
+    if task.cancelled():
+        return "complete"
+    try:
+        task.result()
+    except Exception:
+        logger.exception("FOREGROUND CODE MODE CLEANUP FAILED")
+        return "failed"
+    return "complete"
+
+
+async def _run_foreground_code_mode(
+    code: str,
+    cwd: str | None,
+    payload: str | None,
+) -> dict[str, Any]:
+    start_time = time.monotonic()
+    deadline = start_time + _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS
+    registry = build_code_registry(
+        cwd,
+        task_list=_task_list,
+        task_collect=_task_collect,
+        task_cancel=_task_cancel,
+        task_ack=_task_ack,
+    )
+    runner_task = asyncio.create_task(
+        code_runtime.run(
+            code,
+            registry,
+            cwd=cwd,
+            payload=payload,
+        )
+    )
+    cleanup_budget = min(
+        _FOREGROUND_CODE_MODE_CLEANUP_SECONDS,
+        _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS * 0.2,
+    )
+    exec_budget = max(0.0, _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS - cleanup_budget)
+    try:
+        done, _ = await asyncio.wait([runner_task], timeout=exec_budget)
+        if runner_task in done:
+            return runner_task.result()
+
+        runner_task.cancel()
+        remaining_for_cleanup = max(0.0, deadline - time.monotonic())
+        if remaining_for_cleanup > 0:
+            await asyncio.wait([runner_task], timeout=remaining_for_cleanup)
+        if runner_task.done():
+            cleanup_status: Literal["complete", "failed", "pending"] = (
+                _foreground_cleanup_status(runner_task)
+            )
+        else:
+            _retain_foreground_cleanup(runner_task)
+            cleanup_status = "pending"
+        timeout_val = _FOREGROUND_CODE_MODE_TIMEOUT_SECONDS
+        seconds_display = int(timeout_val) if timeout_val.is_integer() else timeout_val
+        cutoff_display = int(exec_budget) if exec_budget.is_integer() else exec_budget
+        return {
+            "ok": False,
+            "error": {
+                "code": "code_mode_timeout",
+                "message": (
+                    f"Foreground Code Mode reached its {cutoff_display}-second execution cutoff "
+                    f"within the fixed {seconds_display}-second response deadline; relaunch with task."
+                ),
+                "timeout_seconds": timeout_val,
+                "execution_cutoff_seconds": exec_budget,
+                "retry_as_task": True,
+                "cleanup_status": cleanup_status,
+            },
+        }
+    except asyncio.CancelledError:
+        runner_task.cancel()
+        remaining_for_cleanup = max(0.0, deadline - time.monotonic())
+        cleanup_limit = (
+            min(_FOREGROUND_CODE_MODE_CLEANUP_SECONDS, remaining_for_cleanup)
+            if remaining_for_cleanup > 0
+            else _FOREGROUND_CODE_MODE_CLEANUP_SECONDS
+        )
+        try:
+            await asyncio.wait([runner_task], timeout=cleanup_limit)
+        finally:
+            if runner_task.done():
+                _foreground_cleanup_status(runner_task)
+            else:
+                _retain_foreground_cleanup(runner_task)
+        raise
+
+
 async def code_mode(
     code: Annotated[
         str | None,
@@ -614,7 +672,7 @@ async def code_mode(
             description=(
                 "Optional default WSL2 working directory exposed to code as CWD and inherited "
                 "by registered capabilities. Does not chdir Monty itself; prefer registered "
-                "FileSystem/Shell capabilities for workspace operations."
+                "FileSystem capabilities for workspace operations."
             )
         ),
     ] = None,
@@ -623,8 +681,8 @@ async def code_mode(
         Field(
             description=(
                 "Optional opaque payload/data exposed to Monty code as PAYLOAD. Prefer payload for "
-                "multiline or quoted payloads, including code, shell snippets, JSON, Markdown, "
-                "quotes/backticks/$(), instead of embedding them in code. Keep code as executable "
+                "multiline or quoted payloads, including code, JSON, Markdown, "
+                "quotes/backticks, instead of embedding them in code. Keep code as executable "
                 "logic and PAYLOAD as data to avoid parser/escaping failures."
             )
         ),
@@ -633,7 +691,7 @@ async def code_mode(
         TaskLaunch | None,
         Field(
             description=(
-                "Detached tracked launch: provide {label, status_cmd?, status?} to run this "
+                "Detached tracked launch: provide {label, status?} to run this "
                 "program as a durable detached execution that creates a Task. Omit (None) for "
                 "a synchronous foreground run. Detached work is always tracked."
             )
@@ -672,16 +730,8 @@ async def code_mode(
                 payload,
                 task,
             )
-        return await code_runtime.run(
+        return await _run_foreground_code_mode(
             str(code),
-            build_code_registry(
-                cwd,
-                run_command=_run_command,
-                task_list=_task_list,
-                task_collect=_task_collect,
-                task_cancel=_task_cancel,
-                task_ack=_task_ack,
-            ),
             cwd=cwd,
             payload=payload,
         )
@@ -720,13 +770,12 @@ async def code_mode(
         "- Write code as Monty/Python orchestration, not as a shell script.\n"
         "- Prefer registered capabilities directly for file, search, edit, and other matched operations.\n"
         "- Decide dependencies first: await dependent work sequentially; use asyncio.gather(...) for independent work.\n"
-        "- Use Pydantic run_command only when shell execution is required; pass multiline shell through PAYLOAD when needed.\n"
         "- Every MCP call requires payload as a string; use payload='' when there is no data.\n"
         "- CAPABILITIES provides the live inner capability signatures + descriptions.\n"
         "- Never invent capability names, arguments, optional fields, or return shapes; inspect the live contract first.\n"
         "- Use PAYLOAD for payload data and CWD as the capability workspace.\n"
         "- BACKGROUND is a runtime-injected bool reflecting the actual outer execution mode.\n"
-        "- Detached runs always create a tracked Task: pass task={label, status_cmd?, status?}; omit task for a synchronous run."
+        "- Detached runs always create a tracked Task: pass task={label, status?}; omit task for a synchronous run."
     ),
 )
 async def _mcp_code_mode(
@@ -737,8 +786,7 @@ async def _mcp_code_mode(
                 "Required opaque string payload exposed to Monty code as PAYLOAD. Always provide this "
                 "field: use payload='' when no data is needed or for lifecycle actions. Never pass "
                 "an object/list directly. For structured data, serialize it to text first and parse "
-                "inside Code Mode. Payload is data; a shell script belongs here only when the Monty "
-                "program intentionally invokes bash for shell semantics."
+                "inside Code Mode. Payload is data."
             )
         ),
     ],
@@ -766,7 +814,7 @@ async def _mcp_code_mode(
         TaskLaunch | None,
         Field(
             description=(
-                "Detached tracked launch: provide {label, status_cmd?, status?} to run this "
+                "Detached tracked launch: provide {label, status?} to run this "
                 "program as a durable detached execution that creates a Task. Omit (None) for "
                 "a synchronous foreground run. Detached work is always tracked."
             )
@@ -795,127 +843,6 @@ async def _mcp_code_mode(
         task=task,
         action=action,
         execution_id=execution_id,
-    )
-
-
-def _required_execution_id(action: str, execution_id: str | None) -> str:
-    if execution_id is None or not execution_id.strip():
-        raise ValueError(f"wsl2_async action={action!r} requires execution_id")
-    return execution_id
-
-
-@mcp.tool(
-    title="Asynchronous WSL2 Executions",
-    description=(
-        "Operate durable asynchronous WSL2 executions through one stable action-based interface. "
-        "Use action='capabilities' to discover the actions supported by the current backend. "
-        "action='start' requires task={label, status_cmd?, status?}: detached work is always "
-        "tracked and returns the created Task. "
-        "Long-running executions survive MCP server restarts; completed logs are retained for 5 days."
-    ),
-)
-def wsl2_async(
-    action: Annotated[
-        str,
-        Field(
-            description="Async-execution action; use 'capabilities' to list supported actions."
-        ),
-    ],
-    command: Annotated[
-        str | None,
-        Field(description="Shell command for start."),
-    ] = None,
-    permission: Annotated[
-        str | None,
-        Field(
-            description=(
-                "Required exact harness declaration for direct WSL execution start: "
-                f"{_DIRECT_WSL_PERMISSION}"
-            )
-        ),
-    ] = None,
-    execution_id: Annotated[
-        str | None,
-        Field(description="Execution ID for status/result/cancel."),
-    ] = None,
-    cwd: Annotated[
-        str | None,
-        Field(description="Optional WSL2 working directory for start."),
-    ] = None,
-    timeout: Annotated[
-        float,
-        Field(
-            gt=0,
-            description="Maximum runtime in seconds for start (default: 600).",
-        ),
-    ] = 600.0,
-    task: Annotated[
-        TaskLaunch | None,
-        Field(
-            description=(
-                "Required Task-aware detachment for start: {label, status_cmd?, status?}. "
-                "The launch creates a Task so the work stays visible in TrackedTasks."
-            )
-        ),
-    ] = None,
-) -> dict[str, Any]:
-    """Dispatch a durable WSL2 execution lifecycle action."""
-    task = _coerce_task_launch(task)
-    normalized = action.strip().lower()
-    if normalized == "capabilities":
-        return {
-            "actions": {
-                "start": {
-                    "requires": ["command", "permission", "task"],
-                    "optional": ["cwd", "timeout"],
-                },
-                "status": {"requires": ["execution_id"]},
-                "result": {"requires": ["execution_id"]},
-                "cancel": {"requires": ["execution_id"]},
-            }
-        }
-    if task is not None and normalized != "start":
-        raise ValueError("task is only valid with action='start'")
-    if normalized == "start":
-        if command is None or not command.strip():
-            raise ValueError("wsl2_async action='start' requires command")
-        if permission != _DIRECT_WSL_PERMISSION:
-            raise ValueError(
-                "wsl2_async permission mismatch; use the exact harness declaration from the live schema"
-            )
-        if task is None:
-            raise ValueError(
-                "wsl2_async action='start' requires a labeled task object; detached work is always tracked"
-            )
-        clean_label = task.label.strip()
-        if not clean_label:
-            raise ValueError("task.label must not be empty")
-        started = executions.start(command, cwd, timeout)
-        execution_id = str(started["execution_id"])
-        try:
-            task_record = task_store.create(
-                execution_id=execution_id,
-                label=clean_label,
-                status_cmd=_clean_optional(task.status_cmd),
-                status=_clean_optional(task.status),
-            )
-        except Exception:
-            executions.cancel(execution_id)
-            raise
-        return {
-            "task_id": task_record["task_id"],
-            "execution_id": task_record["execution_id"],
-            "label": task_record["label"],
-            "state": task_record["state"],
-        }
-    if normalized == "status":
-        return executions.status(_required_execution_id(normalized, execution_id))
-    if normalized == "result":
-        return executions.result(_required_execution_id(normalized, execution_id))
-    if normalized == "cancel":
-        return executions.cancel(_required_execution_id(normalized, execution_id))
-    raise ValueError(
-        f"unsupported wsl2_async action: {action!r}; use action='capabilities' to discover actions"
     )
 
 

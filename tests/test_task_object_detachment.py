@@ -59,7 +59,7 @@ def test_code_mode_task_launch_creates_tracked_task_and_full_cycle(
     try:
         started = asyncio.run(
             gpt_dive.code_mode(
-                'await run_command("sleep 0.15")\n{"origin": "detached"}',
+                '{"origin": "detached"}',
                 payload="",
                 task={"label": "Download ubuntu.iso"},  # pyright: ignore[reportArgumentType]
             )
@@ -109,71 +109,6 @@ def test_code_mode_rejects_task_on_lifecycle_action(tmp_path: Path) -> None:
         restore()
 
 
-def test_wsl2_async_start_requires_task(tmp_path: Path) -> None:
-    restore, _task_db = _isolate_runtime(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="requires a labeled task"):
-            gpt_dive.wsl2_async(
-                action="start",
-                command="printf DONE",
-                permission="for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search",
-            )
-    finally:
-        restore()
-
-
-def test_wsl2_async_start_creates_tracked_task(tmp_path: Path) -> None:
-    restore, task_db = _isolate_runtime(tmp_path)
-    try:
-        started = gpt_dive.wsl2_async(
-            action="start",
-            command="printf DONE",
-            permission="for-special-such-as-exceptional-wsl-win11-maintenance; no-stupid-blind-broad-recursive-search",
-            timeout=5,
-            task={
-                "label": "Fetch artifact",
-                "status_cmd": "printf 'BYTES 0'",
-            },
-        )
-        assert set(started) == {"task_id", "execution_id", "label", "state"}
-        assert started["label"] == "Fetch artifact"
-        assert started["state"] == "working"
-
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            state = gpt_dive.wsl2_async(
-                "status", execution_id=str(started["execution_id"])
-            )
-            if state["status"] != "running":
-                break
-            time.sleep(0.03)
-        else:
-            raise AssertionError("wsl2_async execution did not finish")
-        assert state["status"] == "completed"
-
-        collected = app_module._task_collect(str(started["task_id"]))
-        assert collected["task"]["state"] == "completed"
-        assert collected["result"]["stdout"] == "DONE"
-
-        app_module._task_ack(str(started["task_id"]))
-        assert task_db.list_tasks() == []
-    finally:
-        restore()
-
-
-def test_wsl2_async_non_start_actions_reject_task(tmp_path: Path) -> None:
-    restore, _task_db = _isolate_runtime(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="only valid with action='start'"):
-            gpt_dive.wsl2_async(
-                "status",
-                execution_id="abc",
-                task={"label": "nope"},  # pyright: ignore[reportArgumentType]
-            )
-    finally:
-        restore()
-
-
 def test_legacy_background_flag_is_gone_from_schema_and_signature(
     tmp_path: Path,
 ) -> None:
@@ -186,9 +121,6 @@ def test_legacy_background_flag_is_gone_from_schema_and_signature(
         assert "status_cmd" not in code_properties
         assert "status" not in code_properties
         assert "task" in code_properties
-
-        async_properties = tools["wsl2_async"].input_schema["properties"]
-        assert "task" in async_properties
 
         with pytest.raises(TypeError):
             asyncio.run(

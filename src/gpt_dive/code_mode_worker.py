@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from .code_capabilities import build_code_registry, code_runtime
-from .command_runtime import run_command
 from .execution_manager import ExecutionManager
 from .task_runtime import (
     CODE_MODE_WORKER_PROTOCOL,
@@ -69,7 +68,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("worker payload must be a string or null")
     return await code_runtime.run(
         code,
-        build_code_registry(cwd, run_command=run_command, **_tracked_task_ops()),
+        build_code_registry(cwd, **_tracked_task_ops()),
         cwd=cwd,
         payload=payload,
         background=True,

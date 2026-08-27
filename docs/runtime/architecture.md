@@ -17,24 +17,24 @@ ChatGPT Web
   -> local WSL2
 ```
 
-`code_mode` is the default harnessable execution root for normal local work, including short one-shot file/shell operations. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). Detached work is always tracked: passing a `task` object (`{label, status_cmd?, status?}`) runs the program as a durable detached execution and creates a Runtime Task on the existing process execution path; omitting `task` stays synchronous. `wsl2_sync` is reserved for transport/smoke checks or explicit exceptions; `wsl2_async start` requires the same task object and remains the low-level durable process-lifecycle surface.
+`code_mode` is the single programmable execution root for normal local work. Model-facing MCP calls require explicit string `payload` (`payload=""` when no data is needed). Detached work is always tracked: passing a `task` object (`{label, status?}`) runs the program as a durable detached execution and creates a Runtime Task on the existing process execution path; omitting `task` runs synchronously under a fixed 110s response deadline (100s execution cutoff plus a 10s cleanup window).
 
 ## Stable Web MCP Surface
 
-Exactly four top-level tools are exposed:
+Exactly two top-level tools are exposed:
 
 - `bootstrap` — loads trusted fresh-session context from the user's local WSL2 wiki.
-- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports synchronous foreground execution (`task=None`) and detached tracked execution via the `task` object.
-- `wsl2_sync` — exceptional short synchronous shell path for transport/smoke checks or explicit cases where Code Mode is not appropriate.
-- `wsl2_async` — durable shell/process lifecycle interface, normally backed by `systemd --user`.
+- `code_mode` — primary programmable execution root backed by Pydantic Monty. Supports synchronous foreground execution (`task=None`, fixed 110.0s deadline) and detached tracked execution via the `task` object (fixed 600.0s deadline).
 
-The surface stays intentionally small. New reusable behavior should normally become a registered `code_mode` capability instead of a new top-level MCP tool.
+Foreground timeout results expose `cleanup_status=complete|failed|pending`. Pending cleanup remains explicitly owned by the runtime; worker cleanup reports an un-reaped process without synthesizing an exit code.
+
+The surface stays intentionally minimal. Reusable behavior belongs as registered `code_mode` capabilities instead of top-level MCP tools.
 
 ## Code Mode
 
 `code_mode` executes a fresh Monty program per call and exposes `CWD` plus registered capabilities. It is designed for composition: independent work can run in parallel, large intermediate results can be filtered locally, and only compact evidence needs to return to the model context.
 
-Current registered capability groups:
+Current registered capability groups (18 capabilities):
 
 ```text
 FileSystem
@@ -42,18 +42,17 @@ FileSystem
   list_directory / search_files / find_files
   create_directory / file_info
 
-Shell
-  run_command / start_command / check_command / stop_command
-
 Model / orchestration
   subagent_call / agy_worker / peer_review / m3_evidence / council_emit
 
 Task awareness
   task_list / task_collect / task_cancel / task_ack
 
-Retrieval / recovery
-  repo_search / gz64
+Retrieval
+  repo_search
 ```
+
+Direct shell capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) are completely removed from Code Mode. When shell execution is needed, compose registered capabilities or delegate to AGY / subagents.
 
 Code Mode FileSystem resolves relative paths from `cwd` but permits host-wide non-secret reads and writes across `/` subject to normal OS permissions; credential/secret paths remain denied. `m3_evidence` is deliberately tool-less: it analyzes a caller-supplied evidence packet and proposes a bounded next-query set, while retrieval execution remains owned by the caller/Harness. Detailed Pydantic/Harness wiring lives in `docs/pydantic/code-mode.md`.
 
@@ -85,7 +84,7 @@ shared Task runtime + TrackedTasks projection
       └─ @c Conduit snapshot
 ```
 
-Task state, acknowledgement, optional `status_cmd`/static status display, and derived elapsed time are Runtime-owned. Conduit uses the same ExecutionManager root, TaskStore, lifecycle normalization, and projection rather than maintaining `conduit.json` or a separate task-tracking SSOT. Execution results keep their normal retention policy; acknowledgement removes Task awareness without pinning the backing result.
+Task state, acknowledgement, optional static status display, and derived elapsed time are Runtime-owned. Conduit uses the same ExecutionManager root, TaskStore, lifecycle normalization, and projection rather than maintaining `conduit.json` or a separate task-tracking SSOT. Execution results keep their normal retention policy; acknowledgement removes Task awareness without pinning the backing result.
 
 ## Harness and Subagents
 
@@ -97,12 +96,8 @@ The main operating principle is SOL solo-first, with subagents used selectively 
 
 GPT Dive separates hard execution policy from harness policy.
 
-1. **Execution policy** — command restrictions such as `guard-bin` apply below all execution surfaces. Direct native `python` execution is blocked regardless of whether the shell is reached through Code Mode or a lower-level tool.
+1. **Execution policy** — command restrictions such as `guard-bin` apply below all execution surfaces. Direct native `python` execution is blocked.
 2. **Harness policy** — capability shaping, orchestration, parallel composition, workspace scoping, local preprocessing, and context reduction live primarily behind `code_mode`.
-
-## MCP Tasks
-
-GPT Dive can integrate with the MCP Tasks lifecycle when the client negotiates `io.modelcontextprotocol/tasks` on the required protocol version. ChatGPT Web has not negotiated that extension in the verified environment, so model-visible background work currently uses GPT Dive Runtime Tasks and TrackedTasks awareness over the existing durable execution primitive.
 
 ## Source Layout
 
@@ -110,18 +105,16 @@ GPT Dive can integrate with the MCP Tasks lifecycle when the client negotiates `
 src/gpt_dive/
 ├── __init__.py         # lazy app exports; worker import stays MCP-free
 ├── __main__.py
-├── app.py              # MCP tools + singletons; capability registry lives in code_capabilities
+├── app.py              # MCP tools (bootstrap, code_mode) + singletons; capability registry lives in code_capabilities
 ├── code_capabilities.py
 ├── code_runtime.py
 ├── code_mode_worker.py
-├── command_runtime.py
 ├── execution_manager.py
 ├── task_store.py
 ├── task_runtime.py     # shared Task lifecycle + background result normalizer (@dive/@c); TaskRuntime bundles the (executions, task_store) pair
 ├── conduit/
 ├── subagent_runtime.py
 ├── subagent_worker.py
-├── tasks_extension.py
 ├── council/            # implemented v3 Council backend + protocol + participant adapters
 └── guard-bin/
 ```

@@ -13,7 +13,7 @@ def test_task_store_persists_across_reopen(tmp_path) -> None:
     assert created["execution_id"] == "exec-1"
     assert created["label"] == "Review ADR"
     assert created["state"] == "working"
-    assert created["status_cmd"] is None
+    assert "status_cmd" not in created
     assert created["status"] is None
     assert created["created_at"] == created["updated_at"]
 
