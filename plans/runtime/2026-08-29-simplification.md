@@ -109,7 +109,12 @@ Eliminate duplication between `task_runtime._error_result()` and `app.py` Pydant
 
 ### 3.2 Remove `publish` parameter from `start()`
 
-Publication is delivery decision, not launch concern. Make explicit `manager.publish()` call.
+**REJECTED after deeper inspection (2026-08-29)**: `store.create(publish=)`
+sets `published_at = accepted_at` atomically at row creation. Splitting
+publication into a follow-up `manager.publish()` call would introduce a
+real visibility race (created-but-unpublished Task invisible to
+TrackedTasks) and touch ~14 call sites for zero net LOC savings. The
+atomicity guarantee from ADR 0004 outweighs the marginal decoupling.
 
 ---
 
@@ -118,6 +123,14 @@ Publication is delivery decision, not launch concern. Make explicit `manager.pub
 1. **One phase at a time**: 1.3 → 1.2 → 1.1
 2. **Green commits**: Tests pass after each item
 3. **Subagent delegation**: Use `(OpenCode Go) glm-5.3-flash` for implementation
+
+## Outcome (2026-08-29)
+
+- Phase 1.3, 1.2, 1.1: committed (d0f2a66, acb1418, 2383330)
+- Phase 2.1, 2.2: committed (efea5dd)
+- Phase 3.1: committed — `_spawn_followup()` single entry point
+- Phase 3.2: rejected (see note above)
+- All 143 tests green at every commit
 4. **Main session**: Coordination and verification only
 
 ---
