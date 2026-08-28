@@ -315,4 +315,3 @@ def test_execution_id_must_be_six_char_urlsafe(tmp_path: Path) -> None:
     for invalid in ["short", "way_too_long", "inv@ld", "sp ace", "a" * 11, "a" * 32]:
         with pytest.raises(ValueError, match="6-character URL-safe Base64"):
             manager.start("true", label="invalid id", execution_id=invalid)
-

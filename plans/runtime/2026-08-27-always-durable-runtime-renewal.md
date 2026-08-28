@@ -98,15 +98,16 @@ tests/test_code_runtime.py            구 계약 assertion 대거 제거
 - [x] 모델이 지정하는 timeout 인자가 어떤 capability에도 없다 — `code_capabilities.py` 전수 조사, timeout 인자 0건
 - [x] child budget이 `min(capability 정책, 잔여 work budget)`으로 계산된다 — `ExecutionContext.child_budget()`
 - [x] `deadline_remaining()`이 읽기 전용이다 — `build_code_registry()`가 `ExecutionContext.remaining_seconds()`만 노출
-- [x] capability 16개, `BACKGROUND` 없음, `task_*` 4개는 top-level로 이관됨 — registry/schema 테스트
+- [x] capability 15개, `BACKGROUND` 없음, `task_*` 4개는 top-level로 이관됨 — registry/schema 테스트
 - [x] `run_command`가 실행 중 출력을 bounded spool한다 (전량 메모리 적재 없음) — `_drain_stream()`의 64KiB 청크와 stream별 byte 상한
 - [x] `run_command`가 `.strip()`을 적용하지 않는다 — whitespace 보존 회귀 테스트
 - [x] `run_command`가 process group을 TERM → KILL → reap으로 종료한다 — cancellation/deadline 회귀 테스트
 - [x] TrackedTasks가 결정적 limit/order와 byte 상한을 지키고 변화 시에만 emit된다 — middleware/projection 회귀 테스트
 - [x] `completed` Task가 명시적 dismiss 전까지 남는다 — task lifecycle 회귀 테스트
-- [x] 3600s 경계가 부분 출력 보존·무재시도·단일 bounded cleanup을 지킨다 — work cutoff 및 cleanup reserve 회귀 테스트
+- [x] 43,200s (12시간: work 43,190s + cleanup 10s) 경계가 부분 출력 보존·무재시도·단일 bounded cleanup을 지킨다 — work cutoff 및 cleanup reserve 회귀 테스트
+- [x] execution_id를 6자리 URL-safe Base64로 경량화 — `secrets.token_urlsafe(4)` 및 CLI 플래그 안전성 보장
 
-전체 스위트: **197 passed** (2026-08-28). Ruff, Pyright, `git diff --check main`도 통과했다. CAS는 `ExecutionStore.claim()`의 조건부 `UPDATE ... WHERE state='accepted' AND cancel_requested=0`이 소유한다.
+전체 스위트: **143 passed in ~8.5s** (2026-08-29, 미사용 replay 및 m3_evidence 테스트 정리 완료). Ruff, Pyright, `git diff --check main`도 통과했다. CAS는 `ExecutionStore.claim()`의 조건부 `UPDATE ... WHERE state='accepted' AND cancel_requested=0`이 소유한다.
 
 ## 범위 밖
 
