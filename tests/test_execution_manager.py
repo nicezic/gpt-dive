@@ -136,7 +136,7 @@ def test_outcome_marker_recovers_terminal_state_after_worker_store_gap(
     tmp_path: Path,
 ) -> None:
     manager = popen_manager(tmp_path / "executions")
-    execution_id = "b" * 32
+    execution_id = "b" * 6
     execution_dir = manager.root / execution_id
     execution_dir.mkdir()
     request_path = execution_dir / "request.json"
@@ -244,7 +244,7 @@ def test_stale_unclaimed_systemd_execution_fails_even_while_unit_is_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = popen_manager(tmp_path / "executions")
-    execution_id = "c" * 32
+    execution_id = "c" * 6
     execution_dir = manager.root / execution_id
     execution_dir.mkdir()
     request_path = execution_dir / "request.json"
@@ -297,4 +297,22 @@ def test_default_execution_manager_timeout_constants(tmp_path: Path) -> None:
     manager = ExecutionManager(tmp_path / "executions")
     assert manager.work_timeout_seconds == 43190.0
     assert manager.cleanup_timeout_seconds == 10.0
+
+
+def test_execution_id_must_be_six_char_urlsafe(tmp_path: Path) -> None:
+    manager = popen_manager(tmp_path / "executions")
+    # Auto-generated ID is 6-character URL-safe string
+    started = manager.start("true", label="auto id")
+    auto_id = str(started["execution_id"])
+    assert len(auto_id) == 6
+    assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in auto_id)
+
+    # Valid explicit 6-char ID
+    explicit = manager.start("true", label="explicit id", execution_id="val_12")
+    assert explicit["execution_id"] == "val_12"
+
+    # Rejects invalid lengths or characters
+    for invalid in ["short", "way_too_long", "inv@ld", "sp ace", "a" * 11, "a" * 32]:
+        with pytest.raises(ValueError, match="6-character URL-safe Base64"):
+            manager.start("true", label="invalid id", execution_id=invalid)
 

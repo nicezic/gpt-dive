@@ -10,7 +10,6 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,8 @@ from typing import Any
 from .execution_store import (
     TERMINAL_EXECUTION_STATES,
     ExecutionStore,
+    generate_execution_id,
+    is_valid_execution_id,
     parse_time,
     utc_now,
 )
@@ -84,16 +85,10 @@ class ExecutionManager:
 
         with self._lock:
             self._maybe_cleanup()
-            identifier = execution_id or uuid.uuid4().hex
-            try:
-                parsed_identifier = uuid.UUID(identifier)
-            except ValueError as exc:
+            identifier = execution_id or generate_execution_id()
+            if not is_valid_execution_id(identifier):
                 raise ValueError(
-                    "execution_id must be a 32-character UUID hex value"
-                ) from exc
-            if parsed_identifier.hex != identifier:
-                raise ValueError(
-                    "execution_id must be a lowercase 32-character UUID hex value"
+                    "execution_id must be a 6-character URL-safe Base64 string"
                 )
             execution_dir = self.root / identifier
             execution_dir.mkdir(mode=0o700)
@@ -286,10 +281,8 @@ class ExecutionManager:
             sys.executable,
             "-m",
             "gpt_dive.execution_worker",
-            "--store",
-            str(self.store.path),
-            "--execution",
-            execution_id,
+            f"--store={self.store.path}",
+            f"--execution={execution_id}",
         ]
         if backend == "systemd":
             assert unit is not None

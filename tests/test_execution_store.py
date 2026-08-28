@@ -18,7 +18,7 @@ def create_execution(
     label: str = "store test",
     publish: bool = False,
 ) -> dict[str, object]:
-    execution_id = "a" * 32
+    execution_id = "a" * 6
     artifact_dir = root / execution_id
     artifact_dir.mkdir(exist_ok=True)
     return store.create(
@@ -47,34 +47,34 @@ def test_execution_and_task_share_one_identity_but_not_one_lifecycle(
 
     assert created["state"] == "accepted"
     with pytest.raises(KeyError):
-        store.get_task("a" * 32)
+        store.get_task("a" * 6)
 
-    assert store.claim("a" * 32, worker_pid=123, worker_start_ticks=456)
-    assert not store.claim("a" * 32, worker_pid=789, worker_start_ticks=999)
+    assert store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
+    assert not store.claim("a" * 6, worker_pid=789, worker_start_ticks=999)
 
-    published = store.publish("a" * 32)
+    published = store.publish("a" * 6)
     assert published["execution_id"] == created["execution_id"]
     assert published["state"] == "running"
 
-    completed = store.finish("a" * 32, exit_code=0)
+    completed = store.finish("a" * 6, exit_code=0)
     assert completed["state"] == "completed"
-    assert store.get_task("a" * 32)["state"] == "completed"
+    assert store.get_task("a" * 6)["state"] == "completed"
 
-    dismissed = store.dismiss("a" * 32)
+    dismissed = store.dismiss("a" * 6)
     assert dismissed["dismissed_at"] is not None
     with pytest.raises(KeyError):
-        store.get_task("a" * 32)
+        store.get_task("a" * 6)
 
 
 def test_cancel_before_claim_prevents_worker_authorization(tmp_path: Path) -> None:
     store = ExecutionStore(tmp_path / "runtime.sqlite3")
     create_execution(store, tmp_path)
 
-    cancelled = store.request_cancel("a" * 32)
+    cancelled = store.request_cancel("a" * 6)
 
     assert cancelled["state"] == "cancelled"
     assert cancelled["reason"] == "cancelled"
-    assert not store.claim("a" * 32, worker_pid=123, worker_start_ticks=456)
+    assert not store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
 
 
 def test_rejected_worker_claim_cannot_run_user_code(
@@ -88,12 +88,12 @@ def test_rejected_worker_claim_cannot_run_user_code(
     request_path.write_text(
         json.dumps({"v": 1, "command": f"touch {marker}", "cwd": str(tmp_path)})
     )
-    store.request_cancel("a" * 32)
+    store.request_cancel("a" * 6)
 
-    assert run_execution(store, "a" * 32) == 0
+    assert run_execution(store, "a" * 6) == 0
     assert not marker.exists()
     assert not request_path.exists()
-    assert store.get("a" * 32)["request_path"] == ""
+    assert store.get("a" * 6)["request_path"] == ""
 
 
 def test_deadline_cleanup_consumes_the_absolute_reserve_once(
@@ -136,9 +136,9 @@ def test_deadline_cleanup_consumes_the_absolute_reserve_once(
         lambda: work_deadline + timedelta(seconds=1),
     )
 
-    assert run_execution(store, "a" * 32) == 1
+    assert run_execution(store, "a" * 6) == 1
     assert cleanup_calls == [process.pid]
-    terminal = store.get("a" * 32)
+    terminal = store.get("a" * 6)
     assert terminal["state"] == "lost"
     assert terminal["reason"] == "cleanup_unconfirmed"
 
@@ -146,10 +146,10 @@ def test_deadline_cleanup_consumes_the_absolute_reserve_once(
 def test_cancel_request_wins_a_concurrent_finish_transition(tmp_path: Path) -> None:
     store = ExecutionStore(tmp_path / "runtime.sqlite3")
     create_execution(store, tmp_path)
-    assert store.claim("a" * 32, worker_pid=123, worker_start_ticks=456)
+    assert store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
 
-    store.request_cancel("a" * 32)
-    terminal = store.finish("a" * 32, exit_code=0)
+    store.request_cancel("a" * 6)
+    terminal = store.finish("a" * 6, exit_code=0)
 
     assert terminal["state"] == "cancelled"
     assert terminal["reason"] == "cancelled"

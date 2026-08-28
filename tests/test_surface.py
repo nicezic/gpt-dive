@@ -144,7 +144,7 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
         assert limit == 8
         return [
             {
-                "execution_id": "a" * 32,
+                "execution_id": "a" * 6,
                 "label": "AGY worker",
                 "state": "running",
                 "reason": None,
@@ -171,7 +171,7 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
     assert "AGY worker" in awareness.text
     assert "running" in awareness.text
     assert "4:21" in awareness.text
-    assert "a" * 32 in awareness.text
+    assert "a" * 6 in awareness.text
 
 
 def test_tracked_tasks_middleware_failure_preserves_primary_result(monkeypatch) -> None:
@@ -196,7 +196,7 @@ def test_tracked_tasks_middleware_failure_preserves_primary_result(monkeypatch) 
 
 def test_tracked_tasks_emits_only_when_visible_state_changes(monkeypatch) -> None:
     projected = {
-        "execution_id": "b" * 32,
+        "execution_id": "b" * 6,
         "label": "build",
         "state": "running",
         "reason": None,

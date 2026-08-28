@@ -65,7 +65,7 @@ def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
 
 def test_projection_revision_ignores_elapsed_time_but_tracks_state() -> None:
     base = {
-        "execution_id": "a" * 32,
+        "execution_id": "a" * 6,
         "label": "compile",
         "state": "running",
         "reason": None,
@@ -86,7 +86,7 @@ def test_projection_revision_ignores_elapsed_time_but_tracks_state() -> None:
 def test_tracked_tasks_is_bounded_and_uses_single_execution_id() -> None:
     tasks = [
         {
-            "execution_id": f"{index:032x}",
+            "execution_id": f"e{index:05d}",
             "label": f"task-{index}",
             "state": "running",
             "reason": None,

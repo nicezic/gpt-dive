@@ -7,6 +7,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..execution_manager import ExecutionManager
+from ..execution_store import EXECUTION_ID_PATTERN
 from .events import RedisEventPublisher
 from .runtime import ConduitRuntime
 
@@ -37,7 +38,7 @@ class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-ExecutionId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+ExecutionId = Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
 
 
 class StartRequest(_ClosedModel):

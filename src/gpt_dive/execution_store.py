@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import re
+import secrets
 import sqlite3
-import uuid
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+EXECUTION_ID_PATTERN = r"^[A-Za-z0-9_-]{6}$"
+EXECUTION_ID_REGEX = re.compile(EXECUTION_ID_PATTERN)
+
+
+def generate_execution_id() -> str:
+    token = secrets.token_urlsafe(4)
+    while token.startswith("-"):
+        token = secrets.token_urlsafe(4)
+    return token
+
+
+def is_valid_execution_id(identifier: str) -> bool:
+    return bool(EXECUTION_ID_REGEX.fullmatch(identifier))
+
 
 EXECUTION_STATES = frozenset(
     {"accepted", "running", "completed", "failed", "cancelled", "lost"}
@@ -142,7 +158,11 @@ class ExecutionStore:
         if cleanup_timeout_seconds <= 0:
             raise ValueError("cleanup_timeout_seconds must be greater than 0")
 
-        identifier = execution_id or uuid.uuid4().hex
+        identifier = execution_id or generate_execution_id()
+        if not is_valid_execution_id(identifier):
+            raise ValueError(
+                "execution_id must be a 6-character URL-safe Base64 string"
+            )
         now = utc_now()
         accepted_at = iso_time(now)
         work_deadline_at = iso_time(now + timedelta(seconds=work_timeout_seconds))

@@ -9,7 +9,6 @@ import re
 import shlex
 import sys
 import time
-import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -20,6 +19,7 @@ from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .execution_manager import ExecutionManager
+from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import request_lifecycle_middleware
 from .task_runtime import (
     CODE_MODE_WORKER_PROTOCOL,
@@ -459,9 +459,9 @@ def _start_code_mode_execution(
     request_path = executions.root / execution_id / "input.json"
     command = (
         f"{shlex.quote(sys.executable)} -m gpt_dive.code_mode_worker "
-        f"--store {shlex.quote(str(executions.store.path))} "
-        f"--execution {shlex.quote(execution_id)} "
-        f"--request {shlex.quote(str(request_path))}"
+        f"--store={shlex.quote(str(executions.store.path))} "
+        f"--execution={shlex.quote(execution_id)} "
+        f"--request={shlex.quote(str(request_path))}"
     )
     return executions.start(
         command,
@@ -722,7 +722,7 @@ async def code_mode(
     if not code.strip():
         raise ValueError("code must not be empty")
 
-    execution_id = uuid.uuid4().hex
+    execution_id = generate_execution_id()
     started_at = time.monotonic()
     wait_deadline = started_at + _INLINE_WAIT_SECONDS
     response_deadline = started_at + _INLINE_RESPONSE_DEADLINE_SECONDS
@@ -957,17 +957,17 @@ class TaskListRequest(_ClosedModel):
 
 class TaskGetRequest(_ClosedModel):
     action: Literal["get"]
-    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
 
 
 class TaskCancelRequest(_ClosedModel):
     action: Literal["cancel"]
-    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
 
 
 class TaskDismissRequest(_ClosedModel):
     action: Literal["dismiss"]
-    execution_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
 
 
 TaskRequest = Annotated[
