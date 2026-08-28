@@ -103,5 +103,5 @@ _피할 표현_: backing state가 확실히 사라졌는데 stale이라고 부�
   - 여기 정의한 lifecycle, delivery, deadline, persistence, 공개 surface의 decision authority.
 - `CONTEXT-MAP.md`
   - Conduit가 Runtime 언어를 소유하지 않고 사용하는 관계를 보여준다.
-- `src/gpt_dive/app.py`, `src/gpt_dive/execution_manager.py`, `src/gpt_dive/task_runtime.py`
+- `src/gpt_dive/app.py`, `src/gpt_dive/execution_manager.py`
   - Renewal 이후의 구현 권위.

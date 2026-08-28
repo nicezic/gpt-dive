@@ -168,13 +168,14 @@ src/gpt_dive/
 ├─ app.py                 MCP tools, strict schemas, inline delivery, middleware
 ├─ execution_store.py     SQLite lifecycle and awareness transitions
 ├─ execution_manager.py   launch, observe, cancel, recover, retain
+│                         Code Mode result normalization (envelope projection)
 ├─ execution_worker.py    claim-before-code and process-tree containment
-├─ execution_context.py   inherited read-only work budget
 ├─ code_mode_worker.py    durable Monty worker envelope
+├─ code_mode_protocol.py  worker envelope protocol version constant
 ├─ code_runtime.py        Monty runtime and capability registry
 ├─ code_capabilities.py   15 Code Mode capabilities
 ├─ command_runtime.py     awaited bounded run_command
-├─ task_runtime.py        result normalization and TrackedTasks projection
+│                         (TrackedTasks projection lives in app.py)
 └─ conduit/               Runtime 위의 별도 conversation/event surface
 ```
 

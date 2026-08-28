@@ -11,7 +11,7 @@ from typing import Any
 from .code_capabilities import build_code_registry, code_runtime
 from .command_runtime import runtime_record
 from .execution_store import ExecutionStore
-from .task_runtime import CODE_MODE_WORKER_PROTOCOL
+from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 
 
 def _emit(envelope: dict[str, Any]) -> None:

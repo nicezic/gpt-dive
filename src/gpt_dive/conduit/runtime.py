@@ -4,12 +4,6 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..execution_manager import ExecutionManager
-from ..task_runtime import (
-    cancel_task,
-    dismiss_task,
-    get_task,
-    list_projected_tasks,
-)
 
 
 class EventPublisher(Protocol):
@@ -80,7 +74,7 @@ class ConduitRuntime:
 
     def snapshot(self) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        for projected in list_projected_tasks(self.executions, limit=8):
+        for projected in self.executions.tasks(limit=8):
             row: dict[str, object] = {
                 "id": str(projected["execution_id"]),
                 "label": str(projected["label"]),
@@ -121,7 +115,7 @@ class ConduitRuntime:
         }
 
     def _get(self, execution_id: str) -> dict[str, Any]:
-        collected = get_task(self.executions, execution_id)
+        collected = self.executions.task_with_result(execution_id)
         task = collected["task"]
         result: dict[str, Any] = {
             "execution_id": execution_id,
@@ -135,7 +129,7 @@ class ConduitRuntime:
         return result
 
     def _cancel(self, execution_id: str) -> dict[str, Any]:
-        cancelled = cancel_task(self.executions, execution_id)["task"]
+        cancelled = self.executions.cancel_task(execution_id)["task"]
         return {
             "execution_id": execution_id,
             "status": self._map_state(str(cancelled["state"])),
@@ -144,7 +138,7 @@ class ConduitRuntime:
 
     def _dismiss(self, execution_id: str) -> dict[str, Any]:
         try:
-            dismissed = dismiss_task(self.executions, execution_id)
+            dismissed = self.executions.dismiss_task(execution_id)
         except ValueError as exc:
             raise ValueError("dismiss requires a terminal or lost Task") from exc
         return {

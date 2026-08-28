@@ -126,6 +126,6 @@ Publication is delivery decision, not launch concern. Make explicit `manager.pub
 
 - [ ] All tests pass (143 tests in ~9s)
 - [ ] Net reduction: ~350 LOC
-- [ ] Fewer modules: -2 files (execution_context.py, task_runtime.py)
+- [x] Fewer modules: -2 files (execution_context.py, task_runtime.py)
 - [ ] Clearer boundaries: envelope parsing in manager, formatting in app
 - [ ] No behavior changes to external MCP contract

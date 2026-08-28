@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -18,40 +19,83 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .execution_manager import ExecutionManager
 from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import request_lifecycle_middleware
-from .task_runtime import (
-    CODE_MODE_WORKER_PROTOCOL,
-    TRACKED_TASKS_LIMIT,
-)
-from .task_runtime import (
-    cancel_task as runtime_cancel_task,
-)
-from .task_runtime import (
-    dismiss_task as runtime_dismiss_task,
-)
-from .task_runtime import (
-    get_task as runtime_get_task,
-)
-from .task_runtime import (
-    list_projected_tasks as runtime_list_projected_tasks,
-)
-from .task_runtime import (
-    projection_revision as runtime_projection_revision,
-)
-from .task_runtime import (
-    read_execution_result as runtime_read_execution_result,
-)
-from .task_runtime import (
-    render_tracked_tasks as runtime_render_tracked_tasks,
-)
 
 _INLINE_WAIT_SECONDS = 100.0
 _INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
 _TASK_LIST_LIMIT = 50
 _TRACKED_TASKS_REVISION_STATE_KEY = "gpt_dive_tracked_tasks_revision"
 _PENDING_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
+TRACKED_TASKS_LIMIT = 8
+TRACKED_TASKS_MAX_BYTES = 4096
+
+_TASK_STATE_MARKERS = {
+    "accepted": "◌",
+    "running": "🧵",
+    "completed": "✅",
+    "failed": "❌",
+    "cancelled": "⛔",
+    "lost": "⚠️",
+}
+
+
+def format_task_elapsed(seconds: int) -> str:
+    if seconds < 3600:
+        minutes, secs = divmod(seconds, 60)
+        return f"{minutes}:{secs:02d}"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def render_tracked_tasks(
+    tasks: list[dict[str, Any]],
+    *,
+    limit: int = TRACKED_TASKS_LIMIT,
+    max_bytes: int = TRACKED_TASKS_MAX_BYTES,
+) -> str:
+    lines = ["TrackedTasks"]
+    for task in tasks[:limit]:
+        state = str(task["state"])
+        marker = _TASK_STATE_MARKERS.get(state, "•")
+        parts = [
+            str(task["label"]),
+            f"{marker} {state}",
+            format_task_elapsed(int(task["elapsed_seconds"])),
+            str(task["execution_id"]),
+        ]
+        reason = str(task.get("reason") or "").strip()
+        if reason:
+            parts.append(reason)
+        candidate = "\n".join([*lines, " · ".join(parts)])
+        if len(candidate.encode()) > max_bytes:
+            lines.append("…")
+            break
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
+
+
+def projection_revision(tasks: list[dict[str, Any]]) -> str:
+    visible = [
+        {
+            "execution_id": task["execution_id"],
+            "label": task["label"],
+            "state": task["state"],
+            "reason": task.get("reason"),
+            "finished_at": task.get("finished_at"),
+        }
+        for task in tasks
+    ]
+    encoded = json.dumps(
+        visible,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
 # the base before tool registration makes both validation and advertised schemas strict.
@@ -366,7 +410,7 @@ async def _tracked_tasks_middleware(
 
     try:
         tasks = await asyncio.to_thread(_task_list, limit=TRACKED_TASKS_LIMIT)
-        revision = runtime_projection_revision(tasks)
+        revision = projection_revision(tasks)
         state = _periodic_reminder_state(ctx)
         previous = state.get(_TRACKED_TASKS_REVISION_STATE_KEY)
         state[_TRACKED_TASKS_REVISION_STATE_KEY] = revision
@@ -374,7 +418,7 @@ async def _tracked_tasks_middleware(
             return result
         if previous is None and not tasks:
             return result
-        text = _render_tracked_tasks(tasks) if tasks else "TrackedTasks\n(none)"
+        text = render_tracked_tasks(tasks) if tasks else "TrackedTasks\n(none)"
     except Exception:
         logger.exception("TRACKED TASKS PROJECTION FAILED")
         return result
@@ -420,25 +464,19 @@ mcp.middleware.append(_tracked_tasks_middleware)
 
 
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-    return runtime_list_projected_tasks(executions, limit=limit)
-
-
-def _render_tracked_tasks(
-    tasks: list[dict[str, Any]], *, limit: int = TRACKED_TASKS_LIMIT
-) -> str:
-    return runtime_render_tracked_tasks(tasks, limit=limit)
+    return executions.tasks(limit=limit)
 
 
 def _task_get(execution_id: str) -> dict[str, Any]:
-    return runtime_get_task(executions, execution_id)
+    return executions.task_with_result(execution_id)
 
 
 def _task_cancel(execution_id: str) -> dict[str, Any]:
-    return runtime_cancel_task(executions, execution_id)
+    return executions.cancel_task(execution_id)
 
 
 def _task_dismiss(execution_id: str) -> dict[str, Any]:
-    return runtime_dismiss_task(executions, execution_id)
+    return executions.dismiss_task(execution_id)
 
 
 def _start_code_mode_execution(
@@ -584,7 +622,7 @@ async def _wait_for_acceptance(
 
 
 def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
-    return runtime_read_execution_result(executions, execution_id)
+    return executions.result(execution_id)
 
 
 async def _wait_for_execution(
