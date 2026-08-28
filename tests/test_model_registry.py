@@ -1,38 +1,33 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
 import sys
 
+import pytest
+
 from gpt_dive.model_registry import build_model
-from gpt_dive.openai_codex import OpenAICodexResponsesModel
+
+
+def test_registry_import_does_not_load_codex_compat_for_non_codex_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    had_codex = sys.modules.pop("gpt_dive.openai_codex", None)
+    try:
+        assert "gpt_dive.openai_codex" not in sys.modules
+        build_model("m3")
+        assert "gpt_dive.openai_codex" not in sys.modules
+    finally:
+        if had_codex is not None:
+            sys.modules["gpt_dive.openai_codex"] = had_codex
 
 
 def test_codex_alias_uses_local_compat_layer() -> None:
+    from gpt_dive.openai_codex import OpenAICodexResponsesModel
+
     model = build_model("sol")
     assert isinstance(model, OpenAICodexResponsesModel)
     assert model.system == "openai-codex"
-
-
-def test_registry_import_does_not_load_codex_compat_for_non_codex_paths() -> None:
-    env = dict(os.environ)
-    env["MINIMAX_API_KEY"] = "test-key"
-    code = (
-        "import sys; "
-        "from gpt_dive.model_registry import build_model; "
-        "assert 'gpt_dive.openai_codex' not in sys.modules; "
-        "build_model('m3'); "
-        "assert 'gpt_dive.openai_codex' not in sys.modules"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_verify_provider_model_reports_missing_model(monkeypatch) -> None:

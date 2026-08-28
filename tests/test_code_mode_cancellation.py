@@ -111,6 +111,8 @@ def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_o
             communicate_task,
             grace_seconds=0.02,
             final_grace_seconds=0.02,
+            communicate_cancel_grace_seconds=0.02,
+            process_wait_grace_seconds=0.02,
             log_label="TEST",
         )
 
@@ -166,6 +168,8 @@ def test_run_bounded_worker_reports_reap_failure_without_fake_returncode(
         *,
         grace_seconds: float = 0.02,
         final_grace_seconds: float = 0.02,
+        communicate_cancel_grace_seconds: float = 0.02,
+        process_wait_grace_seconds: float = 0.02,
         log_label: str = "WORKER",
     ) -> worker_subprocess_module.CleanupOutcome:
         return await original_terminate(
@@ -173,6 +177,8 @@ def test_run_bounded_worker_reports_reap_failure_without_fake_returncode(
             task,  # type: ignore[arg-type]
             grace_seconds=0.02,
             final_grace_seconds=0.02,
+            communicate_cancel_grace_seconds=0.02,
+            process_wait_grace_seconds=0.02,
             log_label=log_label,
         )
 

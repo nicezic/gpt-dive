@@ -33,7 +33,7 @@ async def wait_task_ready(
         assert isinstance(outcome, app.TaskGetOutput)
         if outcome.ready or outcome.unavailable:
             return outcome
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
     raise AssertionError("Code Mode Task did not finish")
 
 
@@ -65,7 +65,7 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
     async def scenario() -> None:
         outcome = await app.code_mode(
             label="slow arithmetic",
-            code="await run_command('sleep 0.4; printf SLOW')",
+            code="await run_command('sleep 0.12; printf SLOW')",
             cwd=str(tmp_path),
         )
         assert isinstance(outcome, app.CodeModeTask)
