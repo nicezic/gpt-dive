@@ -697,17 +697,18 @@ def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
-def _code_mode_delivery_error(
+def _code_mode_error(
     execution_id: str,
     label: str,
     *,
     code: str,
     message: str,
+    reason: str | None = None,
 ) -> CodeModeError:
     return CodeModeError(
         execution_id=execution_id,
         label=label,
-        error=CodeModeErrorDetail(code=code, message=message),
+        error=CodeModeErrorDetail(code=code, message=message, reason=reason),
     )
 
 
@@ -732,14 +733,12 @@ async def _code_mode_launch_error(
         raise TimeoutError(
             "Code Mode response deadline expired while shaping launch error"
         ) from None
-    return CodeModeError(
-        execution_id=execution_id,
-        label=label,
-        error=CodeModeErrorDetail(
-            code="launch_interrupted",
-            message=str(exc) or "Code Mode Worker could not be launched.",
-            reason=str(record.get("reason") or "launch_interrupted"),
-        ),
+    return _code_mode_error(
+        execution_id,
+        label,
+        code="launch_interrupted",
+        message=str(exc) or "Code Mode Worker could not be launched.",
+        reason=str(record.get("reason") or "launch_interrupted"),
     )
 
 
@@ -872,7 +871,7 @@ async def code_mode(
                 raise
             except TimeoutError:
                 _defer_publication_during_launch(executions, launch_task, execution_id)
-                return _code_mode_delivery_error(
+                return _code_mode_error(
                     execution_id,
                     clean_label,
                     code="response_deadline_exceeded",
@@ -883,7 +882,7 @@ async def code_mode(
                 )
             except Exception as exc:
                 _defer_publication_during_launch(executions, launch_task, execution_id)
-                return _code_mode_delivery_error(
+                return _code_mode_error(
                     execution_id,
                     clean_label,
                     code="task_publication_failed",
@@ -915,7 +914,7 @@ async def code_mode(
         raise
     except TimeoutError:
         _defer_execution_publication(executions, execution_id)
-        return _code_mode_delivery_error(
+        return _code_mode_error(
             execution_id,
             clean_label,
             code="response_deadline_exceeded",

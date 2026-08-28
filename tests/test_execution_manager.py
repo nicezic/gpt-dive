@@ -191,9 +191,12 @@ def test_spawn_error_after_worker_claim_does_not_reclassify_or_delete_input(
 ) -> None:
     manager = popen_manager(tmp_path / "executions")
 
-    def claimed_then_error(
-        execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
+    def claimed_then_error(command: list[str], *_args: object, **_kwargs: object) -> None:
+        execution_id = next(
+            arg.split("=", 1)[1]
+            for arg in command
+            if arg.startswith("--execution=")
+        )
         assert manager.store.claim(
             execution_id,
             worker_pid=999_999_999,
@@ -201,7 +204,7 @@ def test_spawn_error_after_worker_claim_does_not_reclassify_or_delete_input(
         )
         raise TimeoutError("ambiguous launcher response")
 
-    monkeypatch.setattr(manager, "_spawn_worker", claimed_then_error)
+    monkeypatch.setattr(execution_manager_module.subprocess, "Popen", claimed_then_error)
 
     started = manager.start(
         "true",
@@ -221,10 +224,10 @@ def test_spawn_error_before_claim_fails_closed_and_discards_requests(
 ) -> None:
     manager = popen_manager(tmp_path / "executions")
 
-    def launch_error(execution_id: str, *, backend: str, unit: str | None) -> None:
+    def launch_error(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("launcher failed")
 
-    monkeypatch.setattr(manager, "_spawn_worker", launch_error)
+    monkeypatch.setattr(execution_manager_module.subprocess, "Popen", launch_error)
 
     with pytest.raises(RuntimeError, match="launcher failed"):
         manager.start(

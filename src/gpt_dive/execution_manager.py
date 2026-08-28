@@ -180,7 +180,50 @@ class ExecutionManager:
                 raise
 
             try:
-                self._spawn_worker(identifier, backend=backend, unit=unit)
+                # Atomic sequence: journal row committed above, spawn must follow
+                # or fail_accepted rolls it back; keep both visible in one place.
+                worker_command = [
+                    sys.executable,
+                    "-m",
+                    "gpt_dive.execution_worker",
+                    f"--store={self.store.path}",
+                    f"--execution={identifier}",
+                ]
+                if backend == "systemd":
+                    assert unit is not None
+                    absolute_seconds = (
+                        self.work_timeout_seconds + self.cleanup_timeout_seconds
+                    )
+                    launched = subprocess.run(
+                        [
+                            "systemd-run",
+                            "--user",
+                            "--quiet",
+                            "--collect",
+                            f"--unit={unit.removesuffix('.service')}",
+                            "--property=KillMode=control-group",
+                            f"--property=TimeoutStopSec={self.cleanup_timeout_seconds}s",
+                            f"--property=RuntimeMaxSec={absolute_seconds}s",
+                            *worker_command,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=5.0,
+                        check=False,
+                    )
+                    if launched.returncode != 0:
+                        raise RuntimeError(
+                            "systemd-run failed: "
+                            f"{launched.stderr.strip() or launched.stdout.strip()}"
+                        )
+                else:
+                    subprocess.Popen(
+                        worker_command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
             except Exception:
                 record = self.store.fail_accepted(
                     identifier, reason="launch_interrupted"
@@ -388,51 +431,6 @@ class ExecutionManager:
     def _maybe_cleanup(self) -> None:
         if time.monotonic() >= self._next_cleanup_monotonic:
             self.cleanup()
-
-    def _spawn_worker(
-        self, execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
-        worker_command = [
-            sys.executable,
-            "-m",
-            "gpt_dive.execution_worker",
-            f"--store={self.store.path}",
-            f"--execution={execution_id}",
-        ]
-        if backend == "systemd":
-            assert unit is not None
-            absolute_seconds = self.work_timeout_seconds + self.cleanup_timeout_seconds
-            launched = subprocess.run(
-                [
-                    "systemd-run",
-                    "--user",
-                    "--quiet",
-                    "--collect",
-                    f"--unit={unit.removesuffix('.service')}",
-                    "--property=KillMode=control-group",
-                    f"--property=TimeoutStopSec={self.cleanup_timeout_seconds}s",
-                    f"--property=RuntimeMaxSec={absolute_seconds}s",
-                    *worker_command,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-                check=False,
-            )
-            if launched.returncode != 0:
-                raise RuntimeError(
-                    "systemd-run failed: "
-                    f"{launched.stderr.strip() or launched.stdout.strip()}"
-                )
-            return
-
-        subprocess.Popen(
-            worker_command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
 
     def _refresh(self, record: dict[str, Any]) -> dict[str, Any]:
         state = str(record["state"])

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gpt_dive import app
+import gpt_dive.execution_manager as execution_manager
 from gpt_dive.execution_manager import ExecutionManager
 
 
@@ -129,12 +130,10 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def stalled_popen(*_args: object, **_kwargs: object) -> None:
         release_launch.wait(timeout=0.3)
 
-    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
     monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.02)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.2)
 
@@ -160,7 +159,11 @@ def test_post_acceptance_response_timeout_returns_structured_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
-    monkeypatch.setattr(manager, "_spawn_worker", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        execution_manager.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.08)
 
@@ -202,14 +205,10 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
 
-    def timeout_after_acceptance(
-        _execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def timeout_popen(*_args: object, **_kwargs: object) -> None:
         raise TimeoutError("launcher response timed out")
 
-    monkeypatch.setattr(manager, "_spawn_worker", timeout_after_acceptance)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", timeout_popen)
 
     outcome = asyncio.run(
         app.code_mode(label="launch timeout", code="1 + 2", cwd=str(tmp_path))
@@ -229,12 +228,10 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def stalled_popen(*_args: object, **_kwargs: object) -> None:
         release_launch.wait(timeout=0.2)
 
-    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.15)
 
     async def scenario() -> None:
