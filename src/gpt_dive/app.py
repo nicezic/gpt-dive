@@ -51,6 +51,7 @@ _INLINE_WAIT_SECONDS = 100.0
 _INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
 _TASK_LIST_LIMIT = 50
 _TRACKED_TASKS_REVISION_STATE_KEY = "gpt_dive_tracked_tasks_revision"
+_PENDING_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
 # the base before tool registration makes both validation and advertised schemas strict.
@@ -364,7 +365,7 @@ async def _tracked_tasks_middleware(
         return result
 
     try:
-        tasks = await asyncio.to_thread(_task_list, limit=None)
+        tasks = await asyncio.to_thread(_task_list, limit=TRACKED_TASKS_LIMIT)
         revision = runtime_projection_revision(tasks)
         state = _periodic_reminder_state(ctx)
         previous = state.get(_TRACKED_TASKS_REVISION_STATE_KEY)
@@ -473,6 +474,121 @@ def _start_code_mode_execution(
     )
 
 
+def _track_runtime_followup(followup: asyncio.Task[None]) -> None:
+    _PENDING_RUNTIME_FOLLOWUPS.add(followup)
+    followup.add_done_callback(_PENDING_RUNTIME_FOLLOWUPS.discard)
+
+
+async def _publish_accepted_task(
+    manager: ExecutionManager, execution_id: str
+) -> dict[str, Any]:
+    return await asyncio.to_thread(manager.store.publish, execution_id)
+
+
+async def _publish_for_transport_loss(
+    manager: ExecutionManager, execution_id: str
+) -> bool:
+    try:
+        await asyncio.shield(_publish_accepted_task(manager, execution_id))
+    except asyncio.CancelledError, Exception:
+        return False
+    return True
+
+
+async def _observe_launch(launch_task: asyncio.Task[dict[str, Any]]) -> None:
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.shield(launch_task)
+
+
+def _defer_launch_observation(
+    launch_task: asyncio.Task[dict[str, Any]],
+) -> None:
+    _track_runtime_followup(asyncio.create_task(_observe_launch(launch_task)))
+
+
+async def _publish_during_launch(
+    manager: ExecutionManager,
+    launch_task: asyncio.Task[dict[str, Any]],
+    execution_id: str,
+) -> None:
+    published = False
+    while not published and not launch_task.done():
+        try:
+            await _publish_accepted_task(manager, execution_id)
+        except KeyError:
+            await asyncio.sleep(0.01)
+        except Exception:
+            await asyncio.sleep(0.1)
+        else:
+            published = True
+    await _observe_launch(launch_task)
+    if not published:
+        with contextlib.suppress(Exception):
+            await _publish_accepted_task(manager, execution_id)
+
+
+def _defer_publication_during_launch(
+    manager: ExecutionManager,
+    launch_task: asyncio.Task[dict[str, Any]],
+    execution_id: str,
+) -> None:
+    _track_runtime_followup(
+        asyncio.create_task(
+            _publish_during_launch(manager, launch_task, execution_id)
+        )
+    )
+
+
+async def _preserve_interrupted_launch(
+    manager: ExecutionManager,
+    launch_task: asyncio.Task[dict[str, Any]],
+    execution_id: str,
+) -> None:
+    if await _publish_for_transport_loss(manager, execution_id):
+        _defer_launch_observation(launch_task)
+        return
+    _defer_publication_during_launch(manager, launch_task, execution_id)
+
+
+async def _publish_execution(
+    manager: ExecutionManager, execution_id: str
+) -> None:
+    with contextlib.suppress(Exception):
+        await _publish_accepted_task(manager, execution_id)
+
+
+def _defer_execution_publication(
+    manager: ExecutionManager, execution_id: str
+) -> None:
+    _track_runtime_followup(
+        asyncio.create_task(_publish_execution(manager, execution_id))
+    )
+
+
+async def _wait_for_acceptance(
+    manager: ExecutionManager,
+    launch_task: asyncio.Task[dict[str, Any]],
+    execution_id: str,
+    *,
+    deadline: float,
+) -> dict[str, Any]:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                "Code Mode response deadline expired before acceptance"
+            ) from None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(manager.store.get, execution_id),
+                timeout=remaining,
+            )
+        except KeyError:
+            if launch_task.done():
+                return await launch_task
+            await asyncio.sleep(min(0.01, remaining))
+
+
 def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
     return runtime_read_execution_result(executions, execution_id)
 
@@ -480,33 +596,25 @@ def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
 async def _wait_for_execution(
     execution_id: str, *, wait_deadline: float
 ) -> dict[str, Any]:
-    try:
-        while True:
-            record = await asyncio.to_thread(executions.store.get, execution_id)
-            if record["state"] not in {"accepted", "running"}:
-                return await asyncio.to_thread(
-                    _code_mode_execution_result, execution_id
-                )
-            remaining = wait_deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(0.2, remaining))
-
-        status = await asyncio.to_thread(executions.status, execution_id)
-        if status["state"] not in {"accepted", "running"}:
+    while True:
+        record = await asyncio.to_thread(executions.store.get, execution_id)
+        if record["state"] not in {"accepted", "running"}:
             return await asyncio.to_thread(_code_mode_execution_result, execution_id)
-        task = await asyncio.to_thread(executions.publish, execution_id)
-        return {
-            "kind": "task",
-            "execution_id": execution_id,
-            "label": task["label"],
-            "state": task["state"],
-        }
-    except asyncio.CancelledError:
-        # Transport loss is not cancellation. Finish the short SQLite publication
-        # before propagating cancellation to the MCP request owner.
-        await asyncio.shield(asyncio.to_thread(executions.publish, execution_id))
-        raise
+        remaining = wait_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.2, remaining))
+
+    status = await asyncio.to_thread(executions.status, execution_id)
+    if status["state"] not in {"accepted", "running"}:
+        return await asyncio.to_thread(_code_mode_execution_result, execution_id)
+    task = await _publish_accepted_task(executions, execution_id)
+    return {
+        "kind": "task",
+        "execution_id": execution_id,
+        "label": task["label"],
+        "state": task["state"],
+    }
 
 
 ExecutionState = Literal[
@@ -557,6 +665,52 @@ def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
+def _code_mode_delivery_error(
+    execution_id: str,
+    label: str,
+    *,
+    code: str,
+    message: str,
+) -> CodeModeError:
+    return CodeModeError(
+        execution_id=execution_id,
+        label=label,
+        error=CodeModeErrorDetail(code=code, message=message),
+    )
+
+
+async def _code_mode_launch_error(
+    execution_id: str,
+    label: str,
+    exc: Exception,
+    *,
+    response_deadline: float,
+) -> CodeModeError:
+    remaining = response_deadline - time.monotonic()
+    if remaining <= 0:
+        raise exc from None
+    try:
+        record = await asyncio.wait_for(
+            asyncio.to_thread(executions.store.get, execution_id),
+            timeout=remaining,
+        )
+    except KeyError:
+        raise exc from None
+    except TimeoutError:
+        raise TimeoutError(
+            "Code Mode response deadline expired while shaping launch error"
+        ) from None
+    return CodeModeError(
+        execution_id=execution_id,
+        label=label,
+        error=CodeModeErrorDetail(
+            code="launch_interrupted",
+            message=str(exc) or "Code Mode Worker could not be launched.",
+            reason=str(record.get("reason") or "launch_interrupted"),
+        ),
+    )
+
+
 async def code_mode(
     *,
     label: str,
@@ -589,41 +743,140 @@ async def code_mode(
             publish=mode == "task",
         )
     )
-    try:
-        await asyncio.shield(launch_task)
-    except asyncio.CancelledError:
-        try:
-            await launch_task
-        except Exception:
-            with contextlib.suppress(Exception):
-                await asyncio.shield(
-                    asyncio.to_thread(executions.publish, execution_id)
-                )
-        else:
-            await asyncio.shield(asyncio.to_thread(executions.publish, execution_id))
-        finally:
-            raise
-    except Exception as exc:
-        try:
-            record = executions.store.get(execution_id)
-        except KeyError:
-            raise exc from None
-        return CodeModeError(
-            execution_id=execution_id,
-            label=clean_label,
-            error=CodeModeErrorDetail(
-                code="launch_interrupted",
-                message=str(exc) or "Code Mode Worker could not be launched.",
-                reason=str(record.get("reason") or "launch_interrupted"),
-            ),
-        )
 
     if mode == "task":
-        task = await asyncio.to_thread(executions.task, execution_id)
+        try:
+            task = await _wait_for_acceptance(
+                executions,
+                launch_task,
+                execution_id,
+                deadline=response_deadline,
+            )
+        except asyncio.CancelledError:
+            await _preserve_interrupted_launch(
+                executions, launch_task, execution_id
+            )
+            raise
+        except Exception as exc:
+            _defer_publication_during_launch(executions, launch_task, execution_id)
+            return await _code_mode_launch_error(
+                execution_id,
+                clean_label,
+                exc,
+                response_deadline=response_deadline,
+            )
+        _defer_launch_observation(launch_task)
         return CodeModeTask(
             execution_id=execution_id,
             label=clean_label,
             state=task["state"],
+        )
+
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(launch_task),
+            timeout=max(0.0, wait_deadline - time.monotonic()),
+        )
+    except asyncio.CancelledError:
+        await _preserve_interrupted_launch(executions, launch_task, execution_id)
+        raise
+    except TimeoutError:
+        launch_exception = (
+            launch_task.exception()
+            if launch_task.done() and not launch_task.cancelled()
+            else None
+        )
+        if isinstance(launch_exception, Exception):
+            return await _code_mode_launch_error(
+                execution_id,
+                clean_label,
+                launch_exception,
+                response_deadline=response_deadline,
+            )
+        if not launch_task.done():
+            try:
+                await _wait_for_acceptance(
+                    executions,
+                    launch_task,
+                    execution_id,
+                    deadline=response_deadline,
+                )
+            except asyncio.CancelledError:
+                await _preserve_interrupted_launch(
+                    executions, launch_task, execution_id
+                )
+                raise
+            except TimeoutError as exc:
+                launch_exception = (
+                    launch_task.exception()
+                    if launch_task.done() and not launch_task.cancelled()
+                    else None
+                )
+                if isinstance(launch_exception, Exception):
+                    return await _code_mode_launch_error(
+                        execution_id,
+                        clean_label,
+                        launch_exception,
+                        response_deadline=response_deadline,
+                    )
+                _defer_publication_during_launch(
+                    executions, launch_task, execution_id
+                )
+                raise TimeoutError(
+                    "Code Mode response deadline expired before acceptance"
+                ) from exc
+            except Exception as exc:
+                return await _code_mode_launch_error(
+                    execution_id,
+                    clean_label,
+                    exc,
+                    response_deadline=response_deadline,
+                )
+            try:
+                task = await asyncio.wait_for(
+                    _publish_accepted_task(executions, execution_id),
+                    timeout=max(0.0, response_deadline - time.monotonic()),
+                )
+            except asyncio.CancelledError:
+                await _preserve_interrupted_launch(
+                    executions, launch_task, execution_id
+                )
+                raise
+            except TimeoutError:
+                _defer_publication_during_launch(
+                    executions, launch_task, execution_id
+                )
+                return _code_mode_delivery_error(
+                    execution_id,
+                    clean_label,
+                    code="response_deadline_exceeded",
+                    message=(
+                        "Code Mode Execution was accepted, but Task publication "
+                        "did not finish before the response deadline."
+                    ),
+                )
+            except Exception as exc:
+                _defer_publication_during_launch(
+                    executions, launch_task, execution_id
+                )
+                return _code_mode_delivery_error(
+                    execution_id,
+                    clean_label,
+                    code="task_publication_failed",
+                    message=str(exc) or "Task publication failed.",
+                )
+            _defer_launch_observation(launch_task)
+            return CodeModeTask(
+                execution_id=execution_id,
+                label=clean_label,
+                state=task["state"],
+            )
+    except Exception as exc:
+        return await _code_mode_launch_error(
+            execution_id,
+            clean_label,
+            exc,
+            response_deadline=response_deadline,
         )
 
     remaining_response = max(0.0, response_deadline - time.monotonic())
@@ -632,14 +885,21 @@ async def code_mode(
             _wait_for_execution(execution_id, wait_deadline=wait_deadline),
             timeout=remaining_response,
         )
+    except asyncio.CancelledError:
+        if not await _publish_for_transport_loss(executions, execution_id):
+            _defer_execution_publication(executions, execution_id)
+        raise
     except TimeoutError:
-        task = await asyncio.to_thread(executions.publish, execution_id)
-        raw = {
-            "kind": "task",
-            "execution_id": execution_id,
-            "label": task["label"],
-            "state": task["state"],
-        }
+        _defer_execution_publication(executions, execution_id)
+        return _code_mode_delivery_error(
+            execution_id,
+            clean_label,
+            code="response_deadline_exceeded",
+            message=(
+                "Code Mode Execution was accepted, but response shaping did not "
+                "finish before the response deadline."
+            ),
+        )
     return _code_mode_outcome(raw)
 
 

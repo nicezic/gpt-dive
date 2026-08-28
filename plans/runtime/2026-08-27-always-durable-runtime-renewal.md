@@ -47,12 +47,12 @@ ADR의 delivery order를 따른다. 순서에 의미가 있다 — D9(deadline �
 신규:
 
 ```text
-src/gpt_dive/execution_store.py      447  control-plane SSOT, 상태 전이, claim CAS
-src/gpt_dive/execution_worker.py     300  worker 진입점, accepted→running CAS
-src/gpt_dive/command_runtime.py      234  run_command (bounded spool, TERM→KILL→reap)
-src/gpt_dive/execution_context.py     55  잔여 budget, min(정책, 잔여) 계산
-tests/test_execution_store.py        115
-tests/test_always_durable_code_mode.py 145
+src/gpt_dive/execution_store.py       control-plane SSOT, 상태 전이, claim CAS
+src/gpt_dive/execution_worker.py      worker 진입점, accepted→running CAS
+src/gpt_dive/command_runtime.py       run_command (bounded spool, TERM→KILL→reap)
+src/gpt_dive/execution_context.py     잔여 budget, min(정책, 잔여) 계산
+tests/test_execution_store.py
+tests/test_always_durable_code_mode.py
 ```
 
 삭제:
@@ -67,45 +67,46 @@ docs/runtime/adr/0001,0002,0003          전부 proposed 였으므로 supersede 
 대규모 수정:
 
 ```text
-src/gpt_dive/app.py                  748  tool 3개 surface, discriminated output
-src/gpt_dive/execution_manager.py    831  launch 순서, artifact 전용화
-src/gpt_dive/task_runtime.py         391  task_id 제거, projection 축소
-src/gpt_dive/code_capabilities.py     64  18 → 16, BACKGROUND·timeout 인자 삭제
-src/gpt_dive/conduit/runtime.py      190  execution_id 단일 handle 반영
-tests/test_code_runtime.py          1428  구 계약 assertion 대거 제거
+src/gpt_dive/app.py                   tool 3개 surface, discriminated output
+src/gpt_dive/execution_manager.py     launch 순서, artifact 전용화
+src/gpt_dive/task_runtime.py          task_id 제거, projection 축소
+src/gpt_dive/code_capabilities.py     18 → 16, BACKGROUND·timeout 인자 삭제
+src/gpt_dive/conduit/runtime.py       execution_id 단일 handle 반영
+tests/test_code_runtime.py            구 계약 assertion 대거 제거
 ```
 
-전체 39 tracked files, +2739 / -5579. **삭제가 순증의 두 배**인 것이 이 리뉴얼의 성격을 요약한다.
+정확한 변경 파일과 line 통계는 `git diff --stat main...HEAD`를 권위로 삼는다. 이 문서는 변경 목적과 수용 근거만 유지한다.
 
 ## 수용 체크리스트
 
-구현이 ADR을 실제로 지키는지 확인할 항목. 2026-08-28 검증 완료 (opus5).
+구현이 ADR을 실제로 지키는지 확인할 항목. 2026-08-28 로컬 검증 완료. Live acceptance는 아래 남은 작업으로 분리한다.
 
-- [x] `accepted` commit이 worker spawn보다 **먼저** 일어난다 — `execution_manager.py` L116 commit → L137 spawn
-- [x] worker가 `accepted → running` CAS에 성공한 뒤에만 사용자 코드를 실행한다 — `execution_worker.py` L172 CAS → L184 실패 시 `return 0`
-- [x] CAS 실패 시 사용자 코드 없이 종료한다 — `execution_worker.py` L184
-- [x] stale `accepted` → `failed(reason=launch_interrupted)`, 자동 재실행 없음 — `execution_manager.py` L139, 재시도 `grep` 0건
-- [x] backing truth 소실 → `lost`, 추측·복원 없음 — `execution_store.py` L10 상태 정의
-- [x] `task_id`가 코드·스키마·응답 어디에도 없다 — `grep -r task_id src/ tests/` 0건
+- [x] `accepted` commit이 worker spawn보다 **먼저** 일어난다 — `ExecutionManager.start()`의 `store.create()` → `_spawn_worker()` 순서
+- [x] worker가 `accepted → running` CAS에 성공한 뒤에만 사용자 코드를 실행한다 — `execution_worker.run_execution()`의 `store.claim()` 경계
+- [x] CAS 실패 시 사용자 코드 없이 종료한다 — `test_rejected_worker_claim_cannot_run_user_code`
+- [x] stale `accepted` → `failed(reason=launch_interrupted)`, 자동 재실행 없음 — `test_stale_unclaimed_systemd_execution_fails_even_while_unit_is_active`
+- [x] backing truth 소실 → `lost`, 추측·복원 없음 — `ExecutionManager._refresh()` / `ExecutionStore.mark_lost()`
+- [x] `task_id`가 코드·스키마·응답 어디에도 없다 — `rg -n task_id src/gpt_dive` 결과 없음
 - [x] filesystem이 lifecycle 판단 근거로 쓰이지 않는다 (artifact 전용) — SQLite가 SSOT, `meta.json`은 읽기 전용
-- [x] MCP tool이 정확히 `bootstrap` / `code_mode` / `task` 3개 — `app.py` L75-L77 tool 등록
-- [x] `code_mode` 출력이 `kind` discriminated union이고 envelope가 unknown property를 거부한다 — `app.py` L54 `extra="forbid"`, L198-L227 union 정의
-- [x] `label`이 required이며 Execution 메타데이터로 저장된다 — `app.py` L167 Field(required), `execution_manager.py` L106 기록
-- [x] inline 완료 시 Task가 생성되지 않는다 — `task_runtime.py` L163 `completion_ms is not None` 조건
-- [x] inline wait 만료 시 Execution이 **계속 실행**되고 Task가 publish된다 — `task_runtime.py` L161-L164, worker는 자율 실행
-- [x] transport 절단이 취소로 해석되지 않는다 — 취소는 `task(action="cancel")` 경로만
+- [x] MCP tool이 정확히 `bootstrap` / `code_mode` / `task` 3개 — `app.py`의 세 `@mcp.tool` 등록
+- [x] `code_mode` 출력이 `kind` discriminated union이고 envelope가 unknown property를 거부한다 — `CodeModeOutcome` / `_ClosedModel`
+- [x] `label`이 required이며 Execution 메타데이터로 저장된다 — `_mcp_code_mode()` / `ExecutionStore.create()`
+- [x] inline 완료 시 Task가 생성되지 않는다 — `test_inline_completion_keeps_execution_unpublished`
+- [x] inline wait 만료 시 Execution이 **계속 실행**되고 Task가 publish된다 — `test_inline_wait_expiry_publishes_same_continuing_execution`
+- [x] stalled launch도 100초 inline cutoff에 accepted Execution을 Task로 공개하고, 110초 response deadline 뒤에도 구조화된 결과와 후속 publication을 보장한다 — inline cutoff / post-acceptance response-timeout 회귀 테스트
+- [x] transport 절단과 ambient Worker signal이 명시적 취소로 기록되지 않는다 — transport·signal 회귀 테스트
 - [x] 모델이 지정하는 timeout 인자가 어떤 capability에도 없다 — `code_capabilities.py` 전수 조사, timeout 인자 0건
-- [x] child budget이 `min(capability 정책, 잔여 work budget)`으로 계산된다 — `execution_context.py` L70 `child_budget()` 구현
-- [x] `deadline_remaining()`이 읽기 전용이다 — `execution_context.py` L63-L64 property 반환만
-- [x] capability 16개, `BACKGROUND` 없음, `task_*` 4개는 top-level로 이관됨 — `code_capabilities.py` L26-L60 수량 일치
-- [x] `run_command`가 실행 중 출력을 bounded spool한다 (전량 메모리 적재 없음) — `command_runtime.py` L44-L60 `_drain_stream()` 64KiB 청크
-- [x] `run_command`가 `.strip()`을 적용하지 않는다 — `command_runtime.py` L92 `_read_bounded_text()` 없음
-- [x] `run_command`가 process group을 TERM → KILL → reap으로 종료한다 — `worker_subprocess.py` L66-L98 `run_bounded_worker()` 재사용
-- [x] TrackedTasks가 변화 시에만 emit되고 byte 상한이 있다 — `app.py` L368-L374 revision 비교, `task_runtime.py` L11 `TRACKED_TASKS_LIMIT`
-- [x] `completed` Task가 명시적 dismiss 전까지 남는다 — `task_runtime.py` L108-L113 dismiss 분기
-- [x] 3600s 도달 시 부분 출력이 보존되고 자동 재시도가 없다 — `execution_manager.py` L28 `ABSOLUTE_LIMIT_SECONDS`, `execution_worker.py` L233 partial capture
+- [x] child budget이 `min(capability 정책, 잔여 work budget)`으로 계산된다 — `ExecutionContext.child_budget()`
+- [x] `deadline_remaining()`이 읽기 전용이다 — `build_code_registry()`가 `ExecutionContext.remaining_seconds()`만 노출
+- [x] capability 16개, `BACKGROUND` 없음, `task_*` 4개는 top-level로 이관됨 — registry/schema 테스트
+- [x] `run_command`가 실행 중 출력을 bounded spool한다 (전량 메모리 적재 없음) — `_drain_stream()`의 64KiB 청크와 stream별 byte 상한
+- [x] `run_command`가 `.strip()`을 적용하지 않는다 — whitespace 보존 회귀 테스트
+- [x] `run_command`가 process group을 TERM → KILL → reap으로 종료한다 — cancellation/deadline 회귀 테스트
+- [x] TrackedTasks가 결정적 limit/order와 byte 상한을 지키고 변화 시에만 emit된다 — middleware/projection 회귀 테스트
+- [x] `completed` Task가 명시적 dismiss 전까지 남는다 — task lifecycle 회귀 테스트
+- [x] 3600s 경계가 부분 출력 보존·무재시도·단일 bounded cleanup을 지킨다 — work cutoff 및 cleanup reserve 회귀 테스트
 
-전체 스위트: **191 passed** (2026-08-28). CAS는 read-then-write가 아닌 `WHERE state='accepted' AND cancel_requested=0`의 원자적 조건 UPDATE (`execution_store.py` L249-L258).
+전체 스위트: **197 passed** (2026-08-28). Ruff, Pyright, `git diff --check main`도 통과했다. CAS는 `ExecutionStore.claim()`의 조건부 `UPDATE ... WHERE state='accepted' AND cancel_requested=0`이 소유한다.
 
 ## 범위 밖
 
@@ -119,6 +120,6 @@ D11에 따라 이번에 손대지 않는다. 근거와 상세는 설계 세션 �
 
 ## 남은 작업
 
-- [ ] 구현이 수용 체크리스트를 만족하는지 검증
+- [x] 구현이 수용 체크리스트와 repository gate를 만족하는지 검증
 - [ ] 서비스 재시작 후 **새 ChatGPT Web 세션**에서 스키마 수용 확인 (스키마 변경은 기존 세션에 반영되지 않는다)
 - [ ] live acceptance 증거 기록

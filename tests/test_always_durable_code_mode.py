@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -122,24 +123,137 @@ def test_transport_cancellation_publishes_instead_of_cancelling_execution(
     asyncio.run(scenario())
 
 
-def test_immediate_task_mode_uses_execution_id_as_handle(
+def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    release_launch = threading.Event()
+
+    def stalled_spawn(
+        _execution_id: str, *, backend: str, unit: str | None
+    ) -> None:
+        assert backend == "popen"
+        assert unit is None
+        release_launch.wait(timeout=0.3)
+
+    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.02)
+    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        started = time.monotonic()
+        outcome = await app.code_mode(
+            label="bounded launch",
+            code="1 + 2",
+            cwd=str(tmp_path),
+        )
+        assert time.monotonic() - started < 0.12
+
+        assert isinstance(outcome, app.CodeModeTask)
+        record = manager.store.get(outcome.execution_id)
+        assert record["state"] == "accepted"
+        assert record["published_at"] is not None
+        release_launch.set()
+
+    asyncio.run(scenario())
+
+
+def test_post_acceptance_response_timeout_returns_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    monkeypatch.setattr(manager, "_spawn_worker", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.08)
+
+    async def stalled_wait(
+        _execution_id: str, *, wait_deadline: float
+    ) -> dict[str, object]:
+        assert wait_deadline > 0
+        await asyncio.sleep(0.2)
+        return {}
+
+    monkeypatch.setattr(app, "_wait_for_execution", stalled_wait)
+
+    async def scenario() -> None:
+        started = time.monotonic()
+        outcome = await app.code_mode(
+            label="bounded response shaping",
+            code="1 + 2",
+            cwd=str(tmp_path),
+        )
+        assert time.monotonic() - started < 0.16
+
+        assert isinstance(outcome, app.CodeModeError)
+        assert outcome.error.code == "response_deadline_exceeded"
+        assert manager.store.get(outcome.execution_id)["state"] == "accepted"
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            if manager.store.get(outcome.execution_id)["published_at"] is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert manager.store.get_task(outcome.execution_id)["execution_id"] == (
+            outcome.execution_id
+        )
+
+    asyncio.run(scenario())
+
+
+def test_launcher_timeout_is_reported_as_launch_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
 
+    def timeout_after_acceptance(
+        _execution_id: str, *, backend: str, unit: str | None
+    ) -> None:
+        assert backend == "popen"
+        assert unit is None
+        raise TimeoutError("launcher response timed out")
+
+    monkeypatch.setattr(manager, "_spawn_worker", timeout_after_acceptance)
+
+    outcome = asyncio.run(
+        app.code_mode(label="launch timeout", code="1 + 2", cwd=str(tmp_path))
+    )
+
+    assert isinstance(outcome, app.CodeModeError)
+    assert outcome.error.code == "launch_interrupted"
+    assert outcome.error.message == "launcher response timed out"
+    record = manager.store.get(outcome.execution_id)
+    assert record["state"] == "failed"
+    assert record["reason"] == "launch_interrupted"
+
+
+def test_immediate_task_mode_uses_execution_id_as_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    release_launch = threading.Event()
+
+    def stalled_spawn(
+        _execution_id: str, *, backend: str, unit: str | None
+    ) -> None:
+        assert backend == "popen"
+        assert unit is None
+        release_launch.wait(timeout=0.2)
+
+    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.15)
+
     async def scenario() -> None:
+        started = time.monotonic()
         outcome = await app.code_mode(
             label="immediate awareness",
-            code="await run_command('sleep 5')",
+            code="1 + 2",
             cwd=str(tmp_path),
             mode="task",
         )
+        assert time.monotonic() - started < 0.1
         assert isinstance(outcome, app.CodeModeTask)
         assert manager.store.get_task(outcome.execution_id)["execution_id"] == (
             outcome.execution_id
         )
-        await app.task(
-            app.TaskCancelRequest(action="cancel", execution_id=outcome.execution_id)
-        )
+        release_launch.set()
 
     asyncio.run(scenario())

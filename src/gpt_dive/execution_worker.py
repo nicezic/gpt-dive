@@ -186,14 +186,14 @@ def run_execution(store: ExecutionStore, execution_id: str) -> int:
     record = store.get(execution_id)
     stderr_path = Path(str(record["stderr_path"]))
     proc: subprocess.Popen[bytes] | None = None
-    cancellation_signal = False
+    termination_signal = False
 
-    def request_cancellation(_signum: int, _frame: object) -> None:
-        nonlocal cancellation_signal
-        cancellation_signal = True
+    def request_termination(_signum: int, _frame: object) -> None:
+        nonlocal termination_signal
+        termination_signal = True
 
-    signal.signal(signal.SIGTERM, request_cancellation)
-    signal.signal(signal.SIGINT, request_cancellation)
+    signal.signal(signal.SIGTERM, request_termination)
+    signal.signal(signal.SIGINT, request_termination)
 
     try:
         request = _load_request(store, execution_id)
@@ -233,21 +233,21 @@ def run_execution(store: ExecutionStore, execution_id: str) -> int:
             )
             work_deadline = time.monotonic() + remaining_work
             deadline_exceeded = False
+            cleanup_confirmed: bool | None = None
             while proc.poll() is None:
                 current = store.get(execution_id)
-                if cancellation_signal or current["cancel_requested"]:
-                    if not current["cancel_requested"]:
-                        store.request_cancel(execution_id)
-                    _terminate_child(proc)
+                if termination_signal or current["cancel_requested"]:
+                    cleanup_confirmed = _terminate_child(proc)
                     break
                 if time.monotonic() >= work_deadline:
                     deadline_exceeded = True
-                    _terminate_child(proc)
+                    cleanup_confirmed = _terminate_child(proc)
                     break
                 time.sleep(_POLL_SECONDS)
 
             returncode = proc.poll()
-            cleanup_confirmed = _terminate_child(proc)
+            if cleanup_confirmed is None:
+                cleanup_confirmed = _terminate_child(proc)
             returncode = proc.poll()
 
         if not cleanup_confirmed:

@@ -26,6 +26,11 @@ _DENIED_ENV_PATTERNS = (
 )
 
 
+def _open_private_binary(path: Path) -> BinaryIO:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    return os.fdopen(descriptor, "wb")
+
+
 def _sanitized_environment() -> dict[str, str]:
     environment = {
         key: value
@@ -49,8 +54,7 @@ async def _drain_stream(
 ) -> bool:
     written = 0
     overflow = False
-    with path.open("wb") as handle:
-        path.chmod(0o600)
+    with _open_private_binary(path) as handle:
         while chunk := await stream.read(_DRAIN_CHUNK_BYTES):
             remaining = max_bytes - written
             if remaining > 0:
@@ -109,12 +113,11 @@ def _copy_stream(source: Path, target: BinaryIO) -> None:
 
 
 def _write_spill(stdout_path: Path, stderr_path: Path, spill_path: Path) -> None:
-    with spill_path.open("wb") as target:
+    with _open_private_binary(spill_path) as target:
         target.write(b"===== stdout =====\n")
         _copy_stream(stdout_path, target)
         target.write(b"\n===== stderr =====\n")
         _copy_stream(stderr_path, target)
-    spill_path.chmod(0o600)
 
 
 async def run_command(
@@ -139,8 +142,6 @@ async def run_command(
 
     stdout_path = context.spill_path(prefix="run-command-stdout")
     stderr_path = context.spill_path(prefix="run-command-stderr")
-    stdout_path.chmod(0o600)
-    stderr_path.chmod(0o600)
     environment = _sanitized_environment()
     runtime_path = environment["PATH"]
     guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"

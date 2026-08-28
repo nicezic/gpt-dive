@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from gpt_dive.execution_store import ExecutionStore
+import gpt_dive.execution_worker as execution_worker_module
+from gpt_dive.execution_store import ExecutionStore, parse_time
 from gpt_dive.execution_worker import run_execution
 
 
@@ -92,6 +94,53 @@ def test_rejected_worker_claim_cannot_run_user_code(
     assert not marker.exists()
     assert not request_path.exists()
     assert store.get("a" * 32)["request_path"] == ""
+
+
+def test_deadline_cleanup_consumes_the_absolute_reserve_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ExecutionStore(tmp_path / "runtime.sqlite3")
+    created = create_execution(store, tmp_path)
+    Path(str(created["request_path"])).write_text(
+        json.dumps({"v": 1, "command": "sleep 30", "cwd": str(tmp_path)})
+    )
+
+    class UnreapableProcess:
+        pid = 4242
+        returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    process = UnreapableProcess()
+    cleanup_calls: list[int] = []
+
+    def fail_cleanup(candidate: UnreapableProcess) -> bool:
+        cleanup_calls.append(candidate.pid)
+        candidate.returncode = -9
+        return False
+
+    work_deadline = parse_time(str(created["work_deadline_at"]))
+    monkeypatch.setattr(execution_worker_module, "_become_subreaper", lambda: None)
+    monkeypatch.setattr(execution_worker_module, "_proc_start_ticks", lambda _pid: 1)
+    monkeypatch.setattr(execution_worker_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        execution_worker_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(execution_worker_module, "_terminate_child", fail_cleanup)
+    monkeypatch.setattr(
+        execution_worker_module,
+        "utc_now",
+        lambda: work_deadline + timedelta(seconds=1),
+    )
+
+    assert run_execution(store, "a" * 32) == 1
+    assert cleanup_calls == [process.pid]
+    terminal = store.get("a" * 32)
+    assert terminal["state"] == "lost"
+    assert terminal["reason"] == "cleanup_unconfirmed"
 
 
 def test_cancel_request_wins_a_concurrent_finish_transition(tmp_path: Path) -> None:

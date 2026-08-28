@@ -332,15 +332,20 @@ class ExecutionManager:
             return record
 
         if state == "accepted":
-            if self._execution_alive(record):
-                return record
             age = utc_now() - parse_time(str(record["accepted_at"]))
             if age.total_seconds() >= _ACCEPTED_LAUNCH_GRACE_SECONDS:
                 failed = self.store.fail_accepted(
                     str(record["execution_id"]), reason="launch_interrupted"
                 )
-                self._discard_request_artifacts(failed)
+                if (
+                    failed["state"] == "failed"
+                    and failed["reason"] == "launch_interrupted"
+                ):
+                    self._signal_execution(failed)
+                    self._discard_request_artifacts(failed)
                 return failed
+            if self._execution_alive(record):
+                return record
             return record
 
         outcome_path = Path(str(record["outcome_path"]))

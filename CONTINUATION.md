@@ -1,6 +1,6 @@
 # GPT Dive — 현재 Continuation
 
-> 갱신: 2026-08-28  
+> 갱신: 2026-08-28
 > 용도: Runtime renewal을 새 세션에서 이어가기 위한 handoff. 설계 근거의 권위는 `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`에 있다.
 
 ## 현재 목표
@@ -47,10 +47,11 @@ filesystem            = 보존 artifact 전용
 - awaited `run_command` 하나를 복원했다. guard-bin, secret 환경변수 제거, bounded live spool, 8,000자 context 출력, spill, TERM/KILL/reap을 적용한다.
 - `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `repo_search`, `council_emit`은 Code Mode 내부에 유지했다. Child budget은 Runtime이 공급한다.
 - Conduit를 같은 Execution/Task row와 단일 `execution_id` 위로 옮겼다. 현재 action은 `start/sync/get/cancel/dismiss/emit`이다.
+- 독립 리뷰 후 private spool 생성, bounded TrackedTasks 조회, launch 중 inline cutoff·response reserve·accepted Task publication, stale-accepted recovery, signal 의미, 단일 cleanup reserve를 회귀 테스트와 함께 보강했다.
 
 ## 로컬 검증
 
-- 전체 pytest: `191 passed`
+- 전체 pytest: `197 passed`
 - Ruff: 통과
 - Pyright: 통과
 - `git diff --check`: 통과

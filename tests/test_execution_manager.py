@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+import gpt_dive.execution_manager as execution_manager_module
 from gpt_dive.execution_manager import ExecutionManager
+from gpt_dive.execution_store import parse_time
 
 
 def popen_manager(
@@ -80,6 +84,28 @@ def test_work_cutoff_is_failed_with_deadline_reason(tmp_path: Path) -> None:
 
     assert terminal["state"] == "failed"
     assert terminal["reason"] == "deadline_exceeded"
+
+
+def test_ambient_worker_signal_is_not_recorded_as_explicit_cancellation(
+    tmp_path: Path,
+) -> None:
+    manager = popen_manager(tmp_path / "executions")
+    started = manager.start("sleep 30", label="ambient signal", publish=True)
+    execution_id = str(started["execution_id"])
+
+    deadline = time.monotonic() + 2
+    record = manager.store.get(execution_id)
+    while record["child_pid"] is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+        record = manager.store.get(execution_id)
+
+    assert record["child_pid"] is not None
+    os.kill(int(record["worker_pid"]), signal.SIGTERM)
+    terminal = wait_terminal(manager, execution_id)
+
+    assert terminal["cancel_requested"] is False
+    assert terminal["state"] == "failed"
+    assert terminal["reason"] != "cancelled"
 
 
 def test_normal_completion_kills_daemonized_descendants_in_popen_backend(
@@ -207,3 +233,51 @@ def test_spawn_error_before_claim_fails_closed_and_discards_requests(
     assert record["reason"] == "launch_interrupted"
     assert record["request_path"] == ""
     assert not (Path(str(record["artifact_dir"])) / "input.json").exists()
+
+
+def test_stale_unclaimed_systemd_execution_fails_even_while_unit_is_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = popen_manager(tmp_path / "executions")
+    execution_id = "c" * 32
+    execution_dir = manager.root / execution_id
+    execution_dir.mkdir()
+    request_path = execution_dir / "request.json"
+    request_path.write_text("{}")
+    created = manager.store.create(
+        execution_id=execution_id,
+        kind="shell",
+        label="stale systemd launch",
+        cwd=str(tmp_path),
+        backend="systemd",
+        systemd_unit=f"gpt-dive-execution-{execution_id}.service",
+        work_timeout_seconds=5,
+        cleanup_timeout_seconds=2,
+        request_path=request_path,
+        artifact_dir=execution_dir,
+        stdout_path=execution_dir / "stdout.log",
+        stderr_path=execution_dir / "stderr.log",
+        outcome_path=execution_dir / "outcome.json",
+    )
+    accepted_at = parse_time(str(created["accepted_at"]))
+    signalled: list[str] = []
+    monkeypatch.setattr(manager, "_systemd_unit_running", lambda _unit: True)
+    monkeypatch.setattr(
+        manager,
+        "_signal_execution",
+        lambda record: signalled.append(str(record["execution_id"])),
+    )
+    monkeypatch.setattr(
+        execution_manager_module,
+        "utc_now",
+        lambda: accepted_at + timedelta(seconds=31),
+    )
+
+    terminal = manager.status(execution_id)
+    stored = manager.store.get(execution_id)
+
+    assert terminal["state"] == "failed"
+    assert terminal["reason"] == "launch_interrupted"
+    assert stored["request_path"] == ""
+    assert not request_path.exists()
+    assert signalled == [execution_id]
