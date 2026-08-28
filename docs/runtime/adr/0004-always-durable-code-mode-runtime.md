@@ -193,8 +193,8 @@ t=0       accepted Execution 존재
 t=100s    auto 모드 inline wait 종료; 미전달이면 publish
 t=110s    inline MCP 응답 deadline
 t≈120s    관측된 외부 tunnel 경계 (Runtime 정책 아님)
-t=3590s   Execution work cutoff; bounded 종료·drain 시작
-t=3600s   Execution 절대 수명 종료
+t=43190s  Execution work cutoff; bounded 종료·drain 시작
+t=43200s  Execution 절대 수명 종료 (12시간)
 ```
 
 각 work/wait cutoff 이후의 10초는 bounded한 runtime bookkeeping·cleanup을 위한 **reserve**이며, 사용자 코드에 주어지는 추가 시간이 아니다.
@@ -290,7 +290,7 @@ agent/model 4종은 그대로 유지한다. 내부 transport 통합은 **이번 
 
 ### 10. 장시간 작업의 명시적 위임은 Runtime 밖이다
 
-1시간 Runtime 상한을 의도적으로 초과하는 작업은 명시적 명령으로 **형제 user unit**에 위임할 수 있다.
+12시간 Runtime 상한을 의도적으로 초과하는 작업은 명시적 명령으로 **형제 user unit**에 위임할 수 있다.
 
 ```bash
 systemd-run --user --unit=gd-detached-<name> --collect \

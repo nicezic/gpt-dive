@@ -31,30 +31,29 @@ Web MCP tools
 └─ task({action: list|get|cancel|dismiss, execution_id?})
 
 Execution 1 → Task 0..1
-공개 identity          = execution_id
+공개 identity          = execution_id (6자리 URL-safe Base64)
 control-plane 권위     = SQLite runtime-v2.sqlite3
 filesystem            = 보존 artifact 전용
 ```
 
-모든 Code Mode 호출은 사용자 code보다 먼저 durable(응답 연결이 끊겨도 실행 소유권이 남는 상태)해진다. Worker는 원자적 `accepted → running` 전이를 이겨야만 code를 실행한다. Inline 전달은 100초, MCP 응답 처리는 110초, 사용자 작업은 3,590초, 정리를 포함한 절대 수명은 3,600초로 제한한다. Transport loss는 Task를 publish하며, 오직 명시적 `task(cancel)`만 실행을 취소한다.
+모든 Code Mode 호출은 사용자 code보다 먼저 durable(응답 연결이 끊겨도 실행 소유권이 남는 상태)해진다. Worker는 원자적 `accepted → running` 전이를 이겨야만 code를 실행한다. Inline 전달은 100초, MCP 응답 처리는 110초, 사용자 작업은 43,190초, 정리를 포함한 절대 수명은 43,200초(12시간)로 보장한다. Transport loss는 Task를 publish하며, 오직 명시적 `task(cancel)`만 실행을 취소한다.
 
 ## 반영된 source delta
 
-- `execution_store.py`, `execution_worker.py`, `execution_context.py`를 추가해 SQLite SSOT(Single Source of Truth, 단일 상태 권위), claim-before-code 경계, 상속 deadline, process-tree containment를 구현했다.
-- `ExecutionManager`를 accepted-row journal, 단일 ID, 고정 deadline, outcome 복구, 5일 retention 기준으로 재구성했다.
-- 공개 `code_mode`와 `task`를 strict typed contract로 교체했다. 알 수 없는 인자는 거부한다.
-- 내부 `task_list/task_collect/task_cancel/task_ack`, `BACKGROUND`, caller timeout, 기존 lifecycle action, `TaskStore`를 제거했다.
-- awaited `run_command` 하나를 복원했다. guard-bin, secret 환경변수 제거, bounded live spool, 8,000자 context 출력, spill, TERM/KILL/reap을 적용한다.
-- `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `repo_search`, `council_emit`은 Code Mode 내부에 유지했다. Child budget은 Runtime이 공급한다.
-- Conduit를 같은 Execution/Task row와 단일 `execution_id` 위로 옮겼다. 현재 action은 `start/sync/get/cancel/dismiss/emit`이다.
-- 독립 리뷰 후 private spool 생성, bounded TrackedTasks 조회, launch 중 inline cutoff·response reserve·accepted Task publication, stale-accepted recovery, signal 의미, 단일 cleanup reserve를 회귀 테스트와 함께 보강했다.
-- `/proc` PID identity를 공통 모듈로 모으고 worker cleanup interface를 공개했으며, `repo_search`도 process-group 단위 bounded worker 경로로 통일했다.
+- `execution_store.py`, `execution_worker.py`, `execution_context.py`를 통해 SQLite SSOT, claim-before-code 경계, 상속 deadline, process-tree containment를 확립했다.
+- Execution 절대 수명을 12시간(`43,200s`, work cutoff `43,190s`, cleanup `10s`)으로 확장하고, direct shell `run_command` 역시 12시간 budget을 완전 상속하도록 조정했다.
+- 공개 `execution_id`를 사람이 복사하고 기억하기 쉬운 6자리 URL-safe Base64(`secrets.token_urlsafe(4)`)로 경량화했다.
+- 미참조 데드 코드인 `m3_gbrain_replay.py`(-779줄) 및 관련 테스트(-1,138줄)를 제거하여 코드베이스를 슬림화했다.
+- 취약한 negative 문자열 assertion과 prompt index 단언을 선별 제거하고, subprocess 및 polling 슬립 간격을 단축해 테스트 스위트 속도를 최적화했다.
+- ExecutionManager를 accepted-row journal, 단일 ID, 고정 deadline, outcome 복구, 5일 retention 기준으로 안정화했다.
+- 공개 `code_mode`와 `task`를 strict typed contract로 관리하며, 알 수 없는 인자는 거부한다.
+- awaited `run_command` 하나를 제공하며, guard-bin, secret 환경변수 제거, bounded live spool, spill, TERM/KILL/reap을 적용한다.
 
 ## 로컬 검증
 
-- 전체 pytest: `200 passed`
-- Ruff: 통과
-- Pyright: 통과
+- 전체 pytest: `170 passed` (~8.7초)
+- Ruff: 통과 (0 errors)
+- Pyright: 통과 (0 errors)
 - `git diff --check`: 통과
 - Popen smoke: 정상 완료, 명시적 취소, deadline 실패, `setsid` descendant 정리 통과
 - 실제 `systemd --user` smoke: `accepted → completed` 및 출력 보존 통과
