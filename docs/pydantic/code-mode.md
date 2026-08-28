@@ -19,7 +19,7 @@ code_mode_worker
 fresh Monty runtime + fresh CallableRegistry
         │
         ▼
-16 capabilities
+15 capabilities
 ```
 
 Durability and Task publication are outside Monty. There are no Task lifecycle capabilities inside the registry.

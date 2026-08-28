@@ -19,7 +19,7 @@ SQLite Execution control plane ───────────────┐
 Worker claim CAS                         TrackedTasks
       │                                       │
       ▼                                       └─ get / cancel / dismiss
-Monty + 16 capabilities
+Monty + 15 capabilities
       │
       ▼
 local WSL2 + retained artifacts
@@ -172,7 +172,7 @@ src/gpt_dive/
 ├─ execution_context.py   inherited read-only work budget
 ├─ code_mode_worker.py    durable Monty worker envelope
 ├─ code_runtime.py        Monty runtime and capability registry
-├─ code_capabilities.py   16 Code Mode capabilities
+├─ code_capabilities.py   15 Code Mode capabilities
 ├─ command_runtime.py     awaited bounded run_command
 ├─ task_runtime.py        result normalization and TrackedTasks projection
 └─ conduit/               Runtime 위의 별도 conversation/event surface
