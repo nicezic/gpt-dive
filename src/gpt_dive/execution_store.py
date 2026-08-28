@@ -113,6 +113,9 @@ class ExecutionStore:
                 ON executions (state, updated_at)
                 """
             )
+            connection.execute(
+                "DELETE FROM executions WHERE length(execution_id) != 6"
+            )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> dict[str, Any]:
@@ -245,6 +248,7 @@ class ExecutionStore:
                 f"""
                 SELECT * FROM executions
                 WHERE published_at IS NOT NULL AND dismissed_at IS NULL
+                  AND length(execution_id) = 6
                 ORDER BY
                     CASE WHEN state IN ('accepted', 'running') THEN 0 ELSE 1 END,
                     published_at DESC,
