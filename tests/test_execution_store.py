@@ -28,7 +28,7 @@ def create_execution(
         cwd=str(root),
         backend="popen",
         systemd_unit=None,
-        work_timeout_seconds=3590,
+        work_timeout_seconds=43190,
         cleanup_timeout_seconds=10,
         request_path=artifact_dir / "request.json",
         artifact_dir=artifact_dir,

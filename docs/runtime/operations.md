@@ -126,7 +126,7 @@ call 실패
 │  └─ tunnel/session/stdio 경계; Runtime은 작업을 수락하지 못함
 ├─ Execution state = failed
 │  ├─ launch_interrupted  → Worker가 실행 권한을 얻지 못함
-│  ├─ deadline_exceeded   → 3590초 work cutoff
+│  ├─ deadline_exceeded   → 43190초 work cutoff (12h)
 │  ├─ worker_error        → stderr artifact 확인
 │  └─ exit_code_<n>       → stdout/stderr 확인
 ├─ Execution state = cancelled

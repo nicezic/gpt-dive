@@ -161,8 +161,8 @@ This bundle is distinct from the direct Code Mode registry. Both share lower sec
 outer Runtime
 ├─ 100s inline wait
 ├─ 110s MCP response deadline
-├─ 3590s work cutoff
-└─ 3600s absolute lifetime
+├─ 43190s work cutoff (12h - 10s)
+└─ 43200s absolute lifetime (12h)
 
 inner Monty
 ├─ cannot choose or extend these clocks

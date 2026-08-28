@@ -13,9 +13,9 @@ t=0       accepted Execution commit
 │          └─ 끝나지 않은 작업을 Task로 publish; 재시작하지 않음
 ├─ 110s   MCP response deadline
 │
-├─ 3590s  Execution work cutoff
+├─ 43190s Execution work cutoff (12h - 10s)
 │          └─ TERM → KILL → drain/reap
-└─ 3600s  absolute Execution lifetime
+└─ 43200s absolute Execution lifetime (12h)
 
 t≈120s    관찰된 외부 tunnel 경계
            └─ 외부 증거일 뿐 Runtime clock이 아님
@@ -42,8 +42,8 @@ mode=task
 모든 Execution은 `accepted` row가 commit될 때 고정 wall-clock timestamp를 받는다.
 
 ```text
-work_deadline_at     = accepted_at + 3590s
-absolute_deadline_at = accepted_at + 3600s
+work_deadline_at     = accepted_at + 43190s
+absolute_deadline_at = accepted_at + 43200s
 ```
 
 Work cutoff에 도달하면 Worker가 소유 process tree를 종료한다. Deadline expiry 표현은 하나다.
@@ -55,7 +55,7 @@ reason = deadline_exceeded
 
 `timed_out` lifecycle state나 caller-selected short/long tier는 없다. Cleanup이 성공하면 그 시점까지의 stdout/stderr를 보존한다.
 
-Systemd backend는 transient unit에 `RuntimeMaxSec=3600s`와 `TimeoutStopSec=10s`도 적용한다. Popen backend는 Worker의 같은 application clock과 subreaper 기반 descendant containment로 동등한 경계를 지킨다.
+Systemd backend는 transient unit에 `RuntimeMaxSec=43200s`와 `TimeoutStopSec=10s`도 적용한다. Popen backend는 Worker의 같은 application clock과 subreaper 기반 descendant containment로 동등한 경계를 지킨다.
 
 ## Child capability budget
 
@@ -74,7 +74,7 @@ effective child budget
 | `subagent_call` | 600초 |
 | `peer_review` | 600초 |
 | `m3_evidence` | 180초 |
-| `run_command` | 3,590초 |
+| `run_command` | 43,190초 |
 
 `deadline_remaining()`은 Monty code가 새 단계를 시작할 가치가 있는지 판단하도록 live read-only remainder를 제공한다. Deadline을 바꾸거나 capability timeout 인자로 되돌릴 수는 없다.
 
@@ -102,7 +102,7 @@ running but Worker/outcome no longer observable
 └─ replay/retry 없음
 ```
 
-Wall-clock deadline timestamp 덕분에 이미 spawn된 Worker는 새 3,590초가 아니라 남은 budget만 계산한다.
+Wall-clock deadline timestamp 덕분에 이미 spawn된 Worker는 새 43,190초가 아니라 남은 budget만 계산한다.
 
 ## Retention clock
 

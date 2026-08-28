@@ -30,7 +30,7 @@ class ExecutionContext:
 
     @classmethod
     def for_test(
-        cls, *, duration_seconds: float = 3590.0, artifact_dir: Path
+        cls, *, duration_seconds: float = 43190.0, artifact_dir: Path
     ) -> ExecutionContext:
         return cls(
             execution_id="test",

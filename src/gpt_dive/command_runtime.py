@@ -14,7 +14,7 @@ from .execution_context import ExecutionContext
 from .runtime_env import build_runtime_path
 from .worker_subprocess import terminate_and_reap
 
-_RUN_COMMAND_POLICY_SECONDS = 3590.0
+_RUN_COMMAND_POLICY_SECONDS = 43190.0
 _RUN_COMMAND_CLEANUP_RESERVE_SECONDS = 9.0
 _SPOOL_BYTES_PER_STREAM = 8 * 1024 * 1024
 _CONTEXT_CHARS = 8000

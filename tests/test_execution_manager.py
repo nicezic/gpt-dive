@@ -10,7 +10,12 @@ from pathlib import Path
 import pytest
 
 import gpt_dive.execution_manager as execution_manager_module
-from gpt_dive.execution_manager import ExecutionManager
+from gpt_dive.command_runtime import _RUN_COMMAND_POLICY_SECONDS
+from gpt_dive.execution_manager import (
+    DEFAULT_CLEANUP_TIMEOUT_SECONDS,
+    DEFAULT_WORK_TIMEOUT_SECONDS,
+    ExecutionManager,
+)
 from gpt_dive.execution_store import parse_time
 
 
@@ -281,3 +286,15 @@ def test_stale_unclaimed_systemd_execution_fails_even_while_unit_is_active(
     assert stored["request_path"] == ""
     assert not request_path.exists()
     assert signalled == [execution_id]
+
+
+def test_default_execution_manager_timeout_constants(tmp_path: Path) -> None:
+    assert DEFAULT_WORK_TIMEOUT_SECONDS == 43190.0
+    assert DEFAULT_CLEANUP_TIMEOUT_SECONDS == 10.0
+    assert _RUN_COMMAND_POLICY_SECONDS == 43190.0
+    assert DEFAULT_WORK_TIMEOUT_SECONDS + DEFAULT_CLEANUP_TIMEOUT_SECONDS == 43200.0
+
+    manager = ExecutionManager(tmp_path / "executions")
+    assert manager.work_timeout_seconds == 43190.0
+    assert manager.cleanup_timeout_seconds == 10.0
+
