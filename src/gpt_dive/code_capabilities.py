@@ -9,9 +9,12 @@ from pydantic_ai_harness import FileSystem
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
 from .code_runtime import CallableRegistry, MontyCodeRuntime
-from .command_runtime import run_command as run_runtime_command
+from .command_runtime import (
+    child_budget,
+    remaining_seconds,
+    run_command as run_runtime_command,
+)
 from .council import emit_sol_response
-from .execution_context import ExecutionContext
 from .filesystem_policy import harness_denied_patterns
 from .model_call import invoke_model_call
 from .repo_search import search_repo
@@ -44,7 +47,7 @@ def reject_broad_search_root(path: Path, *, operation: str) -> None:
 def build_code_registry(
     default_cwd: str | None,
     *,
-    execution_context: ExecutionContext,
+    record: dict[str, object],
 ) -> CallableRegistry:
     registry = CallableRegistry()
     effective_cwd = (
@@ -137,7 +140,7 @@ def build_code_registry(
         return await invoke_agy_worker(
             task=task,
             model=model,
-            timeout=execution_context.child_budget(_AGY_WORKER_POLICY_SECONDS),
+            timeout=child_budget(record, _AGY_WORKER_POLICY_SECONDS),
             workspace_dir=cwd if cwd is not None else default_cwd,
             conversation_id=conversation_id,
         )
@@ -157,7 +160,7 @@ def build_code_registry(
         return await invoke_subagent(
             model=model,
             task=task,
-            timeout=execution_context.child_budget(_SUBAGENT_POLICY_SECONDS),
+            timeout=child_budget(record, _SUBAGENT_POLICY_SECONDS),
             output_tokens_limit=output_tokens_limit,
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
@@ -174,7 +177,7 @@ def build_code_registry(
             provider=provider,
             model=model,
             prompt=prompt,
-            timeout=execution_context.child_budget(_PEER_REVIEW_POLICY_SECONDS),
+            timeout=child_budget(record, _PEER_REVIEW_POLICY_SECONDS),
             peer_review=True,
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
@@ -189,12 +192,12 @@ def build_code_registry(
         return await run_runtime_command(
             command,
             cwd=str(effective_cwd),
-            context=execution_context,
+            record=record,
         )
 
     def deadline_remaining() -> float:
         """Return the current read-only Execution work budget in seconds."""
-        return execution_context.remaining_seconds()
+        return remaining_seconds(record)
 
     async def repo_search(
         *,

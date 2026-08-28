@@ -8,15 +8,30 @@ from pathlib import Path
 import pytest
 
 import gpt_dive.worker_subprocess as worker_subprocess_module
-from gpt_dive.command_runtime import run_command
-from gpt_dive.execution_context import ExecutionContext
+from gpt_dive.command_runtime import run_command, runtime_record
+from gpt_dive.execution_store import ExecutionStore, generate_execution_id
 
 
-def context_for_test(root: Path, *, duration_seconds: float = 60) -> ExecutionContext:
-    return ExecutionContext.for_test(
-        duration_seconds=duration_seconds,
+def record_for_test(root: Path, *, duration_seconds: float = 60) -> dict[str, object]:
+    store = ExecutionStore(root / "runtime.sqlite3")
+    execution_id = generate_execution_id()
+    store.create(
+        execution_id=execution_id,
+        kind="test",
+        label="test execution",
+        cwd=str(root),
+        backend="popen",
+        systemd_unit=None,
+        work_timeout_seconds=duration_seconds,
+        cleanup_timeout_seconds=10.0,
+        request_path=root / "request.json",
         artifact_dir=root / "artifacts",
+        stdout_path=root / "stdout.log",
+        stderr_path=root / "stderr.log",
+        outcome_path=root / "outcome.json",
     )
+    (root / "artifacts").mkdir(parents=True, exist_ok=True)
+    return runtime_record(store.get(execution_id))
 
 
 def test_run_command_cancellation_reaps_the_process_group(tmp_path: Path) -> None:
@@ -27,7 +42,7 @@ def test_run_command_cancellation_reaps_the_process_group(tmp_path: Path) -> Non
             run_command(
                 f"echo $$ > {pid_path}; exec sleep 30",
                 cwd=str(tmp_path),
-                context=context_for_test(tmp_path),
+                record=record_for_test(tmp_path),
             )
         )
         deadline = time.monotonic() + 2
@@ -50,7 +65,7 @@ def test_run_command_timeout_is_terminal_and_bounded(tmp_path: Path) -> None:
         run_command(
             "sleep 30",
             cwd=str(tmp_path),
-            context=context_for_test(tmp_path, duration_seconds=9.15),
+            record=record_for_test(tmp_path, duration_seconds=9.15),
         )
     )
 
@@ -65,7 +80,7 @@ def test_run_command_truncates_context_and_retains_bounded_spill(
         run_command(
             "yes X | head -c 20000",
             cwd=str(tmp_path),
-            context=context_for_test(tmp_path),
+            record=record_for_test(tmp_path),
         )
     )
 

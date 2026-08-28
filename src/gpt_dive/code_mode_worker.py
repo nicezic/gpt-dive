@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .code_capabilities import build_code_registry, code_runtime
-from .execution_context import ExecutionContext
+from .command_runtime import runtime_record
 from .execution_store import ExecutionStore
 from .task_runtime import CODE_MODE_WORKER_PROTOCOL
 
@@ -26,7 +26,7 @@ def _emit(envelope: dict[str, Any]) -> None:
 
 
 async def _run(
-    request: dict[str, Any], *, execution_context: ExecutionContext
+    request: dict[str, Any], *, record: dict[str, object]
 ) -> dict[str, Any]:
     if request.get("v") != CODE_MODE_WORKER_PROTOCOL:
         raise ValueError("unsupported Code Mode Worker request protocol version")
@@ -41,7 +41,7 @@ async def _run(
         raise ValueError("Worker payload must be a string or null")
     return await code_runtime.run(
         code,
-        build_code_registry(cwd, execution_context=execution_context),
+        build_code_registry(cwd, record=record),
         cwd=cwd,
         payload=payload,
     )
@@ -63,9 +63,9 @@ def main() -> None:
         args.request.unlink(missing_ok=True)
 
     store = ExecutionStore(args.store)
-    context = ExecutionContext.from_record(store.get(args.execution))
+    record = runtime_record(store.get(args.execution))
     try:
-        result = asyncio.run(_run(request, execution_context=context))
+        result = asyncio.run(_run(request, record=record))
         try:
             _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": result})
         except (TypeError, ValueError) as exc:
