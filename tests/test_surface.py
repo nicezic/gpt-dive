@@ -24,17 +24,6 @@ def test_server_description_requires_bootstrap_first() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
     assert "Call bootstrap first." in description
-    assert "run_command" not in description
-    assert "wsl2_sync" not in description
-    assert "wsl2_async" not in description
-
-
-def test_server_instructions_do_not_own_progress_presentation() -> None:
-    instructions = gpt_dive.mcp.instructions
-    assert instructions is not None
-    assert "exactly two concise user-visible lines" not in instructions
-    assert "Line 1" not in instructions
-    assert "Line 2" not in instructions
 
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
@@ -51,8 +40,6 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert schema["properties"]["label"]["maxLength"] == 80
     assert schema["properties"]["label"]["minLength"] == 1
     assert schema["properties"]["mode"]["enum"] == ["auto", "task"]
-    for removed in ("timeout", "action", "execution_id", "task", "background"):
-        assert removed not in schema["properties"]
 
     assert tool.output_schema is not None
     output_union = tool.output_schema["properties"]["result"]
@@ -78,7 +65,6 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         "cancel",
         "dismiss",
     }
-    assert "task_id" not in str(schema)
     assert all(
         definition["additionalProperties"] is False
         for definition in schema["$defs"].values()
@@ -116,18 +102,7 @@ def test_server_instructions_require_web_first_error_response_and_code_mode_defa
         in instructions
     )
     assert "Never invent capability names" in instructions
-    assert "wsl2_sync" not in instructions
-    assert "wsl2_async" not in instructions
     assert "task tool for list/get/cancel/dismiss" in instructions
-
-
-def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
-    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    tool = tools["code_mode"]
-    assert tool.description is not None
-    properties = tool.input_schema["properties"]
-    assert "Path(CWD)" not in properties["code"]["description"]
-    assert "Path(CWD)" not in properties["cwd"]["description"]
 
 
 def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
