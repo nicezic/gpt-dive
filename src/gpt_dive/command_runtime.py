@@ -12,7 +12,7 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
 from .execution_context import ExecutionContext
 from .runtime_env import build_runtime_path
-from .worker_subprocess import _terminate_and_reap
+from .worker_subprocess import terminate_and_reap
 
 _RUN_COMMAND_POLICY_SECONDS = 3590.0
 _RUN_COMMAND_CLEANUP_RESERVE_SECONDS = 9.0
@@ -175,7 +175,7 @@ async def run_command(
         )
     except TimeoutError:
         timed_out = True
-        cleanup = await _terminate_and_reap(
+        cleanup = await terminate_and_reap(
             proc,
             communicate_task,
             grace_seconds=4.0,
@@ -187,7 +187,7 @@ async def run_command(
                 "run_command process group could not be reaped"
             ) from None
     except asyncio.CancelledError:
-        cleanup = await _terminate_and_reap(
+        cleanup = await terminate_and_reap(
             proc,
             communicate_task,
             grace_seconds=4.0,

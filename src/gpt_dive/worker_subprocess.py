@@ -122,7 +122,7 @@ def worker_failure(
     return None
 
 
-async def _terminate_and_reap(
+async def terminate_and_reap(
     proc: asyncio.subprocess.Process,
     communicate_task: asyncio.Task[tuple[bytes, bytes]],
     *,
@@ -263,7 +263,7 @@ async def run_bounded_worker(
     except TimeoutError:
         logger.warning("%s TIMEOUT pid=%s timeout=%.1f", log_label, proc.pid, timeout)
         timed_out = True
-        cleanup = await _terminate_and_reap(
+        cleanup = await terminate_and_reap(
             proc,
             communicate_task,
             grace_seconds=termination_grace_seconds,
@@ -272,7 +272,7 @@ async def run_bounded_worker(
         stdout, stderr = cleanup.stdout, cleanup.stderr
     except asyncio.CancelledError:
         logger.warning("%s CANCELLED pid=%s", log_label, proc.pid)
-        cleanup = await _terminate_and_reap(
+        cleanup = await terminate_and_reap(
             proc,
             communicate_task,
             grace_seconds=termination_grace_seconds,

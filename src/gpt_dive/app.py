@@ -533,9 +533,7 @@ def _defer_publication_during_launch(
     execution_id: str,
 ) -> None:
     _track_runtime_followup(
-        asyncio.create_task(
-            _publish_during_launch(manager, launch_task, execution_id)
-        )
+        asyncio.create_task(_publish_during_launch(manager, launch_task, execution_id))
     )
 
 
@@ -550,16 +548,12 @@ async def _preserve_interrupted_launch(
     _defer_publication_during_launch(manager, launch_task, execution_id)
 
 
-async def _publish_execution(
-    manager: ExecutionManager, execution_id: str
-) -> None:
+async def _publish_execution(manager: ExecutionManager, execution_id: str) -> None:
     with contextlib.suppress(Exception):
         await _publish_accepted_task(manager, execution_id)
 
 
-def _defer_execution_publication(
-    manager: ExecutionManager, execution_id: str
-) -> None:
+def _defer_execution_publication(manager: ExecutionManager, execution_id: str) -> None:
     _track_runtime_followup(
         asyncio.create_task(_publish_execution(manager, execution_id))
     )
@@ -753,9 +747,7 @@ async def code_mode(
                 deadline=response_deadline,
             )
         except asyncio.CancelledError:
-            await _preserve_interrupted_launch(
-                executions, launch_task, execution_id
-            )
+            await _preserve_interrupted_launch(executions, launch_task, execution_id)
             raise
         except Exception as exc:
             _defer_publication_during_launch(executions, launch_task, execution_id)
@@ -819,9 +811,7 @@ async def code_mode(
                         launch_exception,
                         response_deadline=response_deadline,
                     )
-                _defer_publication_during_launch(
-                    executions, launch_task, execution_id
-                )
+                _defer_publication_during_launch(executions, launch_task, execution_id)
                 raise TimeoutError(
                     "Code Mode response deadline expired before acceptance"
                 ) from exc
@@ -843,9 +833,7 @@ async def code_mode(
                 )
                 raise
             except TimeoutError:
-                _defer_publication_during_launch(
-                    executions, launch_task, execution_id
-                )
+                _defer_publication_during_launch(executions, launch_task, execution_id)
                 return _code_mode_delivery_error(
                     execution_id,
                     clean_label,
@@ -856,9 +844,7 @@ async def code_mode(
                     ),
                 )
             except Exception as exc:
-                _defer_publication_during_launch(
-                    executions, launch_task, execution_id
-                )
+                _defer_publication_during_launch(executions, launch_task, execution_id)
                 return _code_mode_delivery_error(
                     execution_id,
                     clean_label,

@@ -48,10 +48,11 @@ filesystem            = 보존 artifact 전용
 - `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `repo_search`, `council_emit`은 Code Mode 내부에 유지했다. Child budget은 Runtime이 공급한다.
 - Conduit를 같은 Execution/Task row와 단일 `execution_id` 위로 옮겼다. 현재 action은 `start/sync/get/cancel/dismiss/emit`이다.
 - 독립 리뷰 후 private spool 생성, bounded TrackedTasks 조회, launch 중 inline cutoff·response reserve·accepted Task publication, stale-accepted recovery, signal 의미, 단일 cleanup reserve를 회귀 테스트와 함께 보강했다.
+- `/proc` PID identity를 공통 모듈로 모으고 worker cleanup interface를 공개했으며, `repo_search`도 process-group 단위 bounded worker 경로로 통일했다.
 
 ## 로컬 검증
 
-- 전체 pytest: `197 passed`
+- 전체 pytest: `200 passed`
 - Ruff: 통과
 - Pyright: 통과
 - `git diff --check`: 통과

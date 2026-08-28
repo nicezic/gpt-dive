@@ -80,6 +80,17 @@ uv run --python 3.14 python -m gpt_dive
 
 For live MCP operations, see [`docs/runtime/operations.md`](docs/runtime/operations.md) — **how to restart**, reload safely, and handle durable jobs.
 
+```text
+systemd (system scope)
+└─ gpt-dive-tunnel.service  # enabled: multi-user.target; Restart=always (2s)
+   ├─ unit: /etc/systemd/system/gpt-dive-tunnel.service
+   ├─ env:  /home/nicezic/.config/tunnel-client/wsl2-exec-u26.env
+   └─ /home/nicezic/.local/bin/tunnel-client run --profile wsl2-exec-u26
+      └─ /home/nicezic/gpt-dive/.venv/bin/python -m gpt_dive  # MCP server
+```
+
+One service restart replaces tunnel + MCP; `enabled` means WSL distro startup, not Windows boot. Code Mode executions use transient `gpt-dive-execution-*` user units.
+
 Standard MCP restart handoff:
 
 ```bash

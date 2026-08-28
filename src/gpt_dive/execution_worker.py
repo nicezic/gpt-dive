@@ -15,35 +15,17 @@ from pathlib import Path
 from typing import Any
 
 from .execution_store import ExecutionStore, parse_time, utc_now
+from .process_identity import (
+    process_matches,
+    process_start_ticks,
+    read_process_identity,
+)
 from .runtime_env import build_runtime_path
 
 _POLL_SECONDS = 0.05
 _TERM_GRACE_SECONDS = 4.0
 _KILL_GRACE_SECONDS = 4.0
 _PR_SET_CHILD_SUBREAPER = 36
-
-
-def _proc_info(pid: int) -> dict[str, int | str] | None:
-    try:
-        text = (Path("/proc") / str(pid) / "stat").read_text()
-    except FileNotFoundError, ProcessLookupError, PermissionError:
-        return None
-    end = text.rfind(")")
-    if end < 0:
-        return None
-    rest = text[end + 2 :].split()
-    if len(rest) <= 19:
-        return None
-    return {
-        "state": rest[0],
-        "ppid": int(rest[1]),
-        "start_ticks": int(rest[19]),
-    }
-
-
-def _proc_start_ticks(pid: int) -> int | None:
-    info = _proc_info(pid)
-    return int(info["start_ticks"]) if info is not None else None
 
 
 def _become_subreaper() -> None:
@@ -84,12 +66,12 @@ def _descendant_identities(root_pid: int) -> dict[int, int]:
         if not entry.name.isdigit():
             continue
         pid = int(entry.name)
-        info = _proc_info(pid)
-        if info is None:
+        identity = read_process_identity(pid)
+        if identity is None:
             continue
-        ppid = int(info["ppid"])
+        ppid = identity.parent_pid
         children.setdefault(ppid, []).append(pid)
-        identities[pid] = int(info["start_ticks"])
+        identities[pid] = identity.start_ticks
 
     descendants: dict[int, int] = {}
     stack = list(children.get(root_pid, ()))
@@ -105,12 +87,7 @@ def _descendant_identities(root_pid: int) -> dict[int, int]:
 
 def _signal_descendants(root_pid: int, sig: signal.Signals) -> None:
     for pid, start_ticks in reversed(_descendant_identities(root_pid).items()):
-        info = _proc_info(pid)
-        if (
-            info is None
-            or info["state"] == "Z"
-            or int(info["start_ticks"]) != start_ticks
-        ):
+        if not process_matches(pid, start_ticks):
             continue
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, sig)
@@ -172,7 +149,7 @@ def run_execution(store: ExecutionStore, execution_id: str) -> int:
     if not store.claim(
         execution_id,
         worker_pid=worker_pid,
-        worker_start_ticks=_proc_start_ticks(worker_pid),
+        worker_start_ticks=process_start_ticks(worker_pid),
     ):
         record = store.get(execution_id)
         if record["state"] in {"completed", "failed", "cancelled", "lost"}:
@@ -222,7 +199,7 @@ def run_execution(store: ExecutionStore, execution_id: str) -> int:
             store.set_child(
                 execution_id,
                 child_pid=proc.pid,
-                child_start_ticks=_proc_start_ticks(proc.pid),
+                child_start_ticks=process_start_ticks(proc.pid),
             )
 
             remaining_work = max(

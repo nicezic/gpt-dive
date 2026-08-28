@@ -122,7 +122,7 @@ def test_deadline_cleanup_consumes_the_absolute_reserve_once(
 
     work_deadline = parse_time(str(created["work_deadline_at"]))
     monkeypatch.setattr(execution_worker_module, "_become_subreaper", lambda: None)
-    monkeypatch.setattr(execution_worker_module, "_proc_start_ticks", lambda _pid: 1)
+    monkeypatch.setattr(execution_worker_module, "process_start_ticks", lambda _pid: 1)
     monkeypatch.setattr(execution_worker_module.signal, "signal", lambda *_args: None)
     monkeypatch.setattr(
         execution_worker_module.subprocess,

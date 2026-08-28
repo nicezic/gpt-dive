@@ -21,6 +21,7 @@ from .execution_store import (
     parse_time,
     utc_now,
 )
+from .process_identity import process_matches
 
 RETENTION_DAYS = 5
 POLL_INTERVAL_MS = 1000
@@ -424,7 +425,7 @@ class ExecutionManager:
                 pid = int(record[key])
             except KeyError, TypeError, ValueError:
                 continue
-            if not self._pid_matches(
+            if not process_matches(
                 pid, record.get(f"{key.removesuffix('_pid')}_start_ticks")
             ):
                 continue
@@ -441,7 +442,7 @@ class ExecutionManager:
             worker_pid = int(record["worker_pid"])
         except TypeError, ValueError:
             worker_pid = None
-        if worker_pid is not None and self._pid_matches(
+        if worker_pid is not None and process_matches(
             worker_pid, record.get("worker_start_ticks")
         ):
             return True
@@ -527,29 +528,6 @@ class ExecutionManager:
         except FileNotFoundError, subprocess.TimeoutExpired:
             return False
         return completed.stdout.strip() in {"active", "activating", "reloading"}
-
-    @classmethod
-    def _pid_matches(cls, pid: int, expected_start_ticks: Any) -> bool:
-        proc = cls._proc_info(pid)
-        if proc is None or proc["state"] == "Z":
-            return False
-        return (
-            expected_start_ticks is None or proc["start_ticks"] == expected_start_ticks
-        )
-
-    @staticmethod
-    def _proc_info(pid: int) -> dict[str, Any] | None:
-        try:
-            text = (Path("/proc") / str(pid) / "stat").read_text()
-        except FileNotFoundError, ProcessLookupError, PermissionError:
-            return None
-        end = text.rfind(")")
-        if end < 0:
-            return None
-        rest = text[end + 2 :].split()
-        if len(rest) <= 19:
-            return None
-        return {"state": rest[0], "start_ticks": int(rest[19])}
 
     @staticmethod
     def _reap_pid(record: dict[str, Any]) -> None:

@@ -106,7 +106,7 @@ def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_o
             return b"", b""
 
         communicate_task = asyncio.create_task(hung_communicate())
-        return await worker_subprocess_module._terminate_and_reap(
+        return await worker_subprocess_module.terminate_and_reap(
             proc,  # type: ignore[arg-type]
             communicate_task,
             grace_seconds=0.02,
@@ -158,7 +158,7 @@ def test_run_bounded_worker_reports_reap_failure_without_fake_returncode(
         fake_create_subprocess_exec,
     )
     monkeypatch.setattr(worker_subprocess_module.os, "killpg", lambda *_args: None)
-    original_terminate = worker_subprocess_module._terminate_and_reap
+    original_terminate = worker_subprocess_module.terminate_and_reap
 
     async def fast_terminate(
         process: object,
@@ -176,7 +176,7 @@ def test_run_bounded_worker_reports_reap_failure_without_fake_returncode(
             log_label=log_label,
         )
 
-    monkeypatch.setattr(worker_subprocess_module, "_terminate_and_reap", fast_terminate)
+    monkeypatch.setattr(worker_subprocess_module, "terminate_and_reap", fast_terminate)
 
     outcome = asyncio.run(
         worker_subprocess_module.run_bounded_worker(

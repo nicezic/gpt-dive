@@ -129,9 +129,7 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(
-        _execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
+    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
         assert backend == "popen"
         assert unit is None
         release_launch.wait(timeout=0.3)
@@ -231,9 +229,7 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(
-        _execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
+    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
         assert backend == "popen"
         assert unit is None
         release_launch.wait(timeout=0.2)
