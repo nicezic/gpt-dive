@@ -104,11 +104,10 @@ FileSystem 8
 ├─ list_directory / search_files / find_files
 └─ create_directory / file_info
 
-Agent and model 4
+Agent and model 3
 ├─ agy_worker
 ├─ subagent_call
-├─ peer_review
-└─ m3_evidence
+└─ peer_review
 
 Other 4
 ├─ repo_search
@@ -119,7 +118,7 @@ Other 4
 
 기존 내부 `task_*` capability는 제거했다. Task lifecycle은 top-level `task` tool이 소유한다. 모든 Execution이 수락 시점부터 durable하므로 `BACKGROUND`도 없다.
 
-`agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`는 서로 다른 model-facing contract를 유지한다. 공개 signature에는 `timeout`이 없고 Runtime이 effective child budget을 공급한다.
+`agy_worker`, `subagent_call`, `peer_review`는 서로 다른 model-facing contract를 유지한다. 공개 signature에는 `timeout`이 없고 Runtime이 effective child budget을 공급한다.
 
 ### Filesystem 경계
 

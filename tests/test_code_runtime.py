@@ -25,7 +25,6 @@ EXPECTED_CAPABILITIES = {
     "agy_worker",
     "subagent_call",
     "peer_review",
-    "m3_evidence",
     "repo_search",
     "council_emit",
     "run_command",
@@ -60,7 +59,7 @@ def run_code(
     )
 
 
-def test_registry_has_the_renewed_sixteen_capabilities(tmp_path: Path) -> None:
+def test_registry_has_the_renewed_fifteen_capabilities(tmp_path: Path) -> None:
     registry = registry_for_test(tmp_path)
     descriptions = registry.describe()
     stubs = registry.type_check_stubs(include_payload=True)
@@ -70,7 +69,7 @@ def test_registry_has_the_renewed_sixteen_capabilities(tmp_path: Path) -> None:
     assert "BACKGROUND" not in stubs
     for removed in ("task_list", "task_collect", "task_cancel", "task_ack"):
         assert removed not in descriptions
-    for name in ("agy_worker", "subagent_call", "peer_review", "m3_evidence"):
+    for name in ("agy_worker", "subagent_call", "peer_review"):
         assert "timeout" not in descriptions[name]["signature"]
 
 
@@ -159,23 +158,17 @@ def test_all_model_capabilities_receive_runtime_owned_budget(
         calls["peer"] = kwargs
         return {"ok": True}
 
-    async def fake_m3(**kwargs: object) -> dict[str, object]:
-        calls["m3"] = kwargs
-        return {"ok": True}
-
     monkeypatch.setattr(capabilities_module, "invoke_agy_worker", fake_agy)
     monkeypatch.setattr(capabilities_module, "invoke_model_call", fake_peer)
-    monkeypatch.setattr(capabilities_module, "invoke_m3_evidence", fake_m3)
 
     run_code(
         tmp_path,
         "await asyncio.gather("
         "agy_worker(task='research'), "
-        "peer_review(provider='openai', prompt='review'), "
-        "m3_evidence(question='q', evidence='e'))",
+        "peer_review(provider='openai', prompt='review'))",
     )
 
-    assert set(calls) == {"agy", "peer", "m3"}
+    assert set(calls) == {"agy", "peer"}
     for call in calls.values():
         timeout = call["timeout"]
         assert isinstance(timeout, int | float)

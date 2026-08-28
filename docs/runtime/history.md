@@ -104,7 +104,7 @@ Renewal은 의도적으로 clean break를 택했다.
 - 하나의 Task 뒤에 숨긴 retry chain 없음
 - push-notification subsystem 없음
 - unbounded execution lane 없음
-- `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence` contract 통합 없음
+- `agy_worker`, `subagent_call`, `peer_review` contract 통합 없음
 - 새 `Job` domain term 없음
 
 Council은 `docs/council/` 아래의 별도 human-steered multi-model concern으로 남는다. Conduit는 Runtime Execution/Task 모델을 사용하지만 conversation과 Redis event 경계는 스스로 소유한다.

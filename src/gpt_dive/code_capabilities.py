@@ -13,7 +13,6 @@ from .command_runtime import run_command as run_runtime_command
 from .council import emit_sol_response
 from .execution_context import ExecutionContext
 from .filesystem_policy import harness_denied_patterns
-from .m3_evidence import invoke_m3_evidence
 from .model_call import invoke_model_call
 from .repo_search import search_repo
 from .subagent_runtime import invoke_subagent
@@ -23,7 +22,6 @@ code_runtime = MontyCodeRuntime()
 _AGY_WORKER_POLICY_SECONDS = 360.0
 _SUBAGENT_POLICY_SECONDS = 600.0
 _PEER_REVIEW_POLICY_SECONDS = 600.0
-_M3_EVIDENCE_POLICY_SECONDS = 180.0
 
 
 def code_mode_home_root() -> Path:
@@ -181,26 +179,6 @@ def build_code_registry(
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
-    async def m3_evidence(
-        *,
-        question: str,
-        evidence: str,
-        round_number: int = 1,
-        max_rounds: int = 3,
-        max_queries: int = 3,
-        output_tokens_limit: int = 2048,
-    ) -> dict[str, Any]:
-        """Use tool-less MiniMax-M3 to assess evidence within a bounded research-round budget."""
-        return await invoke_m3_evidence(
-            question=question,
-            evidence=evidence,
-            round_number=round_number,
-            max_rounds=max_rounds,
-            max_queries=max_queries,
-            timeout=execution_context.child_budget(_M3_EVIDENCE_POLICY_SECONDS),
-            output_tokens_limit=output_tokens_limit,
-        )
-
     async def run_command(command: str) -> dict[str, Any]:
         """Run one awaited local shell command under the owning Execution budget.
 
@@ -267,7 +245,6 @@ def build_code_registry(
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("peer_review", peer_review)
-    registry.register("m3_evidence", m3_evidence)
     registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
     registry.register("run_command", run_command)

@@ -199,7 +199,7 @@ t=43200s  Execution 절대 수명 종료 (12시간)
 
 각 work/wait cutoff 이후의 10초는 bounded한 runtime bookkeeping·cleanup을 위한 **reserve**이며, 사용자 코드에 주어지는 추가 시간이 아니다.
 
-모델은 Code Mode timeout도, child capability timeout도 지정할 수 없다. `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `run_command`에 대해 Runtime이 다음을 계산한다.
+모델은 Code Mode timeout도, child capability timeout도 지정할 수 없다. `agy_worker`, `subagent_call`, `peer_review`, `run_command`에 대해 Runtime이 다음을 계산한다.
 
 ```text
 effective child budget
@@ -260,8 +260,7 @@ FileSystem (8)
 Agent / model
 ├─ agy_worker
 ├─ subagent_call
-├─ peer_review
-└─ m3_evidence
+└─ peer_review
 Retrieval / Council
 ├─ repo_search
 └─ council_emit
@@ -272,7 +271,7 @@ Runtime
 
 모든 Execution이 처음부터 durable하므로 `BACKGROUND`는 제거한다.
 
-agent/model 4종은 그대로 유지한다. 내부 transport 통합은 **이번 리뉴얼 범위가 아니다.** 바뀌는 것은 timeout 소유권뿐이다.
+agent/model 3종은 그대로 유지한다. 내부 transport 통합은 **이번 리뉴얼 범위가 아니다.** 바뀌는 것은 timeout 소유권뿐이다.
 
 ### 9. `run_command`는 await되는 단일 capability
 

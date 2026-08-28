@@ -59,7 +59,7 @@ Systemd backend는 transient unit에 `RuntimeMaxSec=43200s`와 `TimeoutStopSec=1
 
 ## Child capability budget
 
-모델은 `agy_worker`, `subagent_call`, `peer_review`, `m3_evidence`, `run_command`에 `timeout`을 넘길 수 없다.
+모델은 `agy_worker`, `subagent_call`, `peer_review`, `run_command`에 `timeout`을 넘길 수 없다.
 
 ```text
 effective child budget
@@ -73,7 +73,6 @@ effective child budget
 | `agy_worker` | 360초 |
 | `subagent_call` | 600초 |
 | `peer_review` | 600초 |
-| `m3_evidence` | 180초 |
 | `run_command` | 43,190초 |
 
 `deadline_remaining()`은 Monty code가 새 단계를 시작할 가치가 있는지 판단하도록 live read-only remainder를 제공한다. Deadline을 바꾸거나 capability timeout 인자로 되돌릴 수는 없다.

@@ -66,12 +66,10 @@ FileSystem 8
 ├─ list_directory / search_files / find_files
 └─ create_directory / file_info
 
-Agent and model 4
+Agent and model 3
 ├─ agy_worker(task, model?, cwd?, conversation_id?)
 ├─ subagent_call(model, task, output_tokens_limit?, cwd?)
-├─ peer_review(provider, model?, prompt, cwd?)
-└─ m3_evidence(question, evidence, round_number?, max_rounds?,
-                max_queries?, output_tokens_limit?)
+└─ peer_review(provider, model?, prompt, cwd?)
 
 Other 4
 ├─ repo_search(query, path?, max_results?, max_tokens?, allow_tests?)
@@ -80,7 +78,7 @@ Other 4
 └─ deadline_remaining()
 ```
 
-The four agent/model capabilities keep separate semantic contracts. Only their common deadline ownership changed: model-supplied `timeout` arguments were removed, and Runtime passes each underlying worker an effective budget.
+The three agent/model capabilities keep separate semantic contracts. Only their common deadline ownership changed: model-supplied `timeout` arguments were removed, and Runtime passes each underlying worker an effective budget.
 
 ## Static type-check boundary
 

@@ -43,7 +43,7 @@ filesystem            = 보존 artifact 전용
 - `execution_store.py`, `execution_worker.py`, `execution_context.py`를 통해 SQLite SSOT, claim-before-code 경계, 상속 deadline, process-tree containment를 확립했다.
 - Execution 절대 수명을 12시간(`43,200s`, work cutoff `43,190s`, cleanup `10s`)으로 확장하고, direct shell `run_command` 역시 12시간 budget을 완전 상속하도록 조정했다.
 - 공개 `execution_id`를 사람이 복사하고 기억하기 쉬운 6자리 URL-safe Base64(`secrets.token_urlsafe(4)`)로 경량화했다.
-- 미참조 데드 코드인 `m3_gbrain_replay.py`(-779줄) 및 관련 테스트(-1,138줄)를 제거하여 코드베이스를 슬림화했다.
+- 미참조 데드 코드인 `m3_gbrain_replay.py`(-779줄), 불필요한 `m3_evidence` capability 및 eval 도구(-1,407줄, 27개 테스트)를 제거하여 코드베이스를 대폭 슬림화했다.
 - 취약한 negative 문자열 assertion과 prompt index 단언을 선별 제거하고, subprocess 및 polling 슬립 간격을 단축해 테스트 스위트 속도를 최적화했다.
 - ExecutionManager를 accepted-row journal, 단일 ID, 고정 deadline, outcome 복구, 5일 retention 기준으로 안정화했다.
 - 공개 `code_mode`와 `task`를 strict typed contract로 관리하며, 알 수 없는 인자는 거부한다.
@@ -51,7 +51,7 @@ filesystem            = 보존 artifact 전용
 
 ## 로컬 검증
 
-- 전체 pytest: `170 passed` (~8.7초)
+- 전체 pytest: `143 passed` (~9.1초)
 - Ruff: 통과 (0 errors)
 - Pyright: 통과 (0 errors)
 - `git diff --check`: 통과
