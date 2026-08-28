@@ -1,12 +1,14 @@
 ---
 title: ADR — Conversation-Driven Task Pull for ChatGPT Web
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-28
 type: decision
 status: accepted
 ---
 
 # ADR — Conversation-Driven Task Pull for ChatGPT Web
+
+> Runtime renewal note: the pull model and non-destructive retrieval remain accepted. The current API names are `get(execution_id)` and terminal `dismiss(execution_id)`; historical `collect`/`ack` and `task_id` wording below records the canary, not the live contract.
 
 ## Decision
 

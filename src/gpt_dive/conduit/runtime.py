@@ -5,14 +5,11 @@ from typing import Any, Protocol
 
 from ..execution_manager import ExecutionManager
 from ..task_runtime import (
-    TaskRuntime,
-    ack_task,
-    collect_task,
-    probe_status_labels,
-    project_task,
-    refresh_task,
+    cancel_task,
+    dismiss_task,
+    get_task,
+    list_projected_tasks,
 )
-from ..task_store import TaskStore
 
 
 class EventPublisher(Protocol):
@@ -20,16 +17,15 @@ class EventPublisher(Protocol):
 
 
 class ConduitRuntime:
-    """Conversation-driven surface over the shared GPT Dive Task registry."""
+    """Conversation surface over Runtime-owned Executions and Tasks."""
 
     def __init__(
         self,
         *,
         executions: ExecutionManager,
-        task_store: TaskStore,
         publisher: EventPublisher,
     ) -> None:
-        self.rt = TaskRuntime(executions, task_store)
+        self.executions = executions
         self.publisher = publisher
 
     def call(
@@ -39,48 +35,23 @@ class ConduitRuntime:
         label: str | None = None,
         command: str | None = None,
         cwd: str | None = None,
-        timeout: float = 600.0,
-        task_id: str | None = None,
+        execution_id: str | None = None,
         session_id: str | None = None,
         text: str | None = None,
     ) -> dict[str, Any]:
         action = action.strip().lower()
         if action == "start":
-            if not command or not command.strip():
-                raise ValueError("start requires command")
-            clean_label = (label or "task").strip()
-            if not clean_label:
-                raise ValueError("start label must not be empty")
-            if len(clean_label) > 80:
-                raise ValueError("start label must be 80 characters or fewer")
-            started = self.rt.executions.start(command, cwd=cwd, timeout=timeout)
-            execution_id = str(started["execution_id"])
-            try:
-                task = self.rt.task_store.create(
-                    execution_id=execution_id,
-                    label=clean_label,
-                )
-            except Exception:
-                self.rt.executions.cancel(execution_id)
-                raise
-            result: dict[str, Any] = {
-                "task_id": str(task["task_id"]),
-                "execution_id": execution_id,
-                "label": clean_label,
-                "status": self._map_state(str(task["state"])),
-            }
+            result = self._start(label=label, command=command, cwd=cwd)
         elif action == "sync":
             if text is None or not text.strip():
                 raise ValueError("sync requires text")
             result = {"text": text}
-        elif action == "collect":
-            if not task_id or not task_id.strip():
-                raise ValueError("collect requires task_id")
-            result = self._collect(task_id.strip())
-        elif action == "ack":
-            if not task_id or not task_id.strip():
-                raise ValueError("ack requires task_id")
-            result = self._ack(task_id.strip())
+        elif action == "get":
+            result = self._get(self._require_execution_id(action, execution_id))
+        elif action == "cancel":
+            result = self._cancel(self._require_execution_id(action, execution_id))
+        elif action == "dismiss":
+            result = self._dismiss(self._require_execution_id(action, execution_id))
         elif action == "emit":
             if text is None or not text.strip():
                 raise ValueError("emit requires text")
@@ -90,11 +61,13 @@ class ConduitRuntime:
                     raise ValueError("emit session_id must not be empty")
             result = {"emitted": True}
         else:
-            raise ValueError("action must be one of: start, sync, collect, ack, emit")
+            raise ValueError(
+                "action must be one of: start, sync, get, cancel, dismiss, emit"
+            )
 
         tasks = self.snapshot()
         event: dict[str, object] = {
-            "v": 1,
+            "v": 2,
             "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "action": action,
             "result": self._event_result(action, result, text=text),
@@ -106,90 +79,107 @@ class ConduitRuntime:
         return {"result": result, "tasks": tasks}
 
     def snapshot(self) -> list[dict[str, object]]:
-        refreshed = [
-            refresh_task(self.rt, stored)
-            for stored in self.rt.task_store.list_tasks()[:8]
-        ]
-        labels = probe_status_labels(refreshed)
         tasks: list[dict[str, object]] = []
-        for task in refreshed:
-            projected = project_task(
-                task, status_label=labels.get(str(task["task_id"]))
-            )
+        for projected in list_projected_tasks(self.executions, limit=8):
             row: dict[str, object] = {
-                "id": str(projected["task_id"]),
+                "id": str(projected["execution_id"]),
                 "label": str(projected["label"]),
                 "status": self._map_state(str(projected["state"])),
                 "age_sec": int(projected["elapsed_seconds"]),
             }
-            status_label = projected.get("status_label")
-            if status_label:
-                row["status_label"] = str(status_label)
+            reason = projected.get("reason")
+            if reason:
+                row["reason"] = str(reason)
             tasks.append(row)
         return tasks
 
-    def _collect(self, task_id: str) -> dict[str, Any]:
-        collected = collect_task(self.rt, task_id)
-        task = collected["task"]
-        mapped = self._map_state(str(task["state"]))
-        if not collected["ready"]:
-            result: dict[str, Any] = {
-                "task_id": task_id,
-                "status": mapped,
-                "ready": False,
-            }
-            if collected.get("unavailable"):
-                result["unavailable"] = True
-            return result
+    def _start(
+        self,
+        *,
+        label: str | None,
+        command: str | None,
+        cwd: str | None,
+    ) -> dict[str, Any]:
+        if not command or not command.strip():
+            raise ValueError("start requires command")
+        clean_label = (label or "task").strip()
+        if not clean_label:
+            raise ValueError("start label must not be empty")
+        if len(clean_label) > 80:
+            raise ValueError("start label must be 80 characters or fewer")
+        started = self.executions.start(
+            command,
+            label=clean_label,
+            cwd=cwd,
+            kind="conduit",
+            publish=True,
+        )
+        return {
+            "execution_id": str(started["execution_id"]),
+            "label": clean_label,
+            "status": self._map_state(str(started["state"])),
+        }
 
-        result = dict(collected["result"])
-        result["task_id"] = task_id
-        result["status"] = mapped
-        result["ready"] = True
+    def _get(self, execution_id: str) -> dict[str, Any]:
+        collected = get_task(self.executions, execution_id)
+        task = collected["task"]
+        result: dict[str, Any] = {
+            "execution_id": execution_id,
+            "status": self._map_state(str(task["state"])),
+            "ready": bool(collected["ready"]),
+        }
+        if collected.get("unavailable"):
+            result["unavailable"] = True
+        if collected["ready"]:
+            result["output"] = collected["result"]
         return result
 
-    def _ack(self, task_id: str) -> dict[str, object]:
-        try:
-            acked = ack_task(self.rt, task_id)
-        except ValueError as exc:
-            raise ValueError("ack requires a terminal or lost task") from exc
+    def _cancel(self, execution_id: str) -> dict[str, Any]:
+        cancelled = cancel_task(self.executions, execution_id)["task"]
         return {
-            "task_id": task_id,
-            "status": self._map_state(str(acked["state"])),
-            "acked": True,
+            "execution_id": execution_id,
+            "status": self._map_state(str(cancelled["state"])),
+            "cancel_requested": True,
+        }
+
+    def _dismiss(self, execution_id: str) -> dict[str, Any]:
+        try:
+            dismissed = dismiss_task(self.executions, execution_id)
+        except ValueError as exc:
+            raise ValueError("dismiss requires a terminal or lost Task") from exc
+        return {
+            "execution_id": execution_id,
+            "status": self._map_state(str(dismissed["state"])),
+            "dismissed": True,
         }
 
     @staticmethod
+    def _require_execution_id(action: str, execution_id: str | None) -> str:
+        if not execution_id or not execution_id.strip():
+            raise ValueError(f"{action} requires execution_id")
+        return execution_id.strip()
+
+    @staticmethod
     def _map_state(state: str) -> str:
-        if state == "working":
-            return "running"
-        if state == "completed":
-            return "done"
-        return state
+        return "done" if state == "completed" else state
 
     @staticmethod
     def _event_result(
         action: str, result: dict[str, Any], *, text: str | None
     ) -> dict[str, object]:
-        if action == "emit":
-            return {"text": text or ""}
-        if action == "sync":
+        if action in {"emit", "sync"}:
             return {"text": text or ""}
         if action == "start":
             return {
-                "task_id": str(result["task_id"]),
                 "execution_id": str(result["execution_id"]),
                 "label": str(result["label"]),
                 "status": str(result["status"]),
             }
-        if action == "ack":
-            return {
-                "task_id": str(result["task_id"]),
-                "status": str(result["status"]),
-                "acked": bool(result["acked"]),
-            }
-        return {
-            "task_id": str(result.get("task_id", "")),
-            "status": str(result.get("status", "")),
-            "ready": bool(result.get("ready", False)),
+        event_result: dict[str, object] = {
+            "execution_id": str(result["execution_id"]),
+            "status": str(result["status"]),
         }
+        for key in ("ready", "unavailable", "cancel_requested", "dismissed"):
+            if key in result:
+                event_result[key] = bool(result[key])
+        return event_result

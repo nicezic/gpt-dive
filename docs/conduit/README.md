@@ -2,7 +2,7 @@
 
 Conduit is GPT Dive's conversation and task transport subproject for ChatGPT Web.
 
-Its purpose is to keep the Web-facing interaction small while letting ChatGPT Web SOL hand off conversation output and detached work through a local `@c` MCP surface while reusing GPT Dive for execution. The current `@c` path already returns compact task snapshots. ADR 0002 accepts TrackedTasks + Opportunistic Evidence Pickup (OEP) as the shared awareness direction across asynchronous runners, including a future `@dive` refresh path; that cross-surface integration is not yet implemented.
+Its purpose is to keep the Web-facing interaction small while letting ChatGPT Web SOL hand off conversation output and asynchronous work through a local `@c` MCP surface while reusing GPT Dive Runtime. Both `@c` snapshots and ordinary `@dive` traffic now consume the same Runtime-owned TrackedTasks projection.
 
 ```text
 ChatGPT Web SOL
@@ -11,7 +11,7 @@ ChatGPT Web SOL
       |
    Conduit
       |
-      +-- task/runtime routing
+      +-- Runtime start/get/cancel/dismiss
       +-- Redis event fan-out
              |
              +-- /tmp logging
@@ -20,7 +20,17 @@ ChatGPT Web SOL
              +-- GBrain / later consumers
 ```
 
-Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the backend owner of Code Mode, ExecutionManager, execution policy, and local capabilities; Conduit is the conversation/task plane that can route into those existing components.
+Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the owner of Execution, Task, TrackedTasks, deadlines, recovery, and local capabilities. Conduit adds a conversation/event plane over those components and uses the same single `execution_id`; it has no Task store of its own.
+
+```text
+@c start(label, command)
+        │
+        ▼
+Runtime Execution + published Task
+        │
+        ├─ @c get / cancel / dismiss
+        └─ shared TrackedTasks snapshot
+```
 
 ## Documentation
 
@@ -39,10 +49,10 @@ Detailed protocol and runtime documents should be added only after the correspon
 
 ```text
 Conduit
-  owns: conversation/task protocol, active-task view, event routing
+  owns: conversation protocol, event envelope, Redis publication
 
 GPT Dive runtime
-  owns: Code Mode, ExecutionManager, execution policy, local capabilities
+  owns: Execution/Task lifecycle, TrackedTasks projection, deadlines, local capabilities
 
 Redis
   owns: event transport / fan-out

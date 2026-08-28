@@ -16,4 +16,8 @@ The GPT Dive Runtime-owned compact projection of unhandled Tasks that Conduit su
 _Avoid_: Conduit task list, Conduit-owned tracking when referring to the shared Runtime projection.
 
 **Opportunistic Evidence Pickup (OEP)**:
-The workflow in which Web SOL launches Task-backed asynchronous work without waiting, continues foreground work, later notices completion through TrackedTasks during ordinary tool activity, and inspects the result only when useful. Worker output is candidate evidence rather than authority, so pickup may end in discard, deduplication, or selective use.
+The workflow in which Web SOL launches Task-backed asynchronous work without waiting, continues its own reasoning, later notices completion through TrackedTasks during ordinary tool activity, and inspects the result only when useful. Worker output is candidate evidence rather than authority, so pickup may end in discard, deduplication, or selective use.
+
+**Conduit Action**:
+One strict `@c` request variant: `start`, `sync`, `get`, `cancel`, `dismiss`, or `emit`. Runtime lifecycle actions use the shared `execution_id`; Conduit does not translate it into a second Task identity.
+_Avoid_: collect/ack when referring to the current get/dismiss contract; `task_id`.

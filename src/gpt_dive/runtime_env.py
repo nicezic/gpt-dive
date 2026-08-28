@@ -13,6 +13,7 @@ def build_runtime_path(*prefixes: str | Path, inherited: str | None = None) -> s
         str(home / ".local" / "share" / "pnpm"),
         str(home / ".bun" / "bin"),
         str(home / ".local" / "bin"),
+        str(home / ".cargo" / "bin"),
     ]
     tail = inherited if inherited is not None else os.environ.get("PATH", "")
     if tail:

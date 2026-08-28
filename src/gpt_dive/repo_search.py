@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 from .runtime_env import build_runtime_path
-from .worker_subprocess import stderr_tail
+from .worker_subprocess import run_bounded_worker, stderr_tail
 
 
 def _compact_probe_result(data: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -79,17 +78,23 @@ async def search_repo(
 
     env = os.environ.copy()
     env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    outcome = await run_bounded_worker(
+        command,
         env=env,
+        timeout=timeout,
+        grace_seconds=0.0,
+        termination_grace_seconds=2.0,
+        log_label="PROBE SEARCH",
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        proc.kill()
-        await proc.wait()
+    if not outcome.reaped:
+        return {
+            "ok": False,
+            "engine": "probe",
+            "query": query,
+            "path": str(root),
+            "error": "probe search process group could not be reaped after termination",
+        }
+    if outcome.timed_out:
         return {
             "ok": False,
             "engine": "probe",
@@ -98,15 +103,15 @@ async def search_repo(
             "error": f"probe search timed out after {timeout} seconds",
         }
 
-    stdout_text = stdout.decode(errors="replace").strip()
-    stderr_text = stderr.decode(errors="replace").strip()
-    if proc.returncode != 0:
+    stdout_text = outcome.stdout_text
+    stderr_text = outcome.stderr_text
+    if outcome.returncode != 0:
         return {
             "ok": False,
             "engine": "probe",
             "query": query,
             "path": str(root),
-            "error": f"probe search exited with code {proc.returncode}",
+            "error": f"probe search exited with code {outcome.returncode}",
             "stderr": stderr_tail(stderr_text),
         }
 

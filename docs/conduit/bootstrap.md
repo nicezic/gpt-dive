@@ -4,7 +4,7 @@
 
 ## 1. What Conduit is
 
-Conduit is a GPT Dive subproject that introduces a small Web-facing MCP namespace, `@c`, for conversation output, lightweight synchronous work, detached task lifecycle, and automatic active-task awareness.
+Conduit is a GPT Dive subproject that introduces a small Web-facing MCP namespace, `@c`, for conversation output, lightweight synchronous work, Runtime-owned Task lifecycle, and automatic outstanding-Task awareness.
 
 The design is optimized for the user's actual ChatGPT Web workflow rather than for an abstract generic agent platform.
 
@@ -24,7 +24,7 @@ compact active-task snapshot
 SOL keeps reasoning
 ```
 
-A user conversation turn therefore becomes the natural polling cadence for detached work. The server does not need to wake ChatGPT when a task finishes. A completed task can remain available until a later `@c` call exposes it.
+A user conversation turn therefore becomes the natural refresh cadence for asynchronous work. The server does not need to wake ChatGPT when a Task finishes. A completed Task remains available until a later `@c` or `@dive` interaction exposes it and Web SOL explicitly dismisses it.
 
 ## 2. Why this exists
 
@@ -43,7 +43,7 @@ Turn N
 Turn N or N+1
   any @c call
   → snapshot includes t1 done
-  → SOL may collect/use the result
+  → SOL may get/use the result, then dismiss awareness
 ```
 
 This is intentionally conversation-driven pull, not push notification infrastructure.
@@ -64,7 +64,7 @@ ChatGPT Web
   → WSL2
 ```
 
-GPT Dive already has durable detached execution through ExecutionManager and background Code Mode. Conduit should reuse execution/runtime machinery rather than recreate it.
+GPT Dive now creates an always-durable Execution for every Code Mode run and publishes Task awareness only when needed. Conduit reuses the same SQLite lifecycle, `ExecutionManager`, single `execution_id`, and TrackedTasks projection rather than recreating them.
 
 ### Council precedent
 
@@ -111,7 +111,7 @@ Current operating reality:
 
 - **ChatGPT Web GPT-5.6 Sol**: primary engineer/conductor; observed Web quota is generous enough that Web-first engineering is economically preferred.
 - **OpenAI Codex pool (Sol/Terra/Luna)**: comparatively scarce on the user's ChatGPT Plus subscription; preserve this pool for cases where Codex-native execution or independent review adds real value.
-- **Google Antigravity / Gemini 3.7 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode -> agy_worker()`; long detached work can use the durable shell/execution path.
+- **Google Antigravity / Gemini 3.7 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode → agy_worker()`; deliberately external long work may be delegated to a sibling `systemd-run --user` unit outside GPT Dive Runtime.
 - **Opus-5 through third-party providers**: paid/selective independent reviewer. Useful for consequential peer review, not the default worker.
 - **MiniMax M3**: abundant purchased quota but lower trust for difficult reasoning; not a design authority.
 
@@ -167,8 +167,8 @@ Before judging Conduit, assume the following facts unless live evidence supersed
 
 - The primary intelligence is the existing **ChatGPT Web GPT-5.6 Sol**, not a locally instantiated equivalent.
 - Web SOL is economically favored because its observed quota is generous; scarce Codex usage should not be substituted casually.
-- The user wants to preserve a productive single SOL reasoning flow while detached workers/executions run.
-- GPT Dive already connects ChatGPT Web to the real WSL2 machine and already provides durable background executions.
+- The user wants to preserve a productive single SOL reasoning flow while asynchronous workers/Executions run.
+- GPT Dive already connects ChatGPT Web to the real WSL2 machine and makes every accepted Code Mode Execution durable from the start.
 - ChatGPT Web has not negotiated MCP Tasks (`io.modelcontextprotocol/tasks`) in the verified environment.
 - The design does **not** require server-initiated wake-up. The user's next conversation turn is an acceptable and intentional status-refresh boundary.
 - Council already proved input-only browser transport plus tool-based SOL output.

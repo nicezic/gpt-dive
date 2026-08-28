@@ -17,7 +17,7 @@ Local MCP bridge
   -> registry-owned local capabilities
   -> explicit subagent model calls
   -> Harness coding-worker bundle
-  -> direct Harness FileSystem + Shell in Code Mode
+  -> direct Harness FileSystem + bounded run_command in Code Mode
   -> local Codex subscription compatibility layer
   -> Probe-backed repository retrieval
   -> current extensible runtime
@@ -36,7 +36,7 @@ Local MCP bridge
 
 **Change**
 - Added `code_mode` as the primary programmable MCP execution root, backed by a fresh Monty runtime and a per-run `CallableRegistry`.
-- Reduced the current Web MCP surface to `bootstrap` and `code_mode` instead of adding one top-level tool per local capability.
+- Reduced the current Web MCP surface to `bootstrap`, `code_mode`, and the Runtime-owned `task` lifecycle tool instead of adding one top-level tool per local capability.
 
 **Why**
 - Multiple operations can be composed or run concurrently inside one model-visible call.
@@ -49,7 +49,7 @@ Primary implementation: `src/gpt_dive/code_capabilities.py`, `src/gpt_dive/app.p
 
 **Change**
 - Added `subagent_call(model, task, ...)` behind Code Mode rather than exposing each model/provider as a top-level MCP tool.
-- Added the underlying `invoke_model_call(...)` primitive for deliberately tool-less model calls, then upgraded the outer Code Mode `peer_review(...)` route into a draft independent peer reviewer with read-only Harness `FileSystem + CodeMode`. Tool-less mode remains available internally for callers such as `m3_evidence()`.
+- Added the underlying `invoke_model_call(...)` primitive for deliberately tool-less model calls, then upgraded the outer Code Mode `peer_review(...)` route into an independent peer reviewer with read-only Harness `FileSystem + CodeMode`. Tool-less mode remains available internally for bare model calls.
 - Added `agy_worker(task, model=...)` as a separate external-worker capability for Google Antigravity through the official `agy` CLI; it defaults to `gemini-3.7-flash-high`, uses `stream-json`, and launches in read-only `plan` mode with headless tool approvals auto-approved so bounded investigation does not stall on permission prompts.
 
 **Why**
@@ -69,21 +69,22 @@ Primary implementation: `src/gpt_dive/subagent_runtime.py`, `src/gpt_dive/subage
 
 GPT Dive still owns lower local execution policy such as `guard-bin` PATH precedence and provider-credential stripping. Harness Shell is not treated as an OS sandbox.
 
-### 5. Direct FileSystem capabilities in Code Mode and single execution surface
+### 5. Direct FileSystem, always-durable execution, and one awaited command
 
 **Change**
 - Registered the Harness FileSystem toolset directly in the Code Mode registry: read/write/edit/list/search/find/create/info.
-- Completely removed direct Shell command capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) from Code Mode.
-- Enforced deterministic server-side execution deadlines: a 110.0s foreground response deadline split into a 100s execution cutoff and 10s cleanup window, plus a 600.0s detached background deadline. See `docs/runtime/timeouts.md`.
+- Reintroduced one awaited `run_command(command)` capability with Runtime-owned budget, process cleanup, sanitized environment, and bounded output; `start/check/stop` command modes remain absent.
+- Made every Code Mode call durable from acceptance. Runtime waits inline for at most 100 seconds, answers by 110 seconds, and contains the Execution at a 3,590-second work cutoff plus ten seconds of cleanup. See `docs/runtime/timeouts.md`.
+- Moved Task list/get/cancel/dismiss out of Monty and into the strict top-level `task` tool.
 
 **Why**
 - Ordinary file work no longer needs shell quoting or custom wrappers.
-- Eliminates dual-transport command execution surfaces and prevents unbounded foreground hangs.
-- Simplifies model choice: Code Mode is the sole programmable execution surface; long-running operations are explicitly tracked via `task`.
+- Restores direct CLI ergonomics without restoring an unbounded or independently timed shell lane.
+- Separates execution lifetime from response delivery: an inline result and a published Task refer to the same Execution.
 
 ### 6. Host filesystem boundary
 
-Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. Direct shell execution in Code Mode is removed. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
+Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. `run_command` inherits the same cwd, guard-bin precedence, denied secret environment, and outer Execution deadline. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
 
 ### 7. Local ChatGPT Codex subscription compatibility
 
@@ -112,7 +113,7 @@ Implementation: `src/gpt_dive/repo_search.py`.
 
 ```text
 Web MCP surface
-  bootstrap / code_mode
+  bootstrap / code_mode / task
 
 GPT Dive runtime
   lifecycle + registry + local execution policy + provider routing

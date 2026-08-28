@@ -1,147 +1,195 @@
-# Code Mode × Pydantic Harness
+# Code Mode × Pydantic Monty
 
-> Repository implementation guide for GPT Dive `code_mode`. Web SOL operating guidance lives in `~/wiki/workflow/pydantic-ai/code-mode.md`.
+> Repository implementation guide. Runtime lifecycle and deadline ownership are canonical in `docs/runtime/`; Web SOL operating guidance belongs in the Wiki.
+
+## Purpose
+
+Code Mode is GPT Dive's programmable local execution root. It keeps the public MCP surface small while giving one Monty program direct access to a typed, discoverable capability registry.
+
+```text
+code_mode(label, code, payload?, cwd?, mode?)
+        │
+        ▼
+always-durable Execution
+        │
+        ▼
+code_mode_worker
+        │
+        ▼
+fresh Monty runtime + fresh CallableRegistry
+        │
+        ▼
+15 capabilities
+```
+
+Durability and Task publication are outside Monty. There are no Task lifecycle capabilities inside the registry.
 
 ## Construction
 
-`build_code_registry(default_cwd, *, task_list, task_collect, task_cancel, task_ack)` in `src/gpt_dive/code_capabilities.py` constructs one `CallableRegistry` per Code Mode run. `src/gpt_dive/app.py` injects the MCP-side singletons; the background worker (`code_mode_worker.py`) injects its own wiring and imports this module instead of the MCP server.
-
-The effective workspace is:
+`build_code_registry(default_cwd, *, execution_context)` constructs one registry per Execution. `ExecutionContext` supplies the immutable Execution identity, artifact boundary, and live remaining work deadline inherited by child capabilities.
 
 ```python
-workspace = (
+effective_cwd = (
     Path(default_cwd).expanduser().resolve()
     if default_cwd is not None
     else Path.home().resolve()
 )
 ```
 
-That workspace drives the primary read/write Harness FileSystem root. Additional trusted reference trees are exposed only through read-side dispatch.
+`code_mode_worker.py` reconstructs this registry after the generic Execution Worker has won the `accepted → running` claim. The MCP server and Worker do not serialize live Python callables across the process boundary.
 
-## Model-facing programming contract
-
-`code_mode` is a Monty/Python orchestration surface, not a shell launcher. Prefer the smallest matching primitive:
+## Model-facing contract
 
 ```text
-direct capability available → call it directly
-dependent operations        → sequential await
-independent operations      → asyncio.gather(...)
-long-running background job → pass task={label, ...}
-delegated deep execution    → subagent_call(...) or agy_worker(...)
+direct capability exists  → call it
+dependent operations      → sequential await
+independent operations    → asyncio.gather(...)
+short direct CLI need     → await run_command(...)
+deep delegated work       → subagent_call / agy_worker / peer_review
+immediate public awareness→ outer code_mode mode="task"
+Task lifecycle            → outer task MCP tool
 ```
 
-Code Mode enforces fixed execution deadlines:
+The Monty environment receives:
 
-- **Foreground:** fixed 110.0s response deadline: 100s execution cutoff plus a 10s cleanup window. Timeout returns `{ok: false, error: {code: "code_mode_timeout", cleanup_status: "complete" | "failed" | "pending", ...}}`; pending cleanup remains runtime-owned.
-- **Detached background (`task` object provided):** fixed 600.0s deadline tracked in SQLite TaskStore.
+- `CWD`: resolved default working directory;
+- `CAPABILITIES`: live signature and docstring metadata, not a callable mapping;
+- `PAYLOAD`: only when the outer call supplied a string payload.
 
-Canonical deadline, cleanup, and nested-worker boundaries: `docs/runtime/timeouts.md`.
+`BACKGROUND` is intentionally absent. Every Execution is durable; response delivery is not an execution mode.
 
-## Direct Harness FileSystem
-
-GPT Dive constructs:
-
-```python
-FileSystem(root_dir=workspace).get_toolset()
-```
-
-and registers the bound async methods directly:
-
-- `read_file`
-- `write_file`
-- `edit_file`
-- `list_directory`
-- `search_files`
-- `find_files`
-- `create_directory`
-- `file_info`
-
-This intentionally reuses upstream Harness semantics rather than wrapping or reimplementing them.
-
-Important inherited behavior includes bounded reads/searches, binary detection, and optimistic `expected_hash` checks for writes/edits. GPT Dive supplies the host filesystem authorization policy around those Harness operations.
-
-### Host filesystem boundary
-
-Code Mode uses one simple local policy:
+## Capability registry
 
 ```text
-READ  -> host filesystem `/`, except credential/secret paths
-WRITE -> host filesystem `/`, except credential/secret paths and normal OS permission failures
+FileSystem 8
+├─ read_file / write_file / edit_file
+├─ list_directory / search_files / find_files
+└─ create_directory / file_info
+
+Agent and model 3
+├─ agy_worker(task, model?, cwd?, conversation_id?)
+├─ subagent_call(model, task, output_tokens_limit?, cwd?)
+└─ peer_review(provider, model?, prompt, cwd?)
+
+Other 4
+├─ repo_search(query, path?, max_results?, max_tokens?, allow_tests?)
+├─ council_emit(council_dir, message, expected_head?)
+├─ run_command(command)
+└─ deadline_remaining()
 ```
 
-Relative paths resolve from the effective `cwd`. Absolute and `~/...` reads or writes may target any host path allowed by the OS unless it matches the shared credential/secret deny policy. `write_file`, `edit_file`, and `create_directory` therefore support `/tmp` and other writable host paths without separate root exceptions.
+The three agent/model capabilities keep separate semantic contracts. Only their common deadline ownership changed: model-supplied `timeout` arguments were removed, and Runtime passes each underlying worker an effective budget.
 
-The same policy also applies to direct Monty filesystem primitives such as `Path.read_text()` and `Path.write_text()` through GPT Dive's host-backed Monty OS adapter, so direct Python code cannot bypass the FileSystem capability boundary. Ordinary writable `.git` metadata and repository files are writable wherever the OS permits; explicit secret paths remain denied.
+## Static type-check boundary
 
-Architecture decision and rejected alternatives: `adr/0004-code-mode-host-filesystem-policy.md`.
+`CallableRegistry` renders type-check stubs directly from the registered Python callables used for `CAPABILITIES`. Discovery and static enforcement therefore share one signature source.
 
-## Removal of direct Harness Shell capabilities
-
-Direct Shell capabilities (`run_command`, `start_command`, `check_command`, `stop_command`, `gz64`) are completely removed from the direct Code Mode surface.
-
-- Prevents dual-transport redundancy and confusing model execution paths.
-- Code Mode remains focused on Python/Monty orchestration and registered domain capabilities.
-- When shell execution is strictly required, delegate via `subagent_call` (which retains the Harness workspace coding bundle with `guard-bin` protection) or `agy_worker`.
-
-## CAPABILITIES contract
-
-The Monty environment receives `CAPABILITIES` as discovery metadata containing signature + description. It is not a callable mapping.
-
-Registered capability functions are inserted as top-level async names and are called directly:
-
-```python
-content = await read_file("README.md")
-entries = await list_directory(".")
+```text
+generated Monty code
+        │
+        ▼
+static check against live stubs
+   ├─ invalid name/argument → reject before host dispatch
+   └─ valid                → execute with runtime validation backstop
 ```
 
-This boundary matters because the outer MCP input schema cannot validate arbitrary inner Monty capability calls. Model-facing signatures/descriptions are part of the executable interface and require live acceptance when changed.
+There are no argument aliases, silent repair, or unchecked fallback. This matters after removing `timeout`: an invented timeout is a visible typing/validation error rather than a silently dropped field.
 
-### Static type-check boundary
+## Filesystem boundary
 
-Direct Code Mode statically checks each generated Monty program before capability dispatch. `CallableRegistry` renders type-check stubs mechanically from the same live Python callables used to populate `CAPABILITIES`, so discovery and enforcement share one signature source rather than a second hand-maintained contract. Runtime globals (`CWD`, `CAPABILITIES`, and `PAYLOAD` when present) are declared in the same checker environment.
+GPT Dive binds the upstream Harness FileSystem toolset and resolves relative paths from `CWD`.
 
-This layer exists because model-side contract adherence is probabilistic even when the correct signature is already visible. For example, if the live contract is `search_files(pattern=...)`, generated `search_files(query=...)` code is rejected by Monty with a typing error before the host capability executes. There is deliberately no argument aliasing, automatic repair, or unchecked fallback; runtime/Harness validation remains the backstop for errors that cannot be proven statically.
+```text
+READ / WRITE
+├─ path allowed by OS permissions
+├─ credential/secret deny pattern → reject
+└─ recursive root `/` or `/mnt/c` → search operation rejects as too broad
+```
 
-Implementation history and acceptance: `plans/code_mode/plan-260814-static-type-check.md`.
+Monty's direct `Path` operations use the same host-backed policy, so bypassing the registered FileSystem names does not bypass secret-path authorization. Harness optimistic `expected_hash` checks remain intact for writes and edits.
 
-### Async concurrency
+## Direct command capability
 
-Code Mode pre-imports `asyncio` into each Monty program, so generated code can use `await asyncio.gather(...)` without spending a line on a repeated import. Use this for independent awaitable capability calls; dependent work should remain sequential `await` calls.
+`run_command` is a narrow local capability, not the four-tool Harness Shell bundle.
 
-The concurrency prelude is part of the model-facing Code Mode contract and is also stated in the MCP `code_mode` tool description. Regression coverage proves concurrent calls still overlap when the generated Monty code contains no explicit `import asyncio`.
+```text
+await run_command(command)
+├─ cwd = Execution CWD
+├─ PATH = guard-bin first
+├─ provider/API secret environment removed
+├─ timeout = Runtime-owned remaining budget
+├─ process = isolated session/process group
+├─ output = bounded live spool
+└─ return = exit_code / stdout / stderr / duration_ms /
+            truncated / spill_path?
+```
+
+The command has no caller timeout and no start/check/stop action. Stdout and stderr are not stripped. Model-visible output is capped at 8,000 characters; larger bounded spools remain under the Execution artifact directory.
+
+An explicit `systemd-run --user` sibling handoff is permitted only when the caller intentionally leaves GPT Dive Runtime and accepts the loss of Execution/Task/deadline guarantees. `setsid` is not an escape contract.
 
 ## Payload boundary
 
-Outer `payload=` is exposed to Monty as `PAYLOAD`. It is the preferred transport for multiline/quoted payloads so `code=` stays small executable logic and does not accumulate shell/JSON/Markdown quoting hazards.
+Use outer `payload=` for multiline or quoting-sensitive opaque data so `code=` stays executable logic:
+
+```python
+packet = PAYLOAD
+result = await peer_review(provider="openai", prompt=packet)
+result
+```
+
+Payload is optional. It must be a string when present; structured data should be serialized by the caller and parsed inside Monty.
 
 ## Subagent workspace bundle
 
-`subagent_call` is a separate registered primitive. Workspace-enabled children are created in `src/gpt_dive/subagent_worker.py` with:
+`subagent_call` launches a separate local coding-agent slot. Its child worker still uses the Harness bundle:
 
 ```text
 FileSystem(root_dir=workspace)
-Shell(cwd=workspace, ..., max_output_chars=50_000)
+Shell(cwd=workspace, guard-bin, max_output_chars=50_000)
 RepoContext(workspace_dir=workspace, nested_traversal=True)
-_build_tool_output_limits()  # Spill >= 8K, TTL 48h
+ToolOutputLimits(spill then truncate)
 ```
 
-The direct Code Mode registry and child-agent capability bundle intentionally share the same lower execution-policy intent but are separate constructions and need separate tests. Detailed output-boundary design lives in `tool-output-limits.md`.
+This bundle is distinct from the direct Code Mode registry. Both share lower security intent, but a change to one does not mechanically alter the other.
 
-## Search integration
+## Task and deadline boundary
 
-`repo_search` is GPT Dive's Probe-backed repository retrieval capability. Relative `path` values resolve from the Code Mode workspace; absolute/`~/` paths remain explicit. `search_files`, `find_files`, and `repo_search` reject `/` and `/mnt/c` as broad search roots without blocking direct host access.
+```text
+outer Runtime
+├─ 100s inline wait
+├─ 110s MCP response deadline
+├─ 43190s work cutoff (12h - 10s)
+└─ 43200s absolute lifetime (12h)
+
+inner Monty
+├─ cannot choose or extend these clocks
+├─ reads deadline_remaining()
+└─ child calls inherit min(policy, remaining work budget)
+```
+
+When inline delivery ends first, Runtime publishes a Task for the same `execution_id`; it does not cancel or replay the Monty program.
 
 ## Validation contract
 
-When changing the model-facing Code Mode capability surface, prove at minimum:
+Changes to Code Mode should prove:
 
-1. registry discovery exposes the intended native signatures/descriptions (18 capabilities, no direct shell capabilities);
-2. representative FileSystem calls work at the public Code Mode seam;
-3. containment and protected/stale-write failures remain explicit;
-4. detached background executions enforce fixed deadlines (600s) and Task tracking;
-5. foreground Code Mode enforces its 100s execution cutoff plus 10s cleanup window and reports complete/failed/pending cleanup without unowned tasks;
-6. `subagent_call`, background Code Mode, and the public MCP surface (`bootstrap`, `code_mode`) remain regression-green;
-7. statically invalid inner capability calls are rejected before host dispatch while representative valid calls still execute;
-8. fresh-session live schema and `CAPABILITIES` discovery pass after service restart.
+1. the registry exposes exactly the intended sixteen names and current signatures;
+2. `BACKGROUND`, inner `task_*`, caller `timeout`, and removed command lifecycle names stay absent;
+3. representative FileSystem and `run_command` calls work with their policy boundaries;
+4. static invalid arguments fail before host dispatch;
+5. child budgets come from `ExecutionContext`;
+6. output bounding, cancellation, and process reap are verified;
+7. inline completion, Task publication, non-destructive get, and explicit dismissal pass through the public runtime;
+8. the fresh-session MCP schema is accepted after service reload.
 
-Completed Files + Shell acceptance: `plans/code_mode/plan-260814-files-and-shell.md`.
+## References
+
+- `src/gpt_dive/code_runtime.py`, `src/gpt_dive/code_capabilities.py`
+  - Callable registry, Monty execution, and live signature authority.
+- `src/gpt_dive/command_runtime.py`
+  - Awaited shell, environment, budget, spool, and return contract.
+- `docs/runtime/architecture.md`, `docs/runtime/timeouts.md`
+  - Outer Execution, Task, and deadline ownership that Monty inherits.
+- `docs/pydantic/tool-output-limits.md`
+  - Separate output-boundary detail for subagent Harness tools.

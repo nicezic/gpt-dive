@@ -1,215 +1,49 @@
-# Conduit Continuation
+# Conduit — Current Continuation
 
-> Updated: 2026-08-17 KST
-> Purpose: current handoff state. Stable background is in `bootstrap.md`; active design ideas are in `adr/0_brainstorm-and-design-draft.md`.
+> Updated: 2026-08-28. Stable background is in `bootstrap.md`; Runtime language is owned by `../runtime/CONTEXT.md`.
 
-## Status
+## Current position
 
-**Core async canary: PASS.**
-
-Fresh ChatGPT Web session live acceptance observed from one user Enter:
+Conduit now consumes the renewed always-durable Runtime directly.
 
 ```text
-@c start
-  → detached task returned immediately: running
-
-SOL reasoning
-  → continued in the same turn
-
-@c sync
-  → same task snapshot: done
+@c request
+├─ start(label, command, cwd?)
+│    └─ Runtime Execution + immediately published Task
+├─ get(execution_id)       non-destructive
+├─ cancel(execution_id)    explicit cancellation
+├─ dismiss(execution_id)   terminal awareness
+├─ sync(text)
+└─ emit(text, session_id?)
+        │
+        ▼
+Redis event v2 + shared TrackedTasks snapshot
 ```
 
-This proves the core Conduit hypothesis on the current ChatGPT Web surface:
+There is no Conduit `TaskStore`, `task_id`, caller timeout, collect action, or ack action. `execution_id` is the only lifecycle handle, and SQLite Runtime state is the authority.
 
-```text
-c1 → SOL reasoning → c2
-```
+## Implemented renewal delta
 
-The canary intentionally did not call `collect`; it isolated `start → reasoning → sync`.
+- `ConduitRuntime` now receives only `ExecutionManager` plus its event publisher.
+- `start` uses Runtime's fixed 3,590-second work policy and publishes awareness in the same accepted row.
+- snapshots call the shared Runtime projection, so Code Mode and Conduit work appear together;
+- Redis envelopes are version 2 and carry the single identity;
+- the `c` MCP schema is a strict discriminated request union with unknown fields rejected;
+- non-destructive get and explicit terminal dismissal preserve the original OEP intent.
 
-## Implemented checkpoint
+## Validation state
 
-Conduit implementation commit:
+Repository tests cover shared visibility, non-destructive get, explicit cancel, dismissal, retained results, event version, and strict schema shape. The Runtime-wide fresh ChatGPT session acceptance is still required after service reload because ChatGPT Web may cache the old Conduit and Dive schemas.
 
-```text
-9e70cac feat(conduit): add async canary MCP
-```
+## Next Conduit work
 
-Current v0:
+Runtime stabilization and live acceptance come first. After that, resume the planned Council/Conduit product work without reopening Runtime terminology or building a second lifecycle manager.
 
-- `@c` is the permanent Conduit app/namespace.
-- `start` launches detached work through GPT Dive `ExecutionManager`.
-- `sync` is the short synchronous canary action.
-- `collect` reads task results non-destructively.
-- `ack` marks a terminal task as handled so it disappears from automatic snapshots while its retained result remains collectable.
-- `emit` publishes conversation output/events.
-- every successful call returns compact task snapshots: `id`, `label`, `status`, `age_sec`.
-- Redis Stream `conduit:events` is the fixed event fan-out path.
-- `gpt-dive-conduit-log` writes Redis events to `/tmp/conduit-events.ndjson`.
+## References
 
-Local validation at implementation time:
-
-```text
-Conduit focused tests  6 passed
-Redis Stream → NDJSON  PASS
-ruff                   PASS
-pyright                0 errors / 0 warnings
-full pytest             109 passed
-```
-
-## Runtime state
-
-Verified at handoff:
-
-```text
-chatgpt-conduit-mcp.service      active
-gpt-dive-conduit-log.service    active
-```
-
-Relevant local paths:
-
-- tunnel profile: `~/.config/tunnel-client/conduit.yaml`
-- health/admin socket: `~/.local/run/gpt-dive/tunnel-conduit.sock`
-- Conduit MCP: `~/gpt-dive/.venv/bin/python -m gpt_dive.conduit`
-- tunnel service: `~/.config/systemd/user/chatgpt-conduit-mcp.service`
-- logger service: `~/.config/systemd/user/gpt-dive-conduit-log.service`
-- reconstruction templates: `docs/conduit/runtime/`
-
-The `.sock` node is created by the running tunnel-client and is runtime-only; never commit it.
-
-The existing `@dive` tunnel remains separate.
-
-## Settled
-
-Do not reopen without new evidence:
-
-- project: **Conduit**
-- Web-facing app/namespace: **`@c`**
-- one primary action per call
-- every successful call carries a compact task snapshot
-- completed results are non-destructive on collect in v0
-- Redis is event/fan-out transport, not the owner of Conduit domain semantics
-- ordinary `@c` calls / user turns are the intentional task-refresh cadence
-- server push is not required for the target workflow
-- lack of ChatGPT Web negotiation of `io.modelcontextprotocol/tasks` is not a blocker for this workflow
-- avoid speculative fallback trees; fail explicitly unless resilience protects a high-impact boundary
-- MCP schema/metadata changes require restart/refresh and fresh-session acceptance
-
-## Completed after canary
-
-1. **Light live semantics checks — PASS**
-   - the same completed task was collected twice successfully with the same result;
-   - retained completed tasks remained visible in later automatic snapshots, including across later user turns.
-
-2. **Conversation-driven task pull ADR — ACCEPTED**
-   - `docs/conduit/adr/0001-conversation-driven-task-pull.md`
-   - grounded in the 2026-08-16 fresh-session `start → SOL reasoning → sync` acceptance plus the non-destructive collect/retention check.
-
-3. **First post-canary protocol slice — local PASS**
-   - real pressure observed: retained terminal tasks accumulate in every automatic snapshot for the ExecutionManager retention window;
-   - added `ack(task_id)` as the minimal lifecycle action;
-   - `ack` is terminal-task-only, removes the task from later automatic snapshots, and does not delete the retained ExecutionManager result;
-   - local validation: Conduit tests 6 passed, full pytest 125 passed, ruff PASS, pyright 0 errors / 0 warnings.
-
-4. **TrackedTasks / Opportunistic Evidence Pickup direction — ACCEPTED**
-   - canonical domain language is recorded in `docs/conduit/CONTEXT.md`;
-   - `docs/conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md` accepts the shared refresh/OEP direction across asynchronous runners;
-   - the final `Task` / `TrackedTask` class and cross-runner schema remain intentionally undecided;
-   - automatic TrackedTasks injection into ordinary `@dive` results is an accepted future direction, not current runtime behavior.
-
-5. **Conversation-plane Mirrored Full Output canary — PASS**
-   - one real Web turn sent the complete final text through live `@c emit`;
-   - `@c` returned `emitted: true`;
-   - Redis/NDJSON recorded `action: emit` with Redis ID `1787235113300-0` and the full `result.text`, ending in `Turn Marker: 7`;
-   - the observed event also carried the automatic `tasks` snapshot, which is transport/task-awareness evidence rather than proof that the whole event envelope belongs in canonical conversation domain.
-
-## Next
-
-1. **ACP projection canary — PASS; minimum session-correlation slice local PASS**
-   - the real Mirrored Full Output event confirms `result.text` maps directly to an ACP v1 `agent_message_chunk`;
-   - existing `emit` semantics already mean a complete assistant answer, so successful `emit` maps deterministically to normal ACP `stopReason=end_turn`; no new stop field is needed for the first normal-turn path;
-   - optional top-level `session_id` correlation is now implemented for `emit`, while legacy emit behavior and `result.text` remain unchanged;
-   - focused validation: Conduit tests 9 passed, ruff PASS, pyright 0 errors / 0 warnings; live MCP acceptance of the new field still requires restart/refresh in a fresh Web session;
-   - Redis ID, transport timestamp, and the automatic task snapshot remain outside conversation semantics without further evidence;
-   - prompt ingress should reuse the already-proven Edge/Playwright input-only primitive; cancellation gets its own later live acceptance rather than a fake/no-op mapping;
-   - ACP stable wire protocol version `1` is the first compatibility target; ACP v2 remains alpha and is only a forward-compatibility check.
-   - disposable stdio canary now passes local `initialize` and `session/new` NDJSON handshakes with protocol-only stdout; the remaining live acceptance is the real `session/prompt` loop through Edge input and correlated Conduit output.
-
-2. **Fresh-session `ack` acceptance after MCP restart/refresh**
-   - start and complete a small task;
-   - `ack(task_id)` and confirm it disappears from the returned automatic snapshot;
-   - collect the same task after ack and confirm the retained result is still readable;
-   - schema/metadata changed, so a fresh ChatGPT Web tool surface is the authority for this action.
-
-3. **Continue post-canary protocol design only from observed workflow pressure**
-   - keep the Web-facing surface small;
-   - do not prematurely hide all GPT Dive execution behind Conduit.
-
-4. **Later: myWeb / Council generalization**
-   - reuse the existing Council Svelte/Starlette work where useful;
-   - preserve asymmetric transport: browser/Edge for input, explicit `@c` path for meaningful SOL output.
-
-5. **Later: GBrain pipeline**
-   - ingest selected/distilled Conduit events as a separate source/group;
-   - do not blindly embed raw logs/tool payloads or pollute the current Pydantic corpus.
-
-## Infrastructure cleanup — complete
-
-Conduit health/admin listener cleanup is complete:
-
-```text
-@c → ~/.local/run/gpt-dive/tunnel-conduit.sock   PASS
-```
-
-Verified after restart on 2026-08-16: socket exists, `/readyz` returns `ready`, `/healthz` returns `live`, the old `~/.local/run/tunnel-conduit.sock` is gone, and `127.0.0.1:8081` is no longer listening.
-
-The Dive tunnel is also migrated to the same runtime socket directory:
-
-```text
-@dive → ~/.local/run/gpt-dive/tunnel-dive.sock      PASS
-@c    → ~/.local/run/gpt-dive/tunnel-conduit.sock   PASS
-```
-
-Pre-restart `tunnel-client doctor --profile wsl2-exec` passed. After the delayed Dive tunnel restart, a fresh ChatGPT Web session verified both paths with `test -S`/equivalent and confirmed that both are actual Unix domain sockets. That final fresh-session test intentionally did **not** re-check TCP ports or `/readyz` / `/healthz`; do not claim those as part of the final Dive acceptance evidence.
-
-Repo reconstruction templates live in `docs/conduit/runtime/`; runtime socket nodes and secrets do not belong in Git.
-
-Operational note: with the Conduit service already running, `tunnel-client doctor --profile conduit` may report `health_listener` failure because the Unix socket is already bound. For config acceptance, stop the Conduit tunnel service, remove any stale socket node, run `doctor`, then start the service and use `/readyz` + `/healthz` as runtime authority.
-
-Also housekeeping only: the control-plane tunnel display name was created as `wsl2-conuit` (missing `d`). This does not affect operation.
-
-## Known unrelated issue
-
-During code review, `agy_worker()` produced no review output because headless `read_file` permission was auto-denied despite the expected read-only worker contract. This is an `agy_worker` config/contract issue, not a Conduit failure, and was intentionally left out of the canary scope.
-
-## Fresh-session reading order
-
-```text
-@dive bootstrap
-→ docs/conduit/README.md
-→ docs/conduit/bootstrap.md
-→ docs/conduit/CONTEXT.md
-→ docs/conduit/CONTINUATION.md
-→ docs/conduit/adr/0_brainstorm-and-design-draft.md only when active design detail is needed
-```
-
-Suggested workflow skills for the next non-trivial slice:
-
-- `/grill-me` for consequential user decisions
-- `/to-spec` before implementation
-- `/implement`
-- `/code-review`
-- `/handoff` or `/final` to refresh this file
-
-## Authority
-
-- Stable context: `docs/conduit/bootstrap.md`
-- Document map: `docs/conduit/README.md`
-- Active pre-ADR draft: `docs/conduit/adr/0_brainstorm-and-design-draft.md`
-- Canary plan: `plans/plan-260816-conduit-canary.md`
-- Runtime architecture: `docs/runtime/architecture.md`
-- Council precedent: `docs/council/README.md`, `docs/council/history.md`
-- Model economics/routing: `~/wiki/user/models-and-providers.md`
-- GBrain: `~/wiki/infra/gbrain.md`
-- Edge/Playwright: `~/wiki/skills/web/edge-playwright.md`
+- `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
+  - Authority for the shared Execution/Task identity and lifecycle now consumed here.
+- `docs/conduit/adr/0001-conversation-driven-task-pull.md`
+  - Preserves why conversation-driven refresh and non-destructive retrieval exist; its historical collect naming is superseded by current `get`.
+- `docs/conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md`
+  - Preserves the accepted cross-surface awareness and OEP direction.

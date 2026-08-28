@@ -84,7 +84,6 @@ class CallableRegistry:
         parts = [
             "from typing import Any",
             "CWD: str",
-            "BACKGROUND: bool",
             "CAPABILITIES: dict[str, dict[str, str]]",
         ]
         if include_payload:
@@ -106,7 +105,6 @@ class MontyCodeRuntime:
         registry: CallableRegistry,
         cwd: str | None = None,
         payload: str | None = None,
-        background: bool = False,
     ) -> dict[str, Any]:
         if not code.strip():
             raise ValueError("code must not be empty")
@@ -117,7 +115,6 @@ class MontyCodeRuntime:
         host_os = HostFileSystemOS(cwd=run_cwd, home=Path.home())
         inputs: dict[str, Any] = {
             "CWD": run_cwd,
-            "BACKGROUND": background,
             "CAPABILITIES": registry.describe(),
         }
         if payload is not None:

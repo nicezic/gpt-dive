@@ -4,17 +4,19 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from mcp_types import CallToolResult, TextContent
 
 import gpt_dive
 from gpt_dive import app
 
 
-def test_mcp_surface_is_exactly_two_tools() -> None:
+def test_mcp_surface_is_exactly_three_tools() -> None:
     tools = asyncio.run(gpt_dive.mcp.list_tools())
     assert {tool.name for tool in tools} == {
         "bootstrap",
         "code_mode",
+        "task",
     }
 
 
@@ -22,17 +24,6 @@ def test_server_description_requires_bootstrap_first() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
     assert "Call bootstrap first." in description
-    assert "run_command" not in description
-    assert "wsl2_sync" not in description
-    assert "wsl2_async" not in description
-
-
-def test_server_instructions_do_not_own_progress_presentation() -> None:
-    instructions = gpt_dive.mcp.instructions
-    assert instructions is not None
-    assert "exactly two concise user-visible lines" not in instructions
-    assert "Line 1" not in instructions
-    assert "Line 2" not in instructions
 
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
@@ -40,43 +31,64 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     tool = tools["code_mode"]
     description = tool.description
     assert description is not None
-    assert "Primary programmable execution root for GPT Dive" in description
-    assert "Write code as Monty/Python orchestration" in description
-    assert "Prefer registered capabilities directly" in description
-    assert "Decide dependencies first" in description
-    assert "run_command" not in description
-    assert "wsl2_sync" not in description
-    assert "wsl2_async" not in description
-    assert "Every MCP call requires payload as a string" in description
-    assert (
-        "CAPABILITIES provides the live inner capability signatures + descriptions"
-        in description
-    )
-    assert (
-        "Never invent capability names, arguments, optional fields, or return shapes"
-        in description
-    )
-    assert "payload" in tool.input_schema["required"]
-    assert tool.input_schema["properties"]["payload"]["type"] == "string"
-    assert "timeout" not in tool.input_schema["properties"]
-    task_schema = tool.input_schema["properties"]["task"]
-    task_variants = {
-        variant.get("$ref") or variant.get("type") for variant in task_schema["anyOf"]
+    assert "always-durable" in description
+    assert "bounded inline delivery" in description
+    assert "Task handle for the same continuing Execution" in description
+    schema = tool.input_schema
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["label", "code"]
+    assert schema["properties"]["label"]["maxLength"] == 80
+    assert schema["properties"]["label"]["minLength"] == 1
+    assert schema["properties"]["mode"]["enum"] == ["auto", "task"]
+
+    assert tool.output_schema is not None
+    output_union = tool.output_schema["properties"]["result"]
+    assert output_union["discriminator"]["propertyName"] == "kind"
+    assert set(output_union["discriminator"]["mapping"]) == {
+        "completed",
+        "task",
+        "error",
     }
-    assert "#/$defs/TaskLaunch" in task_variants and "null" in task_variants
-    launch = tool.input_schema["$defs"]["TaskLaunch"]["properties"]
-    assert launch["label"]["maxLength"] == 80
-    assert launch["label"]["minLength"] == 1
-    assert "status_cmd" not in launch
-    assert "status" in launch
-    assert "background" not in tool.input_schema["properties"]
-    assert "execution_id" in tool.input_schema["properties"]
-    assert "job_id" not in tool.input_schema["properties"]
-    action_variants = tool.input_schema["properties"]["action"]["anyOf"]
-    assert {tuple(v.get("enum", [])) for v in action_variants} >= {
-        ("status", "result", "cancel")
+
+
+def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    schema = tools["task"].input_schema
+    request = schema["properties"]["request"]
+
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["request"]
+    assert request["discriminator"]["propertyName"] == "action"
+    assert set(request["discriminator"]["mapping"]) == {
+        "list",
+        "get",
+        "cancel",
+        "dismiss",
     }
-    assert "input" not in tool.input_schema["properties"]
+    assert all(
+        definition["additionalProperties"] is False
+        for definition in schema["$defs"].values()
+    )
+
+
+def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> None:
+    async def call(name: str, arguments: dict[str, Any]) -> None:
+        await app.mcp._tool_manager.call_tool(
+            name,
+            arguments,
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    with pytest.raises(Exception, match="Extra inputs are not permitted"):
+        asyncio.run(
+            call(
+                "code_mode",
+                {"label": "strict", "code": "1", "timeout": 999},
+            )
+        )
+    with pytest.raises(Exception, match="Extra inputs are not permitted"):
+        asyncio.run(call("task", {"request": {"action": "list", "extra": True}}))
 
 
 def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> (
@@ -90,19 +102,7 @@ def test_server_instructions_require_web_first_error_response_and_code_mode_defa
         in instructions
     )
     assert "Never invent capability names" in instructions
-    assert "wsl2_sync" not in instructions
-    assert "wsl2_async" not in instructions
-    assert "run_command" not in instructions
-
-
-def test_code_mode_schema_does_not_assume_path_is_injected() -> None:
-    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
-    tool = tools["code_mode"]
-    assert tool.description is not None
-    assert "Prefer registered capabilities directly" in tool.description
-    properties = tool.input_schema["properties"]
-    assert "Path(CWD)" not in properties["code"]["description"]
-    assert "Path(CWD)" not in properties["cwd"]["description"]
+    assert "task tool for list/get/cancel/dismiss" in instructions
 
 
 def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
@@ -119,9 +119,13 @@ def _middleware_tool_result(text: str = "ok") -> CallToolResult:
 
 
 async def _call_tracked_tasks_middleware(
-    tool_name: str, result: CallToolResult
+    tool_name: str,
+    result: CallToolResult,
+    connection_state: dict[str, object] | None = None,
 ) -> CallToolResult:
-    connection = SimpleNamespace(state={})
+    connection = SimpleNamespace(
+        state=connection_state if connection_state is not None else {}
+    )
     session = SimpleNamespace(_connection=connection)
     ctx = SimpleNamespace(
         method="tools/call", params={"name": tool_name}, session=session
@@ -140,10 +144,12 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
         assert limit == 8
         return [
             {
+                "execution_id": "a" * 6,
                 "label": "AGY worker",
-                "state": "working",
+                "state": "running",
+                "reason": None,
+                "finished_at": None,
                 "elapsed_seconds": 261,
-                "status_label": "TODOS 3/9",
             }
         ]
 
@@ -163,9 +169,9 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
     assert primary_content.text == "PRIMARY"
     assert "TrackedTasks" in awareness.text
     assert "AGY worker" in awareness.text
-    assert "working" in awareness.text
+    assert "running" in awareness.text
     assert "4:21" in awareness.text
-    assert "TODOS 3/9" in awareness.text
+    assert "a" * 6 in awareness.text
 
 
 def test_tracked_tasks_middleware_failure_preserves_primary_result(monkeypatch) -> None:
@@ -183,11 +189,38 @@ def test_tracked_tasks_middleware_failure_preserves_primary_result(monkeypatch) 
 
     assert result.structured_content == {"answer": 3}
     primary_content = result.content[0]
-    awareness = result.content[-1]
     assert isinstance(primary_content, TextContent)
-    assert isinstance(awareness, TextContent)
     assert primary_content.text == "PRIMARY"
-    assert "TrackedTasks unavailable" in awareness.text
+    assert len(result.content) == 1
+
+
+def test_tracked_tasks_emits_only_when_visible_state_changes(monkeypatch) -> None:
+    projected = {
+        "execution_id": "b" * 6,
+        "label": "build",
+        "state": "running",
+        "reason": None,
+        "finished_at": None,
+        "elapsed_seconds": 1,
+    }
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [projected])
+    state: dict[str, object] = {}
+
+    first = asyncio.run(
+        _call_tracked_tasks_middleware("code_mode", _middleware_tool_result(), state)
+    )
+    projected["elapsed_seconds"] = 90
+    unchanged = asyncio.run(
+        _call_tracked_tasks_middleware("code_mode", _middleware_tool_result(), state)
+    )
+    projected.update(state="completed", finished_at="2026-08-27T00:00:00Z")
+    changed = asyncio.run(
+        _call_tracked_tasks_middleware("code_mode", _middleware_tool_result(), state)
+    )
+
+    assert len(first.content) == 2
+    assert len(unchanged.content) == 1
+    assert len(changed.content) == 2
 
 
 async def _call_periodic_reminder_middleware(

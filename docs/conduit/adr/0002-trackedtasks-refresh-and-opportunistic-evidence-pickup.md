@@ -1,12 +1,14 @@
 ---
 title: ADR - TrackedTasks Refresh and Opportunistic Evidence Pickup
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-28
 type: decision
 status: accepted
 ---
 
 # ADR - TrackedTasks Refresh and Opportunistic Evidence Pickup
+
+> Runtime renewal note: the cross-surface awareness decision is now implemented over Runtime's single `execution_id` and SQLite Task projection. Work is always durable; “detached/background” wording below describes the user workflow, not a second execution lane.
 
 ## Decision
 
