@@ -11,7 +11,7 @@ import shlex
 import sys
 import time
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Coroutine, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -28,7 +28,7 @@ _INLINE_WAIT_SECONDS = 100.0
 _INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
 _TASK_LIST_LIMIT = 50
 _TRACKED_TASKS_REVISION_STATE_KEY = "gpt_dive_tracked_tasks_revision"
-_PENDING_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
+_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 TRACKED_TASKS_LIMIT = 8
 TRACKED_TASKS_MAX_BYTES = 4096
 
@@ -512,9 +512,10 @@ def _start_code_mode_execution(
     )
 
 
-def _track_runtime_followup(followup: asyncio.Task[None]) -> None:
-    _PENDING_RUNTIME_FOLLOWUPS.add(followup)
-    followup.add_done_callback(_PENDING_RUNTIME_FOLLOWUPS.discard)
+def _spawn_followup(coro: Coroutine[Any, Any, None]) -> None:
+    followup = asyncio.create_task(coro)
+    _RUNTIME_FOLLOWUPS.add(followup)
+    followup.add_done_callback(_RUNTIME_FOLLOWUPS.discard)
 
 
 async def _publish_accepted_task(
@@ -538,10 +539,6 @@ async def _observe_launch(launch_task: asyncio.Task[dict[str, Any]]) -> None:
         await asyncio.shield(launch_task)
 
 
-def _defer_launch_observation(
-    launch_task: asyncio.Task[dict[str, Any]],
-) -> None:
-    _track_runtime_followup(asyncio.create_task(_observe_launch(launch_task)))
 
 
 async def _publish_during_launch(
@@ -565,14 +562,6 @@ async def _publish_during_launch(
             await _publish_accepted_task(manager, execution_id)
 
 
-def _defer_publication_during_launch(
-    manager: ExecutionManager,
-    launch_task: asyncio.Task[dict[str, Any]],
-    execution_id: str,
-) -> None:
-    _track_runtime_followup(
-        asyncio.create_task(_publish_during_launch(manager, launch_task, execution_id))
-    )
 
 
 async def _preserve_interrupted_launch(
@@ -581,9 +570,9 @@ async def _preserve_interrupted_launch(
     execution_id: str,
 ) -> None:
     if await _publish_for_transport_loss(manager, execution_id):
-        _defer_launch_observation(launch_task)
+        _spawn_followup(_observe_launch(launch_task))
         return
-    _defer_publication_during_launch(manager, launch_task, execution_id)
+    _spawn_followup(_publish_during_launch(manager, launch_task, execution_id))
 
 
 async def _publish_execution(manager: ExecutionManager, execution_id: str) -> None:
@@ -591,10 +580,6 @@ async def _publish_execution(manager: ExecutionManager, execution_id: str) -> No
         await _publish_accepted_task(manager, execution_id)
 
 
-def _defer_execution_publication(manager: ExecutionManager, execution_id: str) -> None:
-    _track_runtime_followup(
-        asyncio.create_task(_publish_execution(manager, execution_id))
-    )
 
 
 async def _wait_for_acceptance(
@@ -787,14 +772,14 @@ async def code_mode(
             await _preserve_interrupted_launch(executions, launch_task, execution_id)
             raise
         except Exception as exc:
-            _defer_publication_during_launch(executions, launch_task, execution_id)
+            _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
             return await _code_mode_launch_error(
                 execution_id,
                 clean_label,
                 exc,
                 response_deadline=response_deadline,
             )
-        _defer_launch_observation(launch_task)
+        _spawn_followup(_observe_launch(launch_task))
         return CodeModeTask(
             execution_id=execution_id,
             label=clean_label,
@@ -848,7 +833,7 @@ async def code_mode(
                         launch_exception,
                         response_deadline=response_deadline,
                     )
-                _defer_publication_during_launch(executions, launch_task, execution_id)
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 raise TimeoutError(
                     "Code Mode response deadline expired before acceptance"
                 ) from exc
@@ -870,7 +855,7 @@ async def code_mode(
                 )
                 raise
             except TimeoutError:
-                _defer_publication_during_launch(executions, launch_task, execution_id)
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 return _code_mode_error(
                     execution_id,
                     clean_label,
@@ -881,14 +866,14 @@ async def code_mode(
                     ),
                 )
             except Exception as exc:
-                _defer_publication_during_launch(executions, launch_task, execution_id)
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 return _code_mode_error(
                     execution_id,
                     clean_label,
                     code="task_publication_failed",
                     message=str(exc) or "Task publication failed.",
                 )
-            _defer_launch_observation(launch_task)
+            _spawn_followup(_observe_launch(launch_task))
             return CodeModeTask(
                 execution_id=execution_id,
                 label=clean_label,
@@ -910,10 +895,10 @@ async def code_mode(
         )
     except asyncio.CancelledError:
         if not await _publish_for_transport_loss(executions, execution_id):
-            _defer_execution_publication(executions, execution_id)
+            _spawn_followup(_publish_execution(executions, execution_id))
         raise
     except TimeoutError:
-        _defer_execution_publication(executions, execution_id)
+        _spawn_followup(_publish_execution(executions, execution_id))
         return _code_mode_error(
             execution_id,
             clean_label,
