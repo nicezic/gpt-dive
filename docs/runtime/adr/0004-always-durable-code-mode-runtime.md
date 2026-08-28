@@ -319,7 +319,7 @@ TrackedTasks는 SQLite 상태 위의 projection이며, 결코 두 번째 저장�
 - 한 호출이 두 가지 성공 전달 결과를 갖게 되지만, discriminated result가 그 구분을 명시한다.
 - inline으로 완료된 Execution 대부분은 Task가 되지 않는다. 이는 **의도된 것**이다.
 - 결과 조회가 비파괴적이므로 명시적 dismiss라는 lifecycle action 하나가 늘지만, 정직한 awareness를 지킨다.
-- 1시간 상한은 통상적인 대형 테스트·빌드를 허용하면서 유한한 resource containment를 유지한다.
+- 12시간 상한은 통상적인 대형 테스트·빌드를 허용하면서 유한한 resource containment를 유지한다.
 - 일상적인 명령을 subagent로 우회시키지 않고 직접 shell을 되찾되, 부모 Execution에 의해 여전히 bounded된다.
 - clean break이므로 schema·persistence·test·문서 변경이 함께 움직여야 한다.
 
