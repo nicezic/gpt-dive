@@ -101,6 +101,8 @@ _피할 표현_: backing state가 확실히 사라졌는데 stale이라고 부�
 
 - `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
   - 여기 정의한 lifecycle, delivery, deadline, persistence, 공개 surface의 decision authority.
+- `docs/runtime/adr/0005-post-renewal-simplification.md`
+  - 위 결정 권위를 보존하면서 구현 구조를 단순화한 리팩토링 기록.
 - `CONTEXT-MAP.md`
   - Conduit가 Runtime 언어를 소유하지 않고 사용하는 관계를 보여준다.
 - `src/gpt_dive/app.py`, `src/gpt_dive/execution_manager.py`
