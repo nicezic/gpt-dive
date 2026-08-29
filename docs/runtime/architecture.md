@@ -183,8 +183,8 @@ src/gpt_dive/
 
 - `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
   - Clean-break 설계와 폐기안의 accepted authority.
-- `docs/runtime/adr/0005-post-renewal-simplification.md`
-      - 리뉴얼 이후 구현 구조 단순화(간접층 제거)의 결정 기록.
+- `docs/runtime/adr/0005-code-mode-output-contract.md`
+  - Code Mode intermediate value, console/progress, final result의 의미와 경계를 정의한다.
 - `docs/runtime/timeouts.md`
   - Response, work, cleanup, child-budget clock의 정확한 값.
 - `docs/runtime/operations.md`
