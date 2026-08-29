@@ -25,16 +25,17 @@ def install_manager(monkeypatch: pytest.MonkeyPatch, root: Path) -> ExecutionMan
 
 async def wait_task_ready(
     execution_id: str, *, timeout: float = 6.0
-) -> app.TaskGetOutput:
+) -> app.CodeModeOutcome:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         outcome = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        assert isinstance(outcome, app.TaskGetOutput)
-        if outcome.ready or outcome.unavailable:
-            return outcome
-        await asyncio.sleep(0.01)
+        if isinstance(outcome, app.CodeModeTask):
+            await asyncio.sleep(0.01)
+            continue
+        assert isinstance(outcome, (app.CodeModeCompleted, app.CodeModeError))
+        return outcome
     raise AssertionError("Code Mode Task did not finish")
 
 
@@ -144,23 +145,62 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
         )
         assert isinstance(outcome, app.CodeModeTask)
         execution_id = outcome.execution_id
+        assert outcome.model_dump() == {
+            "kind": "task",
+            "execution_id": execution_id,
+            "state": outcome.state,
+        }
         assert manager.store.get_task(execution_id)["execution_id"] == execution_id
 
         first = await wait_task_ready(execution_id)
         second = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        assert isinstance(second, app.TaskGetOutput)
-        assert first.result == second.result
-        assert first.result is not None
-        assert first.result["kind"] == "completed"
-        assert first.result["result"]["result"]["stdout"] == "SLOW"
+        assert isinstance(first, app.CodeModeCompleted)
+        assert isinstance(second, app.CodeModeCompleted)
+        assert first.model_dump() == second.model_dump()
+        assert first.execution_id == execution_id
+        assert first.output["stdout"] == "SLOW"
+        assert set(first.model_dump()) == {"kind", "execution_id", "output"}
 
         dismissed = await app.task(
             app.TaskDismissRequest(action="dismiss", execution_id=execution_id)
         )
         assert isinstance(dismissed, app.TaskDismissOutput)
         assert dismissed.dismissed is True
+
+    asyncio.run(scenario())
+
+
+def test_task_get_keeps_lost_execution_in_error_vocabulary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+
+    async def scenario() -> None:
+        started = await app.code_mode(
+            label="retained result",
+            code="{'answer': 3}",
+            cwd=str(tmp_path),
+            mode="task",
+        )
+        assert isinstance(started, app.CodeModeTask)
+        completed = await wait_task_ready(started.execution_id)
+        assert isinstance(completed, app.CodeModeCompleted)
+
+        record = manager.store.get(started.execution_id)
+        Path(str(record["stdout_path"])).unlink()
+
+        first = await app.task(
+            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+        )
+        second = await app.task(
+            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+        )
+        assert isinstance(first, app.CodeModeError)
+        assert isinstance(second, app.CodeModeError)
+        assert first.execution_id == started.execution_id
+        assert second.model_dump() == first.model_dump()
 
     asyncio.run(scenario())
 
@@ -317,9 +357,19 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
         )
         assert time.monotonic() - started < 0.1
         assert isinstance(outcome, app.CodeModeTask)
+        assert outcome.model_dump() == {
+            "kind": "task",
+            "execution_id": outcome.execution_id,
+            "state": outcome.state,
+        }
         assert manager.store.get_task(outcome.execution_id)["execution_id"] == (
             outcome.execution_id
         )
+        collected = await app.task(
+            app.TaskGetRequest(action="get", execution_id=outcome.execution_id)
+        )
+        assert isinstance(collected, app.CodeModeTask)
+        assert collected.model_dump() == outcome.model_dump()
         release_launch.set()
 
     asyncio.run(scenario())

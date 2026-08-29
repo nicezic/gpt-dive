@@ -65,6 +65,19 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         "cancel",
         "dismiss",
     }
+
+    tool = tools["task"]
+    assert tool.output_schema is not None
+    output_union = tool.output_schema["properties"]["result"]["anyOf"]
+    delivery = next(item for item in output_union if "discriminator" in item)
+    assert delivery["discriminator"]["propertyName"] == "kind"
+    assert set(delivery["discriminator"]["mapping"]) == {
+        "completed",
+        "task",
+        "error",
+    }
+    task_shape = tool.output_schema["$defs"]["CodeModeTask"]
+    assert set(task_shape["properties"]) == {"kind", "execution_id", "state"}
     assert all(
         definition["additionalProperties"] is False
         for definition in schema["$defs"].values()

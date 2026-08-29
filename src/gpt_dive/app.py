@@ -629,7 +629,6 @@ async def _wait_for_execution(
     return {
         "kind": "task",
         "execution_id": execution_id,
-        "label": task["label"],
         "state": task["state"],
     }
 
@@ -652,7 +651,6 @@ class CodeModeCompleted(_ClosedModel):
 class CodeModeTask(_ClosedModel):
     kind: Literal["task"] = "task"
     execution_id: str
-    label: str
     state: ExecutionState
 
 
@@ -789,7 +787,6 @@ async def code_mode(
         _spawn_followup(_observe_launch(launch_task))
         return CodeModeTask(
             execution_id=execution_id,
-            label=clean_label,
             state=task["state"],
         )
 
@@ -883,7 +880,6 @@ async def code_mode(
             _spawn_followup(_observe_launch(launch_task))
             return CodeModeTask(
                 execution_id=execution_id,
-                label=clean_label,
                 state=task["state"],
             )
     except Exception as exc:
@@ -1022,14 +1018,6 @@ class TaskListOutput(_ClosedModel):
     tasks: list[TaskView]
 
 
-class TaskGetOutput(_ClosedModel):
-    action: Literal["get"] = "get"
-    task: TaskView
-    ready: bool
-    unavailable: bool = False
-    result: Any | None = None
-
-
 class TaskCancelOutput(_ClosedModel):
     action: Literal["cancel"] = "cancel"
     task: TaskView
@@ -1042,10 +1030,7 @@ class TaskDismissOutput(_ClosedModel):
     dismissed: bool
 
 
-TaskOutcome = Annotated[
-    TaskListOutput | TaskGetOutput | TaskCancelOutput | TaskDismissOutput,
-    Field(discriminator="action"),
-]
+TaskOutcome = TaskListOutput | CodeModeOutcome | TaskCancelOutput | TaskDismissOutput
 
 
 def _task_view(value: dict[str, Any]) -> TaskView:
@@ -1057,8 +1042,9 @@ def _task_view(value: dict[str, Any]) -> TaskView:
     title="GPT Dive Task Lifecycle",
     description=(
         "Operate a published Code Mode Task by its single execution_id. list returns "
-        "outstanding awareness, get reads status/result non-destructively, cancel explicitly "
-        "cancels running work, and dismiss removes terminal awareness without deleting retention."
+        "outstanding awareness, get returns the same delivery outcome vocabulary as code_mode, "
+        "cancel explicitly cancels running work, and dismiss removes terminal awareness without "
+        "deleting retention."
     ),
 )
 async def task(request: TaskRequest) -> TaskOutcome:
@@ -1067,11 +1053,17 @@ async def task(request: TaskRequest) -> TaskOutcome:
         return TaskListOutput(tasks=[_task_view(row) for row in rows])
     if isinstance(request, TaskGetRequest):
         result = await asyncio.to_thread(_task_get, request.execution_id)
-        return TaskGetOutput(
-            task=_task_view(result["task"]),
-            ready=bool(result["ready"]),
-            unavailable=bool(result.get("unavailable", False)),
-            result=result.get("result"),
+        if bool(result["ready"]):
+            return _code_mode_outcome(result["result"])
+        if bool(result.get("unavailable", False)):
+            terminal = await asyncio.to_thread(
+                _code_mode_execution_result, request.execution_id
+            )
+            return _code_mode_outcome(terminal)
+        task_view = result["task"]
+        return CodeModeTask(
+            execution_id=str(task_view["execution_id"]),
+            state=task_view["state"],
         )
     if isinstance(request, TaskCancelRequest):
         result = await asyncio.to_thread(_task_cancel, request.execution_id)
