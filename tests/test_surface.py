@@ -11,19 +11,34 @@ import gpt_dive
 from gpt_dive import app
 
 
-def test_mcp_surface_is_exactly_three_tools() -> None:
+def test_mcp_surface_is_exactly_four_tools() -> None:
     tools = asyncio.run(gpt_dive.mcp.list_tools())
     assert {tool.name for tool in tools} == {
         "bootstrap",
         "code_mode",
         "task",
+        "wsl_exec",
     }
 
 
-def test_server_description_requires_bootstrap_first() -> None:
+def test_wsl_exec_is_minimal_raw_shell(tmp_path) -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    schema = tools["wsl_exec"].input_schema
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["command"]
+    assert set(schema["properties"]) == {"command", "cwd"}
+
+    result = app.wsl_exec("printf 'RAW_WSL\n'; pwd", cwd=str(tmp_path))
+    assert result["exit_code"] == 0
+    assert result["stderr"] == ""
+    assert result["stdout"].splitlines() == ["RAW_WSL", str(tmp_path)]
+
+
+def test_server_description_exposes_minimal_raw_wsl_escape_hatch() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
-    assert "Call bootstrap first." in description
+    assert "wsl_exec is the minimal raw-shell escape hatch" in description
+    assert description.count("wsl_exec") == 1
 
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
@@ -65,6 +80,19 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         "cancel",
         "dismiss",
     }
+
+    tool = tools["task"]
+    assert tool.output_schema is not None
+    output_union = tool.output_schema["properties"]["result"]["anyOf"]
+    delivery = next(item for item in output_union if "discriminator" in item)
+    assert delivery["discriminator"]["propertyName"] == "kind"
+    assert set(delivery["discriminator"]["mapping"]) == {
+        "completed",
+        "task",
+        "error",
+    }
+    task_shape = tool.output_schema["$defs"]["CodeModeTask"]
+    assert set(task_shape["properties"]) == {"kind", "execution_id", "state"}
     assert all(
         definition["additionalProperties"] is False
         for definition in schema["$defs"].values()
@@ -91,12 +119,10 @@ def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> Non
         asyncio.run(call("task", {"request": {"action": "list", "extra": True}}))
 
 
-def test_server_instructions_require_web_first_error_response_and_code_mode_default() -> (
-    None
-):
+def test_server_instructions_keep_raw_wsl_out_of_structured_guidance() -> None:
     instructions = gpt_dive.mcp.instructions
     assert instructions is not None
-    assert "use code_mode as the default programmable root" in instructions
+    assert "wsl_exec" not in instructions
     assert (
         "Use Web Search only when the missing evidence is external and current"
         in instructions
@@ -105,13 +131,14 @@ def test_server_instructions_require_web_first_error_response_and_code_mode_defa
     assert "task tool for list/get/cancel/dismiss" in instructions
 
 
-def test_bootstrap_description_starts_with_fresh_session_rule() -> None:
+def test_bootstrap_description_is_only_for_structured_harness() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     description = tools["bootstrap"].description
     assert description is not None
     assert description.startswith(
-        "Always call `bootstrap` first in a fresh ChatGPT Web session"
+        "Call `bootstrap` before `code_mode` in a fresh ChatGPT Web session"
     )
+    assert "wsl_exec" not in description
 
 
 def _middleware_tool_result(text: str = "ok") -> CallToolResult:

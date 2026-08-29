@@ -168,13 +168,14 @@ src/gpt_dive/
 ├─ app.py                 MCP tools, strict schemas, inline delivery, middleware
 ├─ execution_store.py     SQLite lifecycle and awareness transitions
 ├─ execution_manager.py   launch, observe, cancel, recover, retain
+│                         Code Mode result normalization (envelope projection)
 ├─ execution_worker.py    claim-before-code and process-tree containment
-├─ execution_context.py   inherited read-only work budget
 ├─ code_mode_worker.py    durable Monty worker envelope
+├─ code_mode_protocol.py  worker envelope protocol version constant
 ├─ code_runtime.py        Monty runtime and capability registry
 ├─ code_capabilities.py   15 Code Mode capabilities
 ├─ command_runtime.py     awaited bounded run_command
-├─ task_runtime.py        result normalization and TrackedTasks projection
+│                         (TrackedTasks projection lives in app.py)
 └─ conduit/               Runtime 위의 별도 conversation/event surface
 ```
 
@@ -182,6 +183,8 @@ src/gpt_dive/
 
 - `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
   - Clean-break 설계와 폐기안의 accepted authority.
+- `docs/runtime/adr/0005-code-mode-output-contract.md`
+  - Code Mode intermediate value, console/progress, final result의 의미와 경계를 정의한다.
 - `docs/runtime/timeouts.md`
   - Response, work, cleanup, child-budget clock의 정확한 값.
 - `docs/runtime/operations.md`

@@ -5,12 +5,13 @@ import fnmatch
 import os
 import shlex
 import time
+import uuid
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
-from .execution_context import ExecutionContext
+from .execution_store import parse_time, utc_now
 from .runtime_env import build_runtime_path
 from .worker_subprocess import terminate_and_reap
 
@@ -22,8 +23,38 @@ _DRAIN_CHUNK_BYTES = 64 * 1024
 _DENIED_ENV_PATTERNS = (
     *LLM_API_KEY_ENV_PATTERNS,
     "MINIMAX_*",
-    "AIAPIFLOW_*",
+    "MICU_*",
 )
+
+
+def runtime_record(record: dict[str, object]) -> dict[str, object]:
+    """Freeze execution record's wall-clock deadline onto monotonic clock."""
+    view = dict(record)
+    remaining = max(
+        0.0,
+        (parse_time(str(record["work_deadline_at"])) - utc_now()).total_seconds(),
+    )
+    view["work_deadline_monotonic"] = time.monotonic() + remaining
+    return view
+
+
+def remaining_seconds(record: dict[str, object]) -> float:
+    return max(0.0, float(record["work_deadline_monotonic"]) - time.monotonic())
+
+
+def child_budget(record: dict[str, object], policy_seconds: float) -> float:
+    if policy_seconds <= 0:
+        raise ValueError("child capability policy must be greater than 0")
+    remaining = remaining_seconds(record)
+    if remaining <= 0:
+        raise TimeoutError("Execution work budget is exhausted")
+    return min(policy_seconds, remaining)
+
+
+def spill_path(record: dict[str, object], prefix: str) -> Path:
+    directory = Path(str(record["artifact_dir"])) / "capability-output"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return directory / f"{prefix}-{uuid.uuid4().hex}.log"
 
 
 def _open_private_binary(path: Path) -> BinaryIO:
@@ -124,7 +155,7 @@ async def run_command(
     command: str,
     *,
     cwd: str,
-    context: ExecutionContext,
+    record: dict[str, object],
 ) -> dict[str, Any]:
     """Run one awaited local shell command inside the owning Execution.
 
@@ -135,13 +166,13 @@ async def run_command(
     """
     if not command.strip():
         raise ValueError("command must not be empty")
-    effective_budget = context.child_budget(_RUN_COMMAND_POLICY_SECONDS)
+    effective_budget = child_budget(record, _RUN_COMMAND_POLICY_SECONDS)
     command_timeout = effective_budget - _RUN_COMMAND_CLEANUP_RESERVE_SECONDS
     if command_timeout <= 0:
         raise TimeoutError("insufficient Execution budget to start run_command")
 
-    stdout_path = context.spill_path(prefix="run-command-stdout")
-    stderr_path = context.spill_path(prefix="run-command-stderr")
+    stdout_path = spill_path(record, "run-command-stdout")
+    stderr_path = spill_path(record, "run-command-stderr")
     environment = _sanitized_environment()
     runtime_path = environment["PATH"]
     guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
@@ -221,10 +252,10 @@ async def run_command(
             stderr_context_truncated,
         )
     )
-    spill_path: Path | None = None
+    spill_file: Path | None = None
     if truncated:
-        spill_path = context.spill_path(prefix="run-command")
-        _write_spill(stdout_path, stderr_path, spill_path)
+        spill_file = spill_path(record, "run-command")
+        _write_spill(stdout_path, stderr_path, spill_file)
     stdout_path.unlink(missing_ok=True)
     stderr_path.unlink(missing_ok=True)
 
@@ -234,5 +265,5 @@ async def run_command(
         "stderr": stderr,
         "duration_ms": int((time.monotonic() - started) * 1000),
         "truncated": truncated,
-        **({"spill_path": str(spill_path)} if spill_path is not None else {}),
+        **({"spill_path": str(spill_file)} if spill_file is not None else {}),
     }

@@ -356,6 +356,55 @@ class ExecutionStore:
             )
         return self.get(execution_id)
 
+    def _transition_to_terminal(
+        self,
+        execution_id: str,
+        *,
+        entry_states: tuple[str, ...],
+        terminal_state: str,
+        reason: str | None,
+        exit_code: int | None = None,
+        include_exit_code: bool = False,
+        honor_cancel_request: bool = True,
+    ) -> dict[str, Any]:
+        now = iso_time()
+        if honor_cancel_request:
+            state_sql = "CASE WHEN cancel_requested = 1 THEN ? ELSE ? END"
+            reason_sql = "CASE WHEN cancel_requested = 1 THEN ? ELSE ? END"
+            state_vals = ("cancelled", terminal_state)
+            reason_vals = ("cancelled", reason)
+        else:
+            state_sql = "?"
+            reason_sql = "?"
+            state_vals = (terminal_state,)
+            reason_vals = (reason,)
+        
+        exit_code_sql = "exit_code = ?, " if include_exit_code else ""
+        exit_code_vals = (exit_code,) if include_exit_code else ()
+        entry_placeholders = ", ".join("?" for _ in entry_states)
+        
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                f"""
+                UPDATE executions
+                SET state = {state_sql},
+                    reason = {reason_sql},
+                    {exit_code_sql}finished_at = COALESCE(finished_at, ?),
+                    updated_at = ?
+                WHERE execution_id = ? AND state IN ({entry_placeholders})
+                """,
+                (
+                    *state_vals,
+                    *reason_vals,
+                    *exit_code_vals,
+                    now,
+                    now,
+                    execution_id,
+                    *entry_states,
+                ),
+            )
+        return self.get(execution_id)
+
     def finish(
         self,
         execution_id: str,
@@ -371,78 +420,40 @@ class ExecutionStore:
             raise ValueError(f"cannot finish execution in state {current['state']!r}")
 
         if deadline_exceeded:
-            state = "failed"
+            terminal_state = "failed"
             terminal_reason = "deadline_exceeded"
         elif exit_code == 0:
-            state = "completed"
+            terminal_state = "completed"
             terminal_reason = None
         else:
-            state = "failed"
+            terminal_state = "failed"
             terminal_reason = reason or (
                 f"exit_code_{exit_code}" if exit_code is not None else "worker_failed"
             )
-
-        now = iso_time()
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                """
-                UPDATE executions
-                SET state = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE ?
-                    END,
-                    reason = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE ?
-                    END,
-                    exit_code = ?, finished_at = ?, updated_at = ?
-                WHERE execution_id = ? AND state = 'running'
-                """,
-                (state, terminal_reason, exit_code, now, now, execution_id),
-            )
-        return self.get(execution_id)
+        return self._transition_to_terminal(
+            execution_id,
+            entry_states=("running",),
+            terminal_state=terminal_state,
+            reason=terminal_reason,
+            exit_code=exit_code,
+            include_exit_code=True,
+        )
 
     def fail_accepted(self, execution_id: str, *, reason: str) -> dict[str, Any]:
-        now = iso_time()
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                """
-                UPDATE executions
-                SET state = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE 'failed'
-                    END,
-                    reason = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE ?
-                    END,
-                    finished_at = ?, updated_at = ?
-                WHERE execution_id = ? AND state = 'accepted'
-                """,
-                (reason, now, now, execution_id),
-            )
-        return self.get(execution_id)
+        return self._transition_to_terminal(
+            execution_id,
+            entry_states=("accepted",),
+            terminal_state="failed",
+            reason=reason,
+        )
 
     def fail_running(self, execution_id: str, *, reason: str) -> dict[str, Any]:
-        now = iso_time()
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                """
-                UPDATE executions
-                SET state = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE 'failed'
-                    END,
-                    reason = CASE
-                        WHEN cancel_requested = 1 THEN 'cancelled'
-                        ELSE ?
-                    END,
-                    finished_at = ?, updated_at = ?
-                WHERE execution_id = ? AND state = 'running'
-                """,
-                (reason, now, now, execution_id),
-            )
-        return self.get(execution_id)
+        return self._transition_to_terminal(
+            execution_id,
+            entry_states=("running",),
+            terminal_state="failed",
+            reason=reason,
+        )
 
     def mark_lost(self, execution_id: str, *, reason: str) -> dict[str, Any]:
         current = self.get(execution_id)
@@ -450,18 +461,13 @@ class ExecutionStore:
             raise ValueError("an unclaimed accepted Execution is failed, not lost")
         if current["state"] == "lost":
             return current
-        now = iso_time()
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                """
-                UPDATE executions
-                SET state = 'lost', reason = ?, finished_at = COALESCE(finished_at, ?),
-                    updated_at = ?
-                WHERE execution_id = ? AND state != 'accepted'
-                """,
-                (reason, now, now, execution_id),
-            )
-        return self.get(execution_id)
+        return self._transition_to_terminal(
+            execution_id,
+            entry_states=("running", "completed", "failed", "cancelled"),
+            terminal_state="lost",
+            reason=reason,
+            honor_cancel_request=False,
+        )
 
     def delete(self, execution_id: str) -> None:
         self.get(execution_id)

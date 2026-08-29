@@ -56,14 +56,14 @@ def test_verify_provider_model_reports_missing_model(monkeypatch) -> None:
         lambda route: _fake_client(["claude-opus-5", "claude-haiku-4-5-20251001"]),
     )
 
-    present = asyncio.run(registry.verify_provider_model("aiapiflow", "claude-opus-5"))
+    present = asyncio.run(registry.verify_provider_model("micu", "claude-opus-5"))
     assert present == {
         "checked": True,
         "exists": True,
         "available": ["claude-opus-5", "claude-haiku-4-5-20251001"],
     }
 
-    missing = asyncio.run(registry.verify_provider_model("aiapiflow", "nope-1"))
+    missing = asyncio.run(registry.verify_provider_model("micu", "nope-1"))
     assert missing["checked"] is True
     assert missing["exists"] is False
 
@@ -75,7 +75,7 @@ def test_verify_provider_model_soft_skips_on_listing_failure(monkeypatch) -> Non
         raise RuntimeError("endpoint unsupported")
 
     monkeypatch.setattr(registry, "_async_client_for_route", _broken_client)
-    result = asyncio.run(registry.verify_provider_model("aiapiflow", "claude-opus-5"))
+    result = asyncio.run(registry.verify_provider_model("micu", "claude-opus-5"))
     assert result == {"checked": False, "exists": False, "available": []}
 
 

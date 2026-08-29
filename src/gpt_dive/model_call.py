@@ -186,14 +186,14 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     run_prompt: str | list[Any] = prompt
     if (
         peer_review
-        and provider == "kunavo"
+        and provider in ("micu", "micu-opus")
         and model_name == "claude-opus-5"
         and _PEER_CACHE_BREAK in prompt
     ):
         stable_base, round_delta = prompt.split(_PEER_CACHE_BREAK, 1)
         if not stable_base.strip() or not round_delta.strip():
             raise ValueError(
-                "Kunavo peer cache marker requires non-empty base and round delta"
+                "Micu peer cache marker requires non-empty base and round delta"
             )
         run_prompt = [stable_base, CachePoint(ttl="5m"), round_delta]
 

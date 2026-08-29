@@ -11,7 +11,8 @@ from pydantic_monty import MontyRuntimeError, MontyTypingError
 import gpt_dive.code_capabilities as capabilities_module
 from gpt_dive.code_capabilities import build_code_registry, code_runtime
 from gpt_dive.code_runtime import CallableRegistry
-from gpt_dive.execution_context import ExecutionContext
+from gpt_dive.command_runtime import runtime_record
+from gpt_dive.execution_store import ExecutionStore, generate_execution_id
 
 EXPECTED_CAPABILITIES = {
     "read_file",
@@ -35,11 +36,26 @@ EXPECTED_CAPABILITIES = {
 def registry_for_test(
     root: Path, *, duration_seconds: float = 60.0
 ) -> CallableRegistry:
-    context = ExecutionContext.for_test(
-        duration_seconds=duration_seconds,
+    store = ExecutionStore(root / "runtime.sqlite3")
+    execution_id = generate_execution_id()
+    store.create(
+        execution_id=execution_id,
+        kind="test",
+        label="test execution",
+        cwd=str(root),
+        backend="popen",
+        systemd_unit=None,
+        work_timeout_seconds=duration_seconds,
+        cleanup_timeout_seconds=10.0,
+        request_path=root / "request.json",
         artifact_dir=root / "artifacts",
+        stdout_path=root / "stdout.log",
+        stderr_path=root / "stderr.log",
+        outcome_path=root / "outcome.json",
     )
-    return build_code_registry(str(root), execution_context=context)
+    record = runtime_record(store.get(execution_id))
+    (root / "artifacts").mkdir(parents=True, exist_ok=True)
+    return build_code_registry(str(root), record=record)
 
 
 def run_code(

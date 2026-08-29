@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gpt_dive import app
+import gpt_dive.execution_manager as execution_manager
 from gpt_dive.execution_manager import ExecutionManager
 
 
@@ -24,17 +25,33 @@ def install_manager(monkeypatch: pytest.MonkeyPatch, root: Path) -> ExecutionMan
 
 async def wait_task_ready(
     execution_id: str, *, timeout: float = 6.0
-) -> app.TaskGetOutput:
+) -> app.CodeModeOutcome:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         outcome = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        assert isinstance(outcome, app.TaskGetOutput)
-        if outcome.ready or outcome.unavailable:
-            return outcome
-        await asyncio.sleep(0.01)
+        if isinstance(outcome, app.CodeModeTask):
+            await asyncio.sleep(0.01)
+            continue
+        assert isinstance(outcome, (app.CodeModeCompleted, app.CodeModeError))
+        return outcome
     raise AssertionError("Code Mode Task did not finish")
+
+
+@pytest.mark.parametrize(
+    ("outcome_type", "fields"),
+    [
+        (app.CodeModeCompleted, {"kind", "execution_id", "output"}),
+        (app.CodeModeTask, {"kind", "execution_id", "state"}),
+        (app.CodeModeError, {"kind", "execution_id", "code", "message"}),
+    ],
+)
+def test_public_outcome_models_lock_llm_contract_fields(
+    outcome_type: type, fields: set[str]
+) -> None:
+    assert set(outcome_type.model_fields) == fields
+    assert outcome_type.model_config["extra"] == "forbid"
 
 
 def test_inline_completion_keeps_execution_unpublished(
@@ -47,12 +64,104 @@ def test_inline_completion_keeps_execution_unpublished(
     )
 
     assert isinstance(outcome, app.CodeModeCompleted)
-    assert outcome.result == {"result": 3}
+    assert outcome.model_dump() == {
+        "kind": "completed",
+        "execution_id": outcome.execution_id,
+        "output": 3,
+    }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "completed"
     assert record["published_at"] is None
     assert record["request_path"] == ""
     assert not (manager.root / outcome.execution_id / "input.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("'direct text'", "direct text"),
+        ("[1, 'two', {'three': 3}]", [1, "two", {"three": 3}]),
+        ("{'answer': 42, 'items': [1, 2]}", {"answer": 42, "items": [1, 2]}),
+    ],
+)
+def test_inline_completion_preserves_final_expression_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    expected: object,
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(app.code_mode(label="typed output", code=code, cwd=str(tmp_path)))
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.output == expected
+    assert set(outcome.model_dump()) == {"kind", "execution_id", "output"}
+
+
+def test_inline_completion_does_not_replay_print_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(
+        app.code_mode(
+            label="print separation",
+            code="""print('INTERMEDIATE NOISE')
+{'answer': 3}""",
+            cwd=str(tmp_path),
+        )
+    )
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.model_dump() == {
+        "kind": "completed",
+        "execution_id": outcome.execution_id,
+        "output": {"answer": 3},
+    }
+
+
+def test_inline_completion_keeps_gathered_intermediates_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+    (tmp_path / "left.txt").write_text("LEFT_MARK " + "A" * 20_000)
+    (tmp_path / "right.txt").write_text("RIGHT_MARK " + "B" * 20_000)
+
+    outcome = asyncio.run(
+        app.code_mode(
+            label="local reduction",
+            code="""left, right = await asyncio.gather(
+    read_file('left.txt'), read_file('right.txt')
+)
+{'left': 'LEFT_MARK' in left, 'right': 'RIGHT_MARK' in right}""",
+            cwd=str(tmp_path),
+        )
+    )
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.output == {"left": True, "right": True}
+    assert "AAAA" not in repr(outcome.model_dump())
+    assert "BBBB" not in repr(outcome.model_dump())
+
+
+def test_inline_runtime_failure_exposes_compact_error_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(
+        app.code_mode(label="runtime failure", code="1 / 0", cwd=str(tmp_path))
+    )
+
+    assert isinstance(outcome, app.CodeModeError)
+    assert outcome.model_dump() == {
+        "kind": "error",
+        "execution_id": outcome.execution_id,
+        "code": "execution_error",
+        "message": outcome.message,
+    }
+    assert outcome.message
 
 
 def test_inline_wait_expiry_publishes_same_continuing_execution(
@@ -70,23 +179,67 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
         )
         assert isinstance(outcome, app.CodeModeTask)
         execution_id = outcome.execution_id
+        assert outcome.model_dump() == {
+            "kind": "task",
+            "execution_id": execution_id,
+            "state": outcome.state,
+        }
         assert manager.store.get_task(execution_id)["execution_id"] == execution_id
 
         first = await wait_task_ready(execution_id)
         second = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        assert isinstance(second, app.TaskGetOutput)
-        assert first.result == second.result
-        assert first.result is not None
-        assert first.result["kind"] == "completed"
-        assert first.result["result"]["result"]["stdout"] == "SLOW"
+        assert isinstance(first, app.CodeModeCompleted)
+        assert isinstance(second, app.CodeModeCompleted)
+        assert first.model_dump() == second.model_dump()
+        assert first.execution_id == execution_id
+        assert first.output["stdout"] == "SLOW"
+        assert set(first.model_dump()) == {"kind", "execution_id", "output"}
 
         dismissed = await app.task(
             app.TaskDismissRequest(action="dismiss", execution_id=execution_id)
         )
         assert isinstance(dismissed, app.TaskDismissOutput)
         assert dismissed.dismissed is True
+
+    asyncio.run(scenario())
+
+
+def test_task_get_keeps_lost_execution_in_error_vocabulary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+
+    async def scenario() -> None:
+        started = await app.code_mode(
+            label="retained result",
+            code="{'answer': 3}",
+            cwd=str(tmp_path),
+            mode="task",
+        )
+        assert isinstance(started, app.CodeModeTask)
+        completed = await wait_task_ready(started.execution_id)
+        assert isinstance(completed, app.CodeModeCompleted)
+
+        record = manager.store.get(started.execution_id)
+        Path(str(record["stdout_path"])).unlink()
+
+        first = await app.task(
+            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+        )
+        second = await app.task(
+            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+        )
+        assert isinstance(first, app.CodeModeError)
+        assert isinstance(second, app.CodeModeError)
+        assert first.model_dump() == {
+            "kind": "error",
+            "execution_id": started.execution_id,
+            "code": "lost",
+            "message": "Code Mode Execution outcome is no longer observable.",
+        }
+        assert second.model_dump() == first.model_dump()
 
     asyncio.run(scenario())
 
@@ -129,12 +282,10 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def stalled_popen(*_args: object, **_kwargs: object) -> None:
         release_launch.wait(timeout=0.3)
 
-    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
     monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.02)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.2)
 
@@ -160,7 +311,11 @@ def test_post_acceptance_response_timeout_returns_structured_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
-    monkeypatch.setattr(manager, "_spawn_worker", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        execution_manager.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.08)
 
@@ -183,7 +338,15 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         assert time.monotonic() - started < 0.16
 
         assert isinstance(outcome, app.CodeModeError)
-        assert outcome.error.code == "response_deadline_exceeded"
+        assert outcome.model_dump() == {
+            "kind": "error",
+            "execution_id": outcome.execution_id,
+            "code": "response_deadline_exceeded",
+            "message": (
+                "Code Mode Execution was accepted, but response shaping did not "
+                "finish before the response deadline."
+            ),
+        }
         assert manager.store.get(outcome.execution_id)["state"] == "accepted"
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
@@ -202,22 +365,22 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
 
-    def timeout_after_acceptance(
-        _execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def timeout_popen(*_args: object, **_kwargs: object) -> None:
         raise TimeoutError("launcher response timed out")
 
-    monkeypatch.setattr(manager, "_spawn_worker", timeout_after_acceptance)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", timeout_popen)
 
     outcome = asyncio.run(
         app.code_mode(label="launch timeout", code="1 + 2", cwd=str(tmp_path))
     )
 
     assert isinstance(outcome, app.CodeModeError)
-    assert outcome.error.code == "launch_interrupted"
-    assert outcome.error.message == "launcher response timed out"
+    assert outcome.model_dump() == {
+        "kind": "error",
+        "execution_id": outcome.execution_id,
+        "code": "launch_interrupted",
+        "message": "launcher response timed out",
+    }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"
     assert record["reason"] == "launch_interrupted"
@@ -229,12 +392,10 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
     manager = install_manager(monkeypatch, tmp_path / "executions")
     release_launch = threading.Event()
 
-    def stalled_spawn(_execution_id: str, *, backend: str, unit: str | None) -> None:
-        assert backend == "popen"
-        assert unit is None
+    def stalled_popen(*_args: object, **_kwargs: object) -> None:
         release_launch.wait(timeout=0.2)
 
-    monkeypatch.setattr(manager, "_spawn_worker", stalled_spawn)
+    monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
     monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.15)
 
     async def scenario() -> None:
@@ -247,9 +408,19 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
         )
         assert time.monotonic() - started < 0.1
         assert isinstance(outcome, app.CodeModeTask)
+        assert outcome.model_dump() == {
+            "kind": "task",
+            "execution_id": outcome.execution_id,
+            "state": outcome.state,
+        }
         assert manager.store.get_task(outcome.execution_id)["execution_id"] == (
             outcome.execution_id
         )
+        collected = await app.task(
+            app.TaskGetRequest(action="get", execution_id=outcome.execution_id)
+        )
+        assert isinstance(collected, app.CodeModeTask)
+        assert collected.model_dump() == outcome.model_dump()
         release_launch.set()
 
     asyncio.run(scenario())

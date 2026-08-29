@@ -10,10 +10,11 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .execution_store import (
     TERMINAL_EXECUTION_STATES,
     ExecutionStore,
@@ -35,6 +36,48 @@ _CLEANUP_INTERVAL_SECONDS = 3600.0
 
 class ExecutionNotFoundError(KeyError):
     pass
+
+
+def _parse_code_mode_envelope(raw: dict[str, Any]) -> dict[str, Any] | None:
+    stdout = str(raw.get("stdout") or "")
+    if not stdout:
+        return None
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(envelope, dict):
+        return None
+    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(
+        envelope.get("ok"), bool
+    ):
+        return None
+    return envelope
+
+
+def _code_mode_error_result(
+    raw: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "kind": "error",
+        "execution_id": str(raw["execution_id"]),
+        "code": code,
+        "message": message,
+    }
+
+
+def task_elapsed_seconds(record: dict[str, Any]) -> int:
+    accepted_raw = record.get("accepted_at")
+    if not accepted_raw:
+        return 0
+    accepted = datetime.fromisoformat(str(accepted_raw))
+    finished_at = record.get("finished_at")
+    end = datetime.fromisoformat(str(finished_at)) if finished_at else datetime.now(UTC)
+    return max(0, int((end - accepted).total_seconds()))
 
 
 class ExecutionManager:
@@ -130,7 +173,50 @@ class ExecutionManager:
                 raise
 
             try:
-                self._spawn_worker(identifier, backend=backend, unit=unit)
+                # Atomic sequence: journal row committed above, spawn must follow
+                # or fail_accepted rolls it back; keep both visible in one place.
+                worker_command = [
+                    sys.executable,
+                    "-m",
+                    "gpt_dive.execution_worker",
+                    f"--store={self.store.path}",
+                    f"--execution={identifier}",
+                ]
+                if backend == "systemd":
+                    assert unit is not None
+                    absolute_seconds = (
+                        self.work_timeout_seconds + self.cleanup_timeout_seconds
+                    )
+                    launched = subprocess.run(
+                        [
+                            "systemd-run",
+                            "--user",
+                            "--quiet",
+                            "--collect",
+                            f"--unit={unit.removesuffix('.service')}",
+                            "--property=KillMode=control-group",
+                            f"--property=TimeoutStopSec={self.cleanup_timeout_seconds}s",
+                            f"--property=RuntimeMaxSec={absolute_seconds}s",
+                            *worker_command,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=5.0,
+                        check=False,
+                    )
+                    if launched.returncode != 0:
+                        raise RuntimeError(
+                            "systemd-run failed: "
+                            f"{launched.stderr.strip() or launched.stdout.strip()}"
+                        )
+                else:
+                    subprocess.Popen(
+                        worker_command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
             except Exception:
                 record = self.store.fail_accepted(
                     identifier, reason="launch_interrupted"
@@ -162,7 +248,7 @@ class ExecutionManager:
             if state == "lost":
                 payload["ready"] = False
                 payload["unavailable"] = True
-                return payload
+                return self._code_mode_projection(record, payload)
 
             stdout_path = Path(str(record["stdout_path"]))
             stderr_path = Path(str(record["stderr_path"]))
@@ -172,17 +258,82 @@ class ExecutionManager:
                 )
                 if known_without_artifacts:
                     payload.update({"ready": True, "stdout": "", "stderr": ""})
-                    return payload
+                    return self._code_mode_projection(record, payload)
                 record = self.store.mark_lost(
                     execution_id, reason="retained_result_missing"
                 )
                 payload = self._public_status(record)
                 payload.update({"ready": False, "unavailable": True})
-                return payload
+                return self._code_mode_projection(record, payload)
             payload["ready"] = True
             payload["stdout"] = stdout_path.read_text(errors="replace")
             payload["stderr"] = stderr_path.read_text(errors="replace")
+            return self._code_mode_projection(record, payload)
+
+    @staticmethod
+    def _code_mode_projection(
+        record: dict[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Normalize Code Mode terminal results into structured envelopes."""
+        if record["kind"] != "code_mode":
             return payload
+        state = str(payload["state"])
+        reason = str(payload.get("reason") or "") or None
+        if state == "lost":
+            return _code_mode_error_result(
+                payload,
+                code="lost",
+                message="Code Mode Execution outcome is no longer observable.",
+                reason=reason,
+            )
+        if state == "cancelled":
+            return _code_mode_error_result(
+                payload,
+                code="cancelled",
+                message="Code Mode Execution was cancelled.",
+                reason=reason,
+            )
+        if reason == "deadline_exceeded":
+            return _code_mode_error_result(
+                payload,
+                code="deadline_exceeded",
+                message="Code Mode Execution reached its absolute work deadline.",
+                reason=reason,
+            )
+        if reason == "launch_interrupted":
+            return _code_mode_error_result(
+                payload,
+                code="launch_interrupted",
+                message="Code Mode Worker could not be launched.",
+                reason=reason,
+            )
+
+        envelope = _parse_code_mode_envelope(payload)
+        if envelope is None:
+            return _code_mode_error_result(
+                payload,
+                code="worker_protocol_error",
+                message="Code Mode Worker produced no valid result envelope.",
+                reason=reason,
+            )
+        if envelope["ok"] is True and state == "completed":
+            return {
+                "kind": "completed",
+                "execution_id": str(payload["execution_id"]),
+                "label": str(payload["label"]),
+                "result": envelope.get("result"),
+            }
+
+        error = envelope.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or "execution_failed")
+            message = str(error.get("message") or "Code Mode Execution failed.")
+        else:
+            code = "worker_protocol_error"
+            message = "Code Mode Worker exited without a valid error envelope."
+        return _code_mode_error_result(
+            payload, code=code, message=message, reason=reason
+        )
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
@@ -273,51 +424,6 @@ class ExecutionManager:
     def _maybe_cleanup(self) -> None:
         if time.monotonic() >= self._next_cleanup_monotonic:
             self.cleanup()
-
-    def _spawn_worker(
-        self, execution_id: str, *, backend: str, unit: str | None
-    ) -> None:
-        worker_command = [
-            sys.executable,
-            "-m",
-            "gpt_dive.execution_worker",
-            f"--store={self.store.path}",
-            f"--execution={execution_id}",
-        ]
-        if backend == "systemd":
-            assert unit is not None
-            absolute_seconds = self.work_timeout_seconds + self.cleanup_timeout_seconds
-            launched = subprocess.run(
-                [
-                    "systemd-run",
-                    "--user",
-                    "--quiet",
-                    "--collect",
-                    f"--unit={unit.removesuffix('.service')}",
-                    "--property=KillMode=control-group",
-                    f"--property=TimeoutStopSec={self.cleanup_timeout_seconds}s",
-                    f"--property=RuntimeMaxSec={absolute_seconds}s",
-                    *worker_command,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-                check=False,
-            )
-            if launched.returncode != 0:
-                raise RuntimeError(
-                    "systemd-run failed: "
-                    f"{launched.stderr.strip() or launched.stdout.strip()}"
-                )
-            return
-
-        subprocess.Popen(
-            worker_command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
 
     def _refresh(self, record: dict[str, Any]) -> dict[str, Any]:
         state = str(record["state"])
@@ -574,4 +680,34 @@ class ExecutionManager:
             "finished_at": record["finished_at"],
             "published_at": record["published_at"],
             "updated_at": record["updated_at"],
+            "elapsed_seconds": task_elapsed_seconds(record),
         }
+
+    def task_with_result(self, execution_id: str) -> dict[str, Any]:
+        task = self.task(execution_id)
+        state = str(task["state"])
+        if state in {"accepted", "running"}:
+            return {"task": task, "ready": False}
+        if state == "lost":
+            return {"task": task, "ready": False, "unavailable": True}
+        try:
+            result = self.result(execution_id)
+        except (ExecutionNotFoundError, FileNotFoundError):
+            self.store.mark_lost(execution_id, reason="retained_result_missing")
+            return {
+                "task": self.task(execution_id),
+                "ready": False,
+                "unavailable": True,
+            }
+        return {"task": task, "ready": True, "result": result}
+
+    def cancel_task(self, execution_id: str) -> dict[str, Any]:
+        self.task(execution_id)
+        self.cancel(execution_id)
+        return {"task": self.task(execution_id)}
+
+    def dismiss_task(self, execution_id: str) -> dict[str, Any]:
+        task = self.task(execution_id)
+        if task["state"] not in TERMINAL_EXECUTION_STATES:
+            raise ValueError("dismiss requires a terminal or lost Task")
+        return self.dismiss(execution_id)

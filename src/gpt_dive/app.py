@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Coroutine, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -18,40 +20,83 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .execution_manager import ExecutionManager
 from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import request_lifecycle_middleware
-from .task_runtime import (
-    CODE_MODE_WORKER_PROTOCOL,
-    TRACKED_TASKS_LIMIT,
-)
-from .task_runtime import (
-    cancel_task as runtime_cancel_task,
-)
-from .task_runtime import (
-    dismiss_task as runtime_dismiss_task,
-)
-from .task_runtime import (
-    get_task as runtime_get_task,
-)
-from .task_runtime import (
-    list_projected_tasks as runtime_list_projected_tasks,
-)
-from .task_runtime import (
-    projection_revision as runtime_projection_revision,
-)
-from .task_runtime import (
-    read_execution_result as runtime_read_execution_result,
-)
-from .task_runtime import (
-    render_tracked_tasks as runtime_render_tracked_tasks,
-)
 
 _INLINE_WAIT_SECONDS = 100.0
 _INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
 _TASK_LIST_LIMIT = 50
 _TRACKED_TASKS_REVISION_STATE_KEY = "gpt_dive_tracked_tasks_revision"
-_PENDING_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
+_RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
+TRACKED_TASKS_LIMIT = 8
+TRACKED_TASKS_MAX_BYTES = 4096
+
+_TASK_STATE_MARKERS = {
+    "accepted": "◌",
+    "running": "🧵",
+    "completed": "✅",
+    "failed": "❌",
+    "cancelled": "⛔",
+    "lost": "⚠️",
+}
+
+
+def format_task_elapsed(seconds: int) -> str:
+    if seconds < 3600:
+        minutes, secs = divmod(seconds, 60)
+        return f"{minutes}:{secs:02d}"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def render_tracked_tasks(
+    tasks: list[dict[str, Any]],
+    *,
+    limit: int = TRACKED_TASKS_LIMIT,
+    max_bytes: int = TRACKED_TASKS_MAX_BYTES,
+) -> str:
+    lines = ["TrackedTasks"]
+    for task in tasks[:limit]:
+        state = str(task["state"])
+        marker = _TASK_STATE_MARKERS.get(state, "•")
+        parts = [
+            str(task["label"]),
+            f"{marker} {state}",
+            format_task_elapsed(int(task["elapsed_seconds"])),
+            str(task["execution_id"]),
+        ]
+        reason = str(task.get("reason") or "").strip()
+        if reason:
+            parts.append(reason)
+        candidate = "\n".join([*lines, " · ".join(parts)])
+        if len(candidate.encode()) > max_bytes:
+            lines.append("…")
+            break
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
+
+
+def projection_revision(tasks: list[dict[str, Any]]) -> str:
+    visible = [
+        {
+            "execution_id": task["execution_id"],
+            "label": task["label"],
+            "state": task["state"],
+            "reason": task.get("reason"),
+            "finished_at": task.get("finished_at"),
+        }
+        for task in tasks
+    ]
+    encoded = json.dumps(
+        visible,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
 # the base before tool registration makes both validation and advertised schemas strict.
@@ -65,32 +110,27 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
-        "default programmable root for normal local work: compose registered capabilities in "
-        "Monty/Python, and prefer direct capabilities over shell reimplementation. Every run "
-        "requires a short label and starts as one durable Execution; payload is optional. "
-        "Never guess capability names, arguments, or return shapes: inspect the live contract first. "
-        "On tool errors, inspect the live contract and local evidence before retrying; use Web Search "
-        "when the missing fact is external and current."
+        "Direct ChatGPT Web -> WSL2 runtime. wsl_exec is the minimal raw-shell escape hatch. "
+        "code_mode launches durable Executions and task manages their lifecycle. Never guess "
+        "capability names, arguments, or return shapes: inspect the live contract first."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
         "processes, network state, and command results as belonging to the user's local "
-        "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
-        "session, call bootstrap first. After bootstrap, use code_mode as the default programmable "
-        "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
+        "machine, not as a separate hosted or ChatGPT sandbox. Use bootstrap before structured "
+        "code_mode work in a fresh session. code_mode is the durable Monty/Python orchestration "
+        "path: prefer registered capabilities "
         "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
-        "for independent work. Do not rebuild file/search/edit operations in shell. "
-        "Every Web MCP code_mode call must provide a short label. When opaque input is needed, "
-        "pass payload as a string; serialize objects/lists to text and parse PAYLOAD inside Code Mode. "
-        "Never invent capability names, parameter names, optional arguments, or return shapes from "
-        "memory. Inspect the live MCP schema/CAPABILITIES contract first whenever uncertain. "
-        "On tool errors or assistant mistakes, report them immediately and inspect the live contract "
-        "plus local state before retrying. Use Web Search only when the missing evidence is external "
-        "and current. Use /grill-me only when deeper diagnosis is still useful after that evidence pass. "
-        "Use mode='task' for immediate Task awareness; otherwise code_mode waits briefly and publishes "
-        "the same continuing Execution only when inline delivery ends first. Transport loss never "
-        "cancels work. Use the task tool for list/get/cancel/dismiss. Results are retained for 5 days."
+        "for independent work. Every Web MCP code_mode call must provide a short label. When opaque "
+        "input is needed, pass payload as a string; serialize objects/lists to text and parse PAYLOAD "
+        "inside Code Mode. Never invent capability names, parameter names, optional arguments, or "
+        "return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
+        "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the "
+        "live contract plus local state before retrying. Use Web Search only when the missing evidence "
+        "is external and current. Use mode='task' for immediate Task awareness; otherwise code_mode "
+        "waits briefly and publishes the same continuing Execution only when inline delivery ends "
+        "first. Transport loss never cancels work. Use the task tool for list/get/cancel/dismiss. "
+        "Results are retained for 5 days."
     ),
 )
 
@@ -366,7 +406,7 @@ async def _tracked_tasks_middleware(
 
     try:
         tasks = await asyncio.to_thread(_task_list, limit=TRACKED_TASKS_LIMIT)
-        revision = runtime_projection_revision(tasks)
+        revision = projection_revision(tasks)
         state = _periodic_reminder_state(ctx)
         previous = state.get(_TRACKED_TASKS_REVISION_STATE_KEY)
         state[_TRACKED_TASKS_REVISION_STATE_KEY] = revision
@@ -374,7 +414,7 @@ async def _tracked_tasks_middleware(
             return result
         if previous is None and not tasks:
             return result
-        text = _render_tracked_tasks(tasks) if tasks else "TrackedTasks\n(none)"
+        text = render_tracked_tasks(tasks) if tasks else "TrackedTasks\n(none)"
     except Exception:
         logger.exception("TRACKED TASKS PROJECTION FAILED")
         return result
@@ -420,25 +460,19 @@ mcp.middleware.append(_tracked_tasks_middleware)
 
 
 def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-    return runtime_list_projected_tasks(executions, limit=limit)
-
-
-def _render_tracked_tasks(
-    tasks: list[dict[str, Any]], *, limit: int = TRACKED_TASKS_LIMIT
-) -> str:
-    return runtime_render_tracked_tasks(tasks, limit=limit)
+    return executions.tasks(limit=limit)
 
 
 def _task_get(execution_id: str) -> dict[str, Any]:
-    return runtime_get_task(executions, execution_id)
+    return executions.task_with_result(execution_id)
 
 
 def _task_cancel(execution_id: str) -> dict[str, Any]:
-    return runtime_cancel_task(executions, execution_id)
+    return executions.cancel_task(execution_id)
 
 
 def _task_dismiss(execution_id: str) -> dict[str, Any]:
-    return runtime_dismiss_task(executions, execution_id)
+    return executions.dismiss_task(execution_id)
 
 
 def _start_code_mode_execution(
@@ -474,9 +508,10 @@ def _start_code_mode_execution(
     )
 
 
-def _track_runtime_followup(followup: asyncio.Task[None]) -> None:
-    _PENDING_RUNTIME_FOLLOWUPS.add(followup)
-    followup.add_done_callback(_PENDING_RUNTIME_FOLLOWUPS.discard)
+def _spawn_followup(coro: Coroutine[Any, Any, None]) -> None:
+    followup = asyncio.create_task(coro)
+    _RUNTIME_FOLLOWUPS.add(followup)
+    followup.add_done_callback(_RUNTIME_FOLLOWUPS.discard)
 
 
 async def _publish_accepted_task(
@@ -500,10 +535,6 @@ async def _observe_launch(launch_task: asyncio.Task[dict[str, Any]]) -> None:
         await asyncio.shield(launch_task)
 
 
-def _defer_launch_observation(
-    launch_task: asyncio.Task[dict[str, Any]],
-) -> None:
-    _track_runtime_followup(asyncio.create_task(_observe_launch(launch_task)))
 
 
 async def _publish_during_launch(
@@ -527,14 +558,6 @@ async def _publish_during_launch(
             await _publish_accepted_task(manager, execution_id)
 
 
-def _defer_publication_during_launch(
-    manager: ExecutionManager,
-    launch_task: asyncio.Task[dict[str, Any]],
-    execution_id: str,
-) -> None:
-    _track_runtime_followup(
-        asyncio.create_task(_publish_during_launch(manager, launch_task, execution_id))
-    )
 
 
 async def _preserve_interrupted_launch(
@@ -543,9 +566,9 @@ async def _preserve_interrupted_launch(
     execution_id: str,
 ) -> None:
     if await _publish_for_transport_loss(manager, execution_id):
-        _defer_launch_observation(launch_task)
+        _spawn_followup(_observe_launch(launch_task))
         return
-    _defer_publication_during_launch(manager, launch_task, execution_id)
+    _spawn_followup(_publish_during_launch(manager, launch_task, execution_id))
 
 
 async def _publish_execution(manager: ExecutionManager, execution_id: str) -> None:
@@ -553,10 +576,6 @@ async def _publish_execution(manager: ExecutionManager, execution_id: str) -> No
         await _publish_accepted_task(manager, execution_id)
 
 
-def _defer_execution_publication(manager: ExecutionManager, execution_id: str) -> None:
-    _track_runtime_followup(
-        asyncio.create_task(_publish_execution(manager, execution_id))
-    )
 
 
 async def _wait_for_acceptance(
@@ -584,7 +603,7 @@ async def _wait_for_acceptance(
 
 
 def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
-    return runtime_read_execution_result(executions, execution_id)
+    return executions.result(execution_id)
 
 
 async def _wait_for_execution(
@@ -606,7 +625,6 @@ async def _wait_for_execution(
     return {
         "kind": "task",
         "execution_id": execution_id,
-        "label": task["label"],
         "state": task["state"],
     }
 
@@ -623,29 +641,20 @@ class _ClosedModel(BaseModel):
 class CodeModeCompleted(_ClosedModel):
     kind: Literal["completed"] = "completed"
     execution_id: str
-    label: str
-    result: Any
+    output: Any
 
 
 class CodeModeTask(_ClosedModel):
     kind: Literal["task"] = "task"
     execution_id: str
-    label: str
     state: ExecutionState
-
-
-class CodeModeErrorDetail(_ClosedModel):
-    code: str
-    message: str
-    reason: str | None = None
-    worker_stderr: str | None = None
 
 
 class CodeModeError(_ClosedModel):
     kind: Literal["error"] = "error"
     execution_id: str
-    label: str
-    error: CodeModeErrorDetail
+    code: str
+    message: str
 
 
 CodeModeOutcome = Annotated[
@@ -656,26 +665,32 @@ _CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
 
 
 def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
+    if value.get("kind") == "completed":
+        retained = value.get("result")
+        if isinstance(retained, dict) and "result" in retained:
+            value = {
+                "kind": "completed",
+                "execution_id": value["execution_id"],
+                "output": retained["result"],
+            }
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
-def _code_mode_delivery_error(
+def _code_mode_error(
     execution_id: str,
-    label: str,
     *,
     code: str,
     message: str,
 ) -> CodeModeError:
     return CodeModeError(
         execution_id=execution_id,
-        label=label,
-        error=CodeModeErrorDetail(code=code, message=message),
+        code=code,
+        message=message,
     )
 
 
 async def _code_mode_launch_error(
     execution_id: str,
-    label: str,
     exc: Exception,
     *,
     response_deadline: float,
@@ -684,7 +699,7 @@ async def _code_mode_launch_error(
     if remaining <= 0:
         raise exc from None
     try:
-        record = await asyncio.wait_for(
+        await asyncio.wait_for(
             asyncio.to_thread(executions.store.get, execution_id),
             timeout=remaining,
         )
@@ -694,14 +709,10 @@ async def _code_mode_launch_error(
         raise TimeoutError(
             "Code Mode response deadline expired while shaping launch error"
         ) from None
-    return CodeModeError(
-        execution_id=execution_id,
-        label=label,
-        error=CodeModeErrorDetail(
-            code="launch_interrupted",
-            message=str(exc) or "Code Mode Worker could not be launched.",
-            reason=str(record.get("reason") or "launch_interrupted"),
-        ),
+    return _code_mode_error(
+        execution_id,
+        code="launch_interrupted",
+        message=str(exc) or "Code Mode Worker could not be launched.",
     )
 
 
@@ -750,17 +761,15 @@ async def code_mode(
             await _preserve_interrupted_launch(executions, launch_task, execution_id)
             raise
         except Exception as exc:
-            _defer_publication_during_launch(executions, launch_task, execution_id)
+            _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
             return await _code_mode_launch_error(
                 execution_id,
-                clean_label,
                 exc,
                 response_deadline=response_deadline,
             )
-        _defer_launch_observation(launch_task)
+        _spawn_followup(_observe_launch(launch_task))
         return CodeModeTask(
             execution_id=execution_id,
-            label=clean_label,
             state=task["state"],
         )
 
@@ -781,7 +790,6 @@ async def code_mode(
         if isinstance(launch_exception, Exception):
             return await _code_mode_launch_error(
                 execution_id,
-                clean_label,
                 launch_exception,
                 response_deadline=response_deadline,
             )
@@ -807,18 +815,16 @@ async def code_mode(
                 if isinstance(launch_exception, Exception):
                     return await _code_mode_launch_error(
                         execution_id,
-                        clean_label,
                         launch_exception,
                         response_deadline=response_deadline,
                     )
-                _defer_publication_during_launch(executions, launch_task, execution_id)
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 raise TimeoutError(
                     "Code Mode response deadline expired before acceptance"
                 ) from exc
             except Exception as exc:
                 return await _code_mode_launch_error(
                     execution_id,
-                    clean_label,
                     exc,
                     response_deadline=response_deadline,
                 )
@@ -833,10 +839,9 @@ async def code_mode(
                 )
                 raise
             except TimeoutError:
-                _defer_publication_during_launch(executions, launch_task, execution_id)
-                return _code_mode_delivery_error(
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+                return _code_mode_error(
                     execution_id,
-                    clean_label,
                     code="response_deadline_exceeded",
                     message=(
                         "Code Mode Execution was accepted, but Task publication "
@@ -844,23 +849,20 @@ async def code_mode(
                     ),
                 )
             except Exception as exc:
-                _defer_publication_during_launch(executions, launch_task, execution_id)
-                return _code_mode_delivery_error(
+                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+                return _code_mode_error(
                     execution_id,
-                    clean_label,
                     code="task_publication_failed",
                     message=str(exc) or "Task publication failed.",
                 )
-            _defer_launch_observation(launch_task)
+            _spawn_followup(_observe_launch(launch_task))
             return CodeModeTask(
                 execution_id=execution_id,
-                label=clean_label,
                 state=task["state"],
             )
     except Exception as exc:
         return await _code_mode_launch_error(
             execution_id,
-            clean_label,
             exc,
             response_deadline=response_deadline,
         )
@@ -873,13 +875,12 @@ async def code_mode(
         )
     except asyncio.CancelledError:
         if not await _publish_for_transport_loss(executions, execution_id):
-            _defer_execution_publication(executions, execution_id)
+            _spawn_followup(_publish_execution(executions, execution_id))
         raise
     except TimeoutError:
-        _defer_execution_publication(executions, execution_id)
-        return _code_mode_delivery_error(
+        _spawn_followup(_publish_execution(executions, execution_id))
+        return _code_mode_error(
             execution_id,
-            clean_label,
             code="response_deadline_exceeded",
             message=(
                 "Code Mode Execution was accepted, but response shaping did not "
@@ -887,6 +888,57 @@ async def code_mode(
             ),
         )
     return _code_mode_outcome(raw)
+
+
+@mcp.tool(
+    name="wsl_exec",
+    title="Raw WSL Shell",
+    description="Run one raw shell command directly in local WSL2 outside Code Mode; bounded to 600 seconds.",
+)
+def wsl_exec(
+    command: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Shell command to run directly via /bin/bash -lc.",
+        ),
+    ],
+    cwd: Annotated[
+        str | None,
+        Field(description="Optional WSL2 working directory."),
+    ] = None,
+) -> dict[str, Any]:
+    if not command.strip():
+        raise ValueError("command must not be empty")
+    run_cwd = str(Path(cwd).expanduser()) if cwd else None
+    try:
+        completed = subprocess.run(
+            ["/bin/bash", "-lc", command],
+            cwd=run_cwd,
+            capture_output=True,
+            text=True,
+            timeout=600.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        return {
+            "exit_code": 124,
+            "stdout": stdout,
+            "stderr": (
+                f"{stderr}\n[wsl_exec] timed out after 600 seconds"
+            ).lstrip(),
+        }
+    return {
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
 
 
 @mcp.tool(
@@ -993,14 +1045,6 @@ class TaskListOutput(_ClosedModel):
     tasks: list[TaskView]
 
 
-class TaskGetOutput(_ClosedModel):
-    action: Literal["get"] = "get"
-    task: TaskView
-    ready: bool
-    unavailable: bool = False
-    result: Any | None = None
-
-
 class TaskCancelOutput(_ClosedModel):
     action: Literal["cancel"] = "cancel"
     task: TaskView
@@ -1013,10 +1057,7 @@ class TaskDismissOutput(_ClosedModel):
     dismissed: bool
 
 
-TaskOutcome = Annotated[
-    TaskListOutput | TaskGetOutput | TaskCancelOutput | TaskDismissOutput,
-    Field(discriminator="action"),
-]
+TaskOutcome = TaskListOutput | CodeModeOutcome | TaskCancelOutput | TaskDismissOutput
 
 
 def _task_view(value: dict[str, Any]) -> TaskView:
@@ -1028,8 +1069,9 @@ def _task_view(value: dict[str, Any]) -> TaskView:
     title="GPT Dive Task Lifecycle",
     description=(
         "Operate a published Code Mode Task by its single execution_id. list returns "
-        "outstanding awareness, get reads status/result non-destructively, cancel explicitly "
-        "cancels running work, and dismiss removes terminal awareness without deleting retention."
+        "outstanding awareness, get returns the same delivery outcome vocabulary as code_mode, "
+        "cancel explicitly cancels running work, and dismiss removes terminal awareness without "
+        "deleting retention."
     ),
 )
 async def task(request: TaskRequest) -> TaskOutcome:
@@ -1038,11 +1080,17 @@ async def task(request: TaskRequest) -> TaskOutcome:
         return TaskListOutput(tasks=[_task_view(row) for row in rows])
     if isinstance(request, TaskGetRequest):
         result = await asyncio.to_thread(_task_get, request.execution_id)
-        return TaskGetOutput(
-            task=_task_view(result["task"]),
-            ready=bool(result["ready"]),
-            unavailable=bool(result.get("unavailable", False)),
-            result=result.get("result"),
+        if bool(result["ready"]):
+            return _code_mode_outcome(result["result"])
+        if bool(result.get("unavailable", False)):
+            terminal = await asyncio.to_thread(
+                _code_mode_execution_result, request.execution_id
+            )
+            return _code_mode_outcome(terminal)
+        task_view = result["task"]
+        return CodeModeTask(
+            execution_id=str(task_view["execution_id"]),
+            state=task_view["state"],
         )
     if isinstance(request, TaskCancelRequest):
         result = await asyncio.to_thread(_task_cancel, request.execution_id)
@@ -1054,9 +1102,9 @@ async def task(request: TaskRequest) -> TaskOutcome:
 @mcp.tool(
     title="Bootstrap from Local WSL2 Wiki",
     description=(
-        "Always call `bootstrap` first in a fresh ChatGPT Web session, before using any other "
-        "`@dive` tool. It loads the compact, model-visible preload map plus foundational "
-        "orientation from the trusted Wiki in the user's local WSL2 environment."
+        "Call `bootstrap` before `code_mode` in a fresh ChatGPT Web session when using the "
+        "structured GPT Dive harness. It loads the compact, model-visible preload map plus "
+        "foundational orientation from the trusted local Wiki."
     ),
 )
 def bootstrap() -> dict[str, Any]:

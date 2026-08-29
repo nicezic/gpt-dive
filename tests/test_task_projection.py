@@ -5,14 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from gpt_dive.app import projection_revision, render_tracked_tasks
 from gpt_dive.execution_manager import ExecutionManager, ExecutionNotFoundError
-from gpt_dive.task_runtime import (
-    dismiss_task,
-    get_task,
-    list_projected_tasks,
-    projection_revision,
-    render_tracked_tasks,
-)
 
 
 def manager_for_test(root: Path) -> ExecutionManager:
@@ -30,7 +24,7 @@ def wait_ready(
 ) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        result = get_task(manager, execution_id)
+        result = manager.task_with_result(execution_id)
         if result["ready"] or result.get("unavailable"):
             return result
         time.sleep(0.03)
@@ -50,17 +44,17 @@ def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
     execution_id = str(started["execution_id"])
 
     first = wait_ready(manager, execution_id)
-    second = get_task(manager, execution_id)
+    second = manager.task_with_result(execution_id)
 
     assert isinstance(first["result"], dict)
     assert isinstance(second["result"], dict)
     assert first["result"]["stdout"] == "TASK_OK"
     assert second["result"]["stdout"] == "TASK_OK"
-    dismissed = dismiss_task(manager, execution_id)
+    dismissed = manager.dismiss_task(execution_id)
     assert dismissed["dismissed"] is True
     assert manager.result(execution_id)["stdout"] == "TASK_OK"
     with pytest.raises(ExecutionNotFoundError):
-        get_task(manager, execution_id)
+        manager.task_with_result(execution_id)
 
 
 def test_projection_revision_ignores_elapsed_time_but_tracks_state() -> None:
@@ -109,7 +103,7 @@ def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> N
     wait_ready(manager, str(completed["execution_id"]))
     running = manager.start("sleep 2", label="active", publish=True)
 
-    projected = list_projected_tasks(manager, limit=1)
+    projected = manager.tasks(limit=1)
 
     assert projected[0]["execution_id"] == running["execution_id"]
     manager.cancel(str(running["execution_id"]))
