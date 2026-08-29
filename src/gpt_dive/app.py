@@ -646,8 +646,7 @@ class _ClosedModel(BaseModel):
 class CodeModeCompleted(_ClosedModel):
     kind: Literal["completed"] = "completed"
     execution_id: str
-    label: str
-    result: Any
+    output: Any
 
 
 class CodeModeTask(_ClosedModel):
@@ -679,6 +678,14 @@ _CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
 
 
 def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
+    if value.get("kind") == "completed":
+        retained = value.get("result")
+        if isinstance(retained, dict) and "result" in retained:
+            value = {
+                "kind": "completed",
+                "execution_id": value["execution_id"],
+                "output": retained["result"],
+            }
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 

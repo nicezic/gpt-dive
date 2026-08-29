@@ -48,12 +48,85 @@ def test_inline_completion_keeps_execution_unpublished(
     )
 
     assert isinstance(outcome, app.CodeModeCompleted)
-    assert outcome.result == {"result": 3}
+    assert outcome.model_dump() == {
+        "kind": "completed",
+        "execution_id": outcome.execution_id,
+        "output": 3,
+    }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "completed"
     assert record["published_at"] is None
     assert record["request_path"] == ""
     assert not (manager.root / outcome.execution_id / "input.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("'direct text'", "direct text"),
+        ("[1, 'two', {'three': 3}]", [1, "two", {"three": 3}]),
+        ("{'answer': 42, 'items': [1, 2]}", {"answer": 42, "items": [1, 2]}),
+    ],
+)
+def test_inline_completion_preserves_final_expression_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    expected: object,
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(app.code_mode(label="typed output", code=code, cwd=str(tmp_path)))
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.output == expected
+    assert set(outcome.model_dump()) == {"kind", "execution_id", "output"}
+
+
+def test_inline_completion_does_not_replay_print_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(
+        app.code_mode(
+            label="print separation",
+            code="""print('INTERMEDIATE NOISE')
+{'answer': 3}""",
+            cwd=str(tmp_path),
+        )
+    )
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.model_dump() == {
+        "kind": "completed",
+        "execution_id": outcome.execution_id,
+        "output": {"answer": 3},
+    }
+
+
+def test_inline_completion_keeps_gathered_intermediates_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+    (tmp_path / "left.txt").write_text("LEFT_MARK " + "A" * 20_000)
+    (tmp_path / "right.txt").write_text("RIGHT_MARK " + "B" * 20_000)
+
+    outcome = asyncio.run(
+        app.code_mode(
+            label="local reduction",
+            code="""left, right = await asyncio.gather(
+    read_file('left.txt'), read_file('right.txt')
+)
+{'left': 'LEFT_MARK' in left, 'right': 'RIGHT_MARK' in right}""",
+            cwd=str(tmp_path),
+        )
+    )
+
+    assert isinstance(outcome, app.CodeModeCompleted)
+    assert outcome.output == {"left": True, "right": True}
+    assert "AAAA" not in repr(outcome.model_dump())
+    assert "BBBB" not in repr(outcome.model_dump())
 
 
 def test_inline_wait_expiry_publishes_same_continuing_execution(
