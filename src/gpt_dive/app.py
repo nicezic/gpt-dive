@@ -654,18 +654,11 @@ class CodeModeTask(_ClosedModel):
     state: ExecutionState
 
 
-class CodeModeErrorDetail(_ClosedModel):
-    code: str
-    message: str
-    reason: str | None = None
-    worker_stderr: str | None = None
-
-
 class CodeModeError(_ClosedModel):
     kind: Literal["error"] = "error"
     execution_id: str
-    label: str
-    error: CodeModeErrorDetail
+    code: str
+    message: str
 
 
 CodeModeOutcome = Annotated[
@@ -689,7 +682,7 @@ def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
 
 def _code_mode_error(
     execution_id: str,
-    label: str,
+    _label: str,
     *,
     code: str,
     message: str,
@@ -697,8 +690,8 @@ def _code_mode_error(
 ) -> CodeModeError:
     return CodeModeError(
         execution_id=execution_id,
-        label=label,
-        error=CodeModeErrorDetail(code=code, message=message, reason=reason),
+        code=code,
+        message=message,
     )
 
 

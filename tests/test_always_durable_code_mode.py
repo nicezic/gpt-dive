@@ -130,6 +130,25 @@ def test_inline_completion_keeps_gathered_intermediates_local(
     assert "BBBB" not in repr(outcome.model_dump())
 
 
+def test_inline_runtime_failure_exposes_compact_error_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    outcome = asyncio.run(
+        app.code_mode(label="runtime failure", code="1 / 0", cwd=str(tmp_path))
+    )
+
+    assert isinstance(outcome, app.CodeModeError)
+    assert outcome.model_dump() == {
+        "kind": "error",
+        "execution_id": outcome.execution_id,
+        "code": "execution_error",
+        "message": outcome.message,
+    }
+    assert outcome.message
+
+
 def test_inline_wait_expiry_publishes_same_continuing_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -199,7 +218,12 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
         )
         assert isinstance(first, app.CodeModeError)
         assert isinstance(second, app.CodeModeError)
-        assert first.execution_id == started.execution_id
+        assert first.model_dump() == {
+            "kind": "error",
+            "execution_id": started.execution_id,
+            "code": "lost",
+            "message": "Code Mode Execution outcome is no longer observable.",
+        }
         assert second.model_dump() == first.model_dump()
 
     asyncio.run(scenario())
@@ -299,7 +323,15 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         assert time.monotonic() - started < 0.16
 
         assert isinstance(outcome, app.CodeModeError)
-        assert outcome.error.code == "response_deadline_exceeded"
+        assert outcome.model_dump() == {
+            "kind": "error",
+            "execution_id": outcome.execution_id,
+            "code": "response_deadline_exceeded",
+            "message": (
+                "Code Mode Execution was accepted, but response shaping did not "
+                "finish before the response deadline."
+            ),
+        }
         assert manager.store.get(outcome.execution_id)["state"] == "accepted"
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
@@ -328,8 +360,12 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
     )
 
     assert isinstance(outcome, app.CodeModeError)
-    assert outcome.error.code == "launch_interrupted"
-    assert outcome.error.message == "launcher response timed out"
+    assert outcome.model_dump() == {
+        "kind": "error",
+        "execution_id": outcome.execution_id,
+        "code": "launch_interrupted",
+        "message": "launcher response timed out",
+    }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"
     assert record["reason"] == "launch_interrupted"

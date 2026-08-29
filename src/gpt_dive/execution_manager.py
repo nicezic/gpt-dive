@@ -24,7 +24,6 @@ from .execution_store import (
     utc_now,
 )
 from .process_identity import process_matches
-from .worker_subprocess import stderr_tail
 
 RETENTION_DAYS = 5
 POLL_INTERVAL_MS = 1000
@@ -63,17 +62,11 @@ def _code_mode_error_result(
     message: str,
     reason: str | None = None,
 ) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
-    if reason:
-        error["reason"] = reason
-    stderr = str(raw.get("stderr") or "")
-    if stderr:
-        error["worker_stderr"] = stderr_tail(stderr)
     return {
         "kind": "error",
         "execution_id": str(raw["execution_id"]),
-        "label": str(raw["label"]),
-        "error": error,
+        "code": code,
+        "message": message,
     }
 
 
