@@ -39,6 +39,21 @@ async def wait_task_ready(
     raise AssertionError("Code Mode Task did not finish")
 
 
+@pytest.mark.parametrize(
+    ("outcome_type", "fields"),
+    [
+        (app.CodeModeCompleted, {"kind", "execution_id", "output"}),
+        (app.CodeModeTask, {"kind", "execution_id", "state"}),
+        (app.CodeModeError, {"kind", "execution_id", "code", "message"}),
+    ],
+)
+def test_public_outcome_models_lock_llm_contract_fields(
+    outcome_type: type, fields: set[str]
+) -> None:
+    assert set(outcome_type.model_fields) == fields
+    assert outcome_type.model_config["extra"] == "forbid"
+
+
 def test_inline_completion_keeps_execution_unpublished(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

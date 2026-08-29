@@ -682,11 +682,9 @@ def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
 
 def _code_mode_error(
     execution_id: str,
-    _label: str,
     *,
     code: str,
     message: str,
-    reason: str | None = None,
 ) -> CodeModeError:
     return CodeModeError(
         execution_id=execution_id,
@@ -697,7 +695,6 @@ def _code_mode_error(
 
 async def _code_mode_launch_error(
     execution_id: str,
-    label: str,
     exc: Exception,
     *,
     response_deadline: float,
@@ -706,7 +703,7 @@ async def _code_mode_launch_error(
     if remaining <= 0:
         raise exc from None
     try:
-        record = await asyncio.wait_for(
+        await asyncio.wait_for(
             asyncio.to_thread(executions.store.get, execution_id),
             timeout=remaining,
         )
@@ -718,10 +715,8 @@ async def _code_mode_launch_error(
         ) from None
     return _code_mode_error(
         execution_id,
-        label,
         code="launch_interrupted",
         message=str(exc) or "Code Mode Worker could not be launched.",
-        reason=str(record.get("reason") or "launch_interrupted"),
     )
 
 
@@ -773,7 +768,6 @@ async def code_mode(
             _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
             return await _code_mode_launch_error(
                 execution_id,
-                clean_label,
                 exc,
                 response_deadline=response_deadline,
             )
@@ -800,7 +794,6 @@ async def code_mode(
         if isinstance(launch_exception, Exception):
             return await _code_mode_launch_error(
                 execution_id,
-                clean_label,
                 launch_exception,
                 response_deadline=response_deadline,
             )
@@ -826,7 +819,6 @@ async def code_mode(
                 if isinstance(launch_exception, Exception):
                     return await _code_mode_launch_error(
                         execution_id,
-                        clean_label,
                         launch_exception,
                         response_deadline=response_deadline,
                     )
@@ -837,7 +829,6 @@ async def code_mode(
             except Exception as exc:
                 return await _code_mode_launch_error(
                     execution_id,
-                    clean_label,
                     exc,
                     response_deadline=response_deadline,
                 )
@@ -855,7 +846,6 @@ async def code_mode(
                 _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 return _code_mode_error(
                     execution_id,
-                    clean_label,
                     code="response_deadline_exceeded",
                     message=(
                         "Code Mode Execution was accepted, but Task publication "
@@ -866,7 +856,6 @@ async def code_mode(
                 _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 return _code_mode_error(
                     execution_id,
-                    clean_label,
                     code="task_publication_failed",
                     message=str(exc) or "Task publication failed.",
                 )
@@ -878,7 +867,6 @@ async def code_mode(
     except Exception as exc:
         return await _code_mode_launch_error(
             execution_id,
-            clean_label,
             exc,
             response_deadline=response_deadline,
         )
@@ -897,7 +885,6 @@ async def code_mode(
         _spawn_followup(_publish_execution(executions, execution_id))
         return _code_mode_error(
             execution_id,
-            clean_label,
             code="response_deadline_exceeded",
             message=(
                 "Code Mode Execution was accepted, but response shaping did not "
