@@ -16,7 +16,6 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
         "glm",
         "grok",
         "vip4",
-        "kunavo-opus5",
         "m3",
         "sol",
         "terra",
@@ -32,7 +31,6 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
     assert catalog["glm"]["provider"] == "micu-glm"
     assert catalog["grok"]["provider"] == "micu-grok"
     assert catalog["vip4"]["provider"] == "micu-vip4"
-    assert catalog["kunavo-opus5"]["output_tokens_limit"] == 128_000
     assert catalog["m3"]["model"] == "MiniMax-M3"
     assert catalog["sol"]["model"] == "gpt-5.6-sol"
     assert catalog["terra"]["model"] == "gpt-5.6-terra"

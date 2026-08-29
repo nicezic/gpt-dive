@@ -52,7 +52,7 @@ def _build_worker_capabilities(workspace_dir: str):
     denied_env_patterns = [
         *LLM_API_KEY_ENV_PATTERNS,
         "MINIMAX_*",
-        "AIAPIFLOW_*",
+        "MICU_*",
     ]
 
     return [

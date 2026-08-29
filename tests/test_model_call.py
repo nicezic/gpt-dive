@@ -105,7 +105,7 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
     result = asyncio.run(
         model_call_module._run_worker(
             {
-                "provider": "aiapiflow",
+                "provider": "micu",
                 "model": "claude-opus-5",
                 "prompt": "review this",
                 "peer_review": True,
@@ -129,11 +129,11 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
     assert _FakeAgent.run_prompt == "review this"
     assert result["ok"] is True
     assert result["mode"] == "peer-review"
-    assert result["provider"] == "aiapiflow"
+    assert result["provider"] == "micu"
     assert result["model_name"] == "claude-opus-5"
 
 
-def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) -> None:
+def test_micu_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(
@@ -146,7 +146,7 @@ def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) 
     result = asyncio.run(
         model_call_module._run_worker(
             {
-                "provider": "kunavo",
+                "provider": "micu",
                 "model": "claude-opus-5",
                 "prompt": prompt,
                 "peer_review": True,
@@ -166,7 +166,7 @@ def test_kunavo_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) 
     usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
     assert usage_limits.output_tokens_limit == 128_000
     assert result["model"] == "claude-opus-5"
-    assert result["provider"] == "kunavo"
+    assert result["provider"] == "micu"
     assert result["finish_reason"] == "stop"
     assert result["provider_finish_reason"] == "end_turn"
     assert result["truncated"] is False
@@ -188,7 +188,7 @@ def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> 
         result = asyncio.run(
             model_call_module._run_worker(
                 {
-                    "provider": "kunavo",
+                    "provider": "micu",
                     "model": "claude-opus-5",
                     "prompt": "STABLE" + model_call_module._PEER_CACHE_BREAK + "DELTA",
                     "peer_review": True,
@@ -222,7 +222,7 @@ def test_peer_review_worker_rejects_model_missing_from_provider(monkeypatch) -> 
         model_call_module._run_worker(
             {
                 "peer_review": True,
-                "provider": "aiapiflow",
+                "provider": "micu",
                 "model": "nope-1",
                 "prompt": "review this",
                 "workspace_dir": "/tmp/opencode",
@@ -260,7 +260,7 @@ def test_peer_review_worker_resolves_provider_default_model(
         model_call_module._run_worker(
             {
                 "peer_review": True,
-                "provider": "aiapiflow",
+                "provider": "micu",
                 "model": None,
                 "prompt": "review this",
                 "workspace_dir": str(tmp_path),
@@ -269,7 +269,7 @@ def test_peer_review_worker_resolves_provider_default_model(
     )
 
     assert result["ok"] is True
-    assert result["model_name"] == "claude-haiku-4-5-20251001"
+    assert result["model_name"] == "claude-opus-5"
     assert listing_calls == []
 
 
@@ -288,7 +288,7 @@ def test_peer_review_worker_falls_back_to_default_output_tokens_limit(
         model_call_module._run_worker(
             {
                 "peer_review": True,
-                "provider": "aiapiflow",
+                "provider": "micu",
                 "model": "brand-new-model-1",
                 "prompt": "review this",
                 "workspace_dir": str(tmp_path),

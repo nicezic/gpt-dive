@@ -53,12 +53,6 @@ PROVIDER_ROUTES: dict[str, ProviderRoute] = {
     "micu-vip4": ProviderRoute(
         "MICU_VIP4_API_KEY", "https://www.micuapi.ai", "deepseek-v4-pro-0813"
     ),
-    "aiapiflow": ProviderRoute(
-        "AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com", "claude-haiku-4-5-20251001"
-    ),
-    "kunavo": ProviderRoute(
-        "KUNAVO_API_KEY", "https://api.kunavo.com", "claude-opus-5"
-    ),
     "minimax": ProviderRoute(
         "MINIMAX_API_KEY", "https://api.minimax.io/anthropic", "MiniMax-M3"
     ),
@@ -110,14 +104,6 @@ class ModelAlias(StrEnum):
     GLM = ("glm", "micu-glm", "glm-5.3", "anthropic-compatible")
     GROK = ("grok", "micu-grok", "grok-4.6", "anthropic-compatible")
     VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro-0813", "anthropic-compatible")
-    KUNAVO_OPUS5 = (
-        "kunavo-opus5",
-        "kunavo",
-        "claude-opus-5",
-        "anthropic-compatible",
-        True,
-        False,
-    )
     M3 = ("m3", "minimax", "MiniMax-M3", "anthropic-compatible")
     SOL = ("sol", "openai-codex", "gpt-5.6-sol", "codex-subscription")
     TERRA = ("terra", "openai-codex", "gpt-5.6-terra", "codex-subscription")

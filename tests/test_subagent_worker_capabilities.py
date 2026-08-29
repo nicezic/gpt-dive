@@ -17,7 +17,7 @@ from gpt_dive.subagent_worker import _build_worker_capabilities
 def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-shell")
     monkeypatch.setenv("MINIMAX_API_KEY", "must-not-reach-shell")
-    monkeypatch.setenv("AIAPIFLOW_CLAUDE_KEY", "must-not-reach-shell")
+    monkeypatch.setenv("MICU_OPUS_API_KEY", "must-not-reach-shell")
 
     capabilities = _build_worker_capabilities(str(tmp_path))
     assert [type(cap) for cap in capabilities] == [
@@ -50,7 +50,7 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     }
     assert "OPENAI_*" in shell.denied_env_patterns
     assert "MINIMAX_*" in shell.denied_env_patterns
-    assert "AIAPIFLOW_*" in shell.denied_env_patterns
+    assert "MICU_*" in shell.denied_env_patterns
     path_entries = shell.env["PATH"].split(":")
     assert path_entries[0].endswith("gpt_dive/guard-bin")
     assert str(Path.home() / ".bun" / "bin") in path_entries
