@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -109,32 +110,27 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "Direct ChatGPT Web -> WSL2 runtime. Call bootstrap first. Use code_mode as the "
-        "default programmable root for normal local work: compose registered capabilities in "
-        "Monty/Python, and prefer direct capabilities over shell reimplementation. Every run "
-        "requires a short label and starts as one durable Execution; payload is optional. "
-        "Never guess capability names, arguments, or return shapes: inspect the live contract first. "
-        "On tool errors, inspect the live contract and local evidence before retrying; use Web Search "
-        "when the missing fact is external and current."
+        "Direct ChatGPT Web -> WSL2 runtime. wsl_exec is the minimal raw-shell escape hatch. "
+        "code_mode launches durable Executions and task manages their lifecycle. Never guess "
+        "capability names, arguments, or return shapes: inspect the live contract first."
     ),
     instructions=(
         "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
         "processes, network state, and command results as belonging to the user's local "
-        "machine, not as a separate hosted or ChatGPT sandbox. In a fresh ChatGPT Web "
-        "session, call bootstrap first. After bootstrap, use code_mode as the default programmable "
-        "root for normal local work. Write Monty/Python orchestration, prefer registered capabilities "
+        "machine, not as a separate hosted or ChatGPT sandbox. Use bootstrap before structured "
+        "code_mode work in a fresh session. code_mode is the durable Monty/Python orchestration "
+        "path: prefer registered capabilities "
         "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
-        "for independent work. Do not rebuild file/search/edit operations in shell. "
-        "Every Web MCP code_mode call must provide a short label. When opaque input is needed, "
-        "pass payload as a string; serialize objects/lists to text and parse PAYLOAD inside Code Mode. "
-        "Never invent capability names, parameter names, optional arguments, or return shapes from "
-        "memory. Inspect the live MCP schema/CAPABILITIES contract first whenever uncertain. "
-        "On tool errors or assistant mistakes, report them immediately and inspect the live contract "
-        "plus local state before retrying. Use Web Search only when the missing evidence is external "
-        "and current. Use /grill-me only when deeper diagnosis is still useful after that evidence pass. "
-        "Use mode='task' for immediate Task awareness; otherwise code_mode waits briefly and publishes "
-        "the same continuing Execution only when inline delivery ends first. Transport loss never "
-        "cancels work. Use the task tool for list/get/cancel/dismiss. Results are retained for 5 days."
+        "for independent work. Every Web MCP code_mode call must provide a short label. When opaque "
+        "input is needed, pass payload as a string; serialize objects/lists to text and parse PAYLOAD "
+        "inside Code Mode. Never invent capability names, parameter names, optional arguments, or "
+        "return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
+        "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the "
+        "live contract plus local state before retrying. Use Web Search only when the missing evidence "
+        "is external and current. Use mode='task' for immediate Task awareness; otherwise code_mode "
+        "waits briefly and publishes the same continuing Execution only when inline delivery ends "
+        "first. Transport loss never cancels work. Use the task tool for list/get/cancel/dismiss. "
+        "Results are retained for 5 days."
     ),
 )
 
@@ -895,6 +891,57 @@ async def code_mode(
 
 
 @mcp.tool(
+    name="wsl_exec",
+    title="Raw WSL Shell",
+    description="Run one raw shell command directly in local WSL2 outside Code Mode; bounded to 600 seconds.",
+)
+def wsl_exec(
+    command: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Shell command to run directly via /bin/bash -lc.",
+        ),
+    ],
+    cwd: Annotated[
+        str | None,
+        Field(description="Optional WSL2 working directory."),
+    ] = None,
+) -> dict[str, Any]:
+    if not command.strip():
+        raise ValueError("command must not be empty")
+    run_cwd = str(Path(cwd).expanduser()) if cwd else None
+    try:
+        completed = subprocess.run(
+            ["/bin/bash", "-lc", command],
+            cwd=run_cwd,
+            capture_output=True,
+            text=True,
+            timeout=600.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        return {
+            "exit_code": 124,
+            "stdout": stdout,
+            "stderr": (
+                f"{stderr}\n[wsl_exec] timed out after 600 seconds"
+            ).lstrip(),
+        }
+    return {
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+
+
+@mcp.tool(
     name="code_mode",
     title="Pydantic Monty Code Mode",
     description=(
@@ -1055,9 +1102,9 @@ async def task(request: TaskRequest) -> TaskOutcome:
 @mcp.tool(
     title="Bootstrap from Local WSL2 Wiki",
     description=(
-        "Always call `bootstrap` first in a fresh ChatGPT Web session, before using any other "
-        "`@dive` tool. It loads the compact, model-visible preload map plus foundational "
-        "orientation from the trusted Wiki in the user's local WSL2 environment."
+        "Call `bootstrap` before `code_mode` in a fresh ChatGPT Web session when using the "
+        "structured GPT Dive harness. It loads the compact, model-visible preload map plus "
+        "foundational orientation from the trusted local Wiki."
     ),
 )
 def bootstrap() -> dict[str, Any]:
