@@ -51,7 +51,7 @@ PROVIDER_ROUTES: dict[str, ProviderRoute] = {
         "MICU_GROK_API_KEY", "https://www.micuapi.ai", "grok-4.6"
     ),
     "micu-vip4": ProviderRoute(
-        "MICU_VIP4_API_KEY", "https://www.micuapi.ai", "deepseek-v4-pro"
+        "MICU_VIP4_API_KEY", "https://www.micuapi.ai", "deepseek-v4-pro-0813"
     ),
     "aiapiflow": ProviderRoute(
         "AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com", "claude-haiku-4-5-20251001"
@@ -109,7 +109,7 @@ class ModelAlias(StrEnum):
     KIMI = ("kimi", "micu-kimi", "kimi-k3", "anthropic-compatible")
     GLM = ("glm", "micu-glm", "glm-5.3", "anthropic-compatible")
     GROK = ("grok", "micu-grok", "grok-4.6", "anthropic-compatible")
-    VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro", "anthropic-compatible")
+    VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro-0813", "anthropic-compatible")
     KUNAVO_OPUS5 = (
         "kunavo-opus5",
         "kunavo",
