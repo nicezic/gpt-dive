@@ -12,6 +12,11 @@ _MODEL_OUTPUT_TOKENS_LIMITS: dict[str, int] = {
     "claude-opus-5": 128_000,
     "claude-sonnet-5": 128_000,
     "claude-haiku-4-5-20251001": 64_000,
+    "deepseek-v4-pro-0813": 64_000,
+    "deepseek-v4-pro": 64_000,
+    "kimi-k3": 64_000,
+    "glm-5.3": 64_000,
+    "grok-4.6": 64_000,
 }
 
 
@@ -27,6 +32,27 @@ class ProviderRoute(NamedTuple):
 # future direct-model caller). Adding a provider is one entry here plus its
 # environment key; see docs/pydantic/providers.md for the recipe.
 PROVIDER_ROUTES: dict[str, ProviderRoute] = {
+    "micu": ProviderRoute(
+        "MICU_OPUS_API_KEY", "https://www.micuapi.ai", "claude-opus-5"
+    ),
+    "micu-opus": ProviderRoute(
+        "MICU_OPUS_API_KEY", "https://www.micuapi.ai", "claude-opus-5"
+    ),
+    "micu-ds": ProviderRoute(
+        "MICU_DS_API_KEY", "https://www.micuapi.ai", "deepseek-v4-pro-0813"
+    ),
+    "micu-kimi": ProviderRoute(
+        "MICU_KIMI_API_KEY", "https://www.micuapi.ai", "kimi-k3"
+    ),
+    "micu-glm": ProviderRoute(
+        "MICU_GLM_API_KEY", "https://www.micuapi.ai", "glm-5.3"
+    ),
+    "micu-grok": ProviderRoute(
+        "MICU_GROK_API_KEY", "https://www.micuapi.ai", "grok-4.6"
+    ),
+    "micu-vip4": ProviderRoute(
+        "MICU_VIP4_API_KEY", "https://www.micuapi.ai", "deepseek-v4-pro"
+    ),
     "aiapiflow": ProviderRoute(
         "AIAPIFLOW_CLAUDE_KEY", "https://aiapiflow.com", "claude-haiku-4-5-20251001"
     ),
@@ -77,7 +103,13 @@ class ModelAlias(StrEnum):
         obj.output_tokens_limit = _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)
         return obj
 
-    OPUS5 = ("opus5", "aiapiflow", "claude-opus-5", "anthropic-compatible")
+    OPUS5 = ("opus5", "micu", "claude-opus-5", "anthropic-compatible")
+    MICU_OPUS5 = ("micu-opus5", "micu", "claude-opus-5", "anthropic-compatible")
+    DEEPSEEK = ("ds", "micu-ds", "deepseek-v4-pro-0813", "anthropic-compatible")
+    KIMI = ("kimi", "micu-kimi", "kimi-k3", "anthropic-compatible")
+    GLM = ("glm", "micu-glm", "glm-5.3", "anthropic-compatible")
+    GROK = ("grok", "micu-grok", "grok-4.6", "anthropic-compatible")
+    VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro", "anthropic-compatible")
     KUNAVO_OPUS5 = (
         "kunavo-opus5",
         "kunavo",
@@ -172,7 +204,9 @@ def _async_client_for_route(route: ProviderRoute) -> Any:
     from anthropic import AsyncAnthropic
 
     return AsyncAnthropic(
-        api_key=os.environ[route.credential_env], base_url=route.base_url
+        api_key=os.environ[route.credential_env],
+        base_url=route.base_url,
+        default_headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
     )
 
 
