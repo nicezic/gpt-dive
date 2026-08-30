@@ -18,7 +18,7 @@ from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, RootModel, TypeAdapter
 
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
@@ -662,6 +662,12 @@ CodeModeOutcome = Annotated[
     CodeModeCompleted | CodeModeTask | CodeModeError,
     Field(discriminator="kind"),
 ]
+
+
+class _CodeModePublicOutcome(RootModel[CodeModeOutcome]):
+    pass
+
+
 _CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
 
 
@@ -966,13 +972,15 @@ async def _mcp_code_mode(
             )
         ),
     ] = "auto",
-) -> CodeModeOutcome:
-    return await code_mode(
-        label=label,
-        code=code,
-        cwd=cwd,
-        payload=payload,
-        mode=mode,
+) -> _CodeModePublicOutcome:
+    return _CodeModePublicOutcome(
+        root=await code_mode(
+            label=label,
+            code=code,
+            cwd=cwd,
+            payload=payload,
+            mode=mode,
+        )
     )
 
 
@@ -1033,20 +1041,14 @@ class TaskDismissOutput(_ClosedModel):
 TaskOutcome = TaskListOutput | CodeModeOutcome | TaskCancelOutput | TaskDismissOutput
 
 
+class _TaskPublicOutcome(RootModel[TaskOutcome]):
+    pass
+
+
 def _task_view(value: dict[str, Any]) -> TaskView:
     return TaskView.model_validate(value)
 
 
-@mcp.tool(
-    name="task",
-    title="GPT Dive Task Lifecycle",
-    description=(
-        "Operate a published Code Mode Task by its single execution_id. list returns "
-        "outstanding awareness, get returns the same delivery outcome vocabulary as code_mode, "
-        "cancel explicitly cancels running work, and dismiss removes terminal awareness without "
-        "deleting retention."
-    ),
-)
 async def task(request: TaskRequest) -> TaskOutcome:
     if isinstance(request, TaskListRequest):
         rows = await asyncio.to_thread(_task_list, limit=_TASK_LIST_LIMIT)
@@ -1070,6 +1072,20 @@ async def task(request: TaskRequest) -> TaskOutcome:
         return TaskCancelOutput(task=_task_view(result["task"]))
     result = await asyncio.to_thread(_task_dismiss, request.execution_id)
     return TaskDismissOutput.model_validate({"action": "dismiss", **result})
+
+
+@mcp.tool(
+    name="task",
+    title="GPT Dive Task Lifecycle",
+    description=(
+        "Operate a published Code Mode Task by its single execution_id. list returns "
+        "outstanding awareness, get returns the same delivery outcome vocabulary as code_mode, "
+        "cancel explicitly cancels running work, and dismiss removes terminal awareness without "
+        "deleting retention."
+    ),
+)
+async def _mcp_task(request: TaskRequest) -> _TaskPublicOutcome:
+    return _TaskPublicOutcome(root=await task(request))
 
 
 @mcp.tool(

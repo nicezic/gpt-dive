@@ -73,9 +73,9 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert schema["properties"]["mode"]["enum"] == ["auto", "task"]
 
     assert tool.output_schema is not None
-    output_union = tool.output_schema["properties"]["result"]
-    assert output_union["discriminator"]["propertyName"] == "kind"
-    assert set(output_union["discriminator"]["mapping"]) == {
+    assert "result" not in tool.output_schema.get("properties", {})
+    assert tool.output_schema["discriminator"]["propertyName"] == "kind"
+    assert set(tool.output_schema["discriminator"]["mapping"]) == {
         "completed",
         "task",
         "error",
@@ -99,8 +99,10 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
 
     tool = tools["task"]
     assert tool.output_schema is not None
-    output_union = tool.output_schema["properties"]["result"]["anyOf"]
-    delivery = next(item for item in output_union if "discriminator" in item)
+    assert "result" not in tool.output_schema.get("properties", {})
+    delivery = next(
+        item for item in tool.output_schema["anyOf"] if "discriminator" in item
+    )
     assert delivery["discriminator"]["propertyName"] == "kind"
     assert set(delivery["discriminator"]["mapping"]) == {
         "completed",
@@ -113,6 +115,42 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         definition["additionalProperties"] is False
         for definition in schema["$defs"].values()
     )
+
+
+def test_model_visible_structured_content_has_no_outer_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
+        return app.CodeModeCompleted(execution_id="abc123", output={"answer": 42})
+
+    async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
+        return app.CodeModeTask(execution_id="abc123", state="running")
+
+    async def call(name: str, arguments: dict[str, Any]) -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            name,
+            arguments,
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "code_mode", fake_code_mode)
+    completed = asyncio.run(call("code_mode", {"label": "shape", "code": "1"}))
+    assert completed.structured_content == {
+        "kind": "completed",
+        "execution_id": "abc123",
+        "output": {"answer": 42},
+    }
+
+    monkeypatch.setattr(app, "task", fake_task)
+    running = asyncio.run(
+        call("task", {"request": {"action": "get", "execution_id": "abc123"}})
+    )
+    assert running.structured_content == {
+        "kind": "task",
+        "execution_id": "abc123",
+        "state": "running",
+    }
 
 
 def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> None:
