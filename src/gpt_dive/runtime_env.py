@@ -3,6 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+
+DENIED_MODEL_ENV_PATTERNS = (
+    *LLM_API_KEY_ENV_PATTERNS,
+    "MINIMAX_*",
+    "MICU_*",
+)
+
 
 def build_runtime_path(*prefixes: str | Path, inherited: str | None = None) -> str:
     """Build the stable PATH used by Dive execution surfaces."""

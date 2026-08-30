@@ -32,6 +32,10 @@ DEFAULT_CLEANUP_TIMEOUT_SECONDS = 10.0
 _ACCEPTED_LAUNCH_GRACE_SECONDS = 30.0
 _EXIT_MARKER_GRACE_SECONDS = 0.25
 _CLEANUP_INTERVAL_SECONDS = 3600.0
+_CODE_MODE_ERROR_MESSAGES = {
+    "execution_error": "Code Mode Execution failed.",
+    "non_json_result": "Code Mode result is not strict JSON.",
+}
 
 
 class ExecutionNotFoundError(KeyError):
@@ -48,7 +52,7 @@ def _parse_code_mode_envelope(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not isinstance(envelope, dict):
         return None
-    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(
+    if envelope.get("v") not in {3, CODE_MODE_WORKER_PROTOCOL} or not isinstance(
         envelope.get("ok"), bool
     ):
         return None
@@ -60,7 +64,6 @@ def _code_mode_error_result(
     *,
     code: str,
     message: str,
-    reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": "error",
@@ -217,12 +220,17 @@ class ExecutionManager:
                         stderr=subprocess.DEVNULL,
                         start_new_session=True,
                     )
-            except Exception:
+            except Exception as exc:
                 record = self.store.fail_accepted(
                     identifier, reason="launch_interrupted"
                 )
                 if record["claimed_at"] is not None:
                     return self._public_status(record)
+                stdout_path.touch(mode=0o600, exist_ok=True)
+                stderr_path.write_text(
+                    f"{type(exc).__name__}: {exc}\n", errors="replace"
+                )
+                stderr_path.chmod(0o600)
                 request_path.unlink(missing_ok=True)
                 input_path.unlink(missing_ok=True)
                 with contextlib.suppress(Exception):
@@ -284,28 +292,24 @@ class ExecutionManager:
                 payload,
                 code="lost",
                 message="Code Mode Execution outcome is no longer observable.",
-                reason=reason,
             )
         if state == "cancelled":
             return _code_mode_error_result(
                 payload,
                 code="cancelled",
                 message="Code Mode Execution was cancelled.",
-                reason=reason,
             )
         if reason == "deadline_exceeded":
             return _code_mode_error_result(
                 payload,
                 code="deadline_exceeded",
                 message="Code Mode Execution reached its absolute work deadline.",
-                reason=reason,
             )
         if reason == "launch_interrupted":
             return _code_mode_error_result(
                 payload,
                 code="launch_interrupted",
                 message="Code Mode Worker could not be launched.",
-                reason=reason,
             )
 
         envelope = _parse_code_mode_envelope(payload)
@@ -314,26 +318,44 @@ class ExecutionManager:
                 payload,
                 code="worker_protocol_error",
                 message="Code Mode Worker produced no valid result envelope.",
-                reason=reason,
             )
         if envelope["ok"] is True and state == "completed":
+            if envelope["v"] == 3:
+                legacy = envelope.get("result")
+                if not isinstance(legacy, dict) or "result" not in legacy:
+                    return _code_mode_error_result(
+                        payload,
+                        code="worker_protocol_error",
+                        message="Code Mode Worker produced no valid result envelope.",
+                    )
+                output = legacy["result"]
+            else:
+                if "output" not in envelope:
+                    return _code_mode_error_result(
+                        payload,
+                        code="worker_protocol_error",
+                        message="Code Mode Worker produced no valid result envelope.",
+                    )
+                output = envelope.get("output")
             return {
                 "kind": "completed",
                 "execution_id": str(payload["execution_id"]),
-                "label": str(payload["label"]),
-                "result": envelope.get("result"),
+                "output": output,
             }
 
         error = envelope.get("error")
         if isinstance(error, dict):
-            code = str(error.get("code") or "execution_failed")
-            message = str(error.get("message") or "Code Mode Execution failed.")
+            raw_code = str(error.get("code") or "")
+            if raw_code in _CODE_MODE_ERROR_MESSAGES:
+                code = raw_code
+                message = _CODE_MODE_ERROR_MESSAGES[raw_code]
+            else:
+                code = "worker_protocol_error"
+                message = "Code Mode Worker exited without a valid error envelope."
         else:
             code = "worker_protocol_error"
             message = "Code Mode Worker exited without a valid error envelope."
-        return _code_mode_error_result(
-            payload, code=code, message=message, reason=reason
-        )
+        return _code_mode_error_result(payload, code=code, message=message)
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:

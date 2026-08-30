@@ -4,15 +4,14 @@ import asyncio
 import fnmatch
 import os
 import shlex
+import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, BinaryIO
-
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+from typing import Any, BinaryIO, TypedDict
 
 from .execution_store import parse_time, utc_now
-from .runtime_env import build_runtime_path
+from .runtime_env import DENIED_MODEL_ENV_PATTERNS, build_runtime_path
 from .worker_subprocess import terminate_and_reap
 
 _RUN_COMMAND_POLICY_SECONDS = 43190.0
@@ -20,29 +19,31 @@ _RUN_COMMAND_CLEANUP_RESERVE_SECONDS = 9.0
 _SPOOL_BYTES_PER_STREAM = 8 * 1024 * 1024
 _CONTEXT_CHARS = 8000
 _DRAIN_CHUNK_BYTES = 64 * 1024
-_DENIED_ENV_PATTERNS = (
-    *LLM_API_KEY_ENV_PATTERNS,
-    "MINIMAX_*",
-    "MICU_*",
-)
+WSL_EXEC_TIMEOUT_SECONDS = 600.0
 
 
-def runtime_record(record: dict[str, object]) -> dict[str, object]:
-    """Freeze execution record's wall-clock deadline onto monotonic clock."""
-    view = dict(record)
+class RuntimeRecord(TypedDict):
+    artifact_dir: str
+    work_deadline_monotonic: float
+
+
+def runtime_record(record: dict[str, Any]) -> RuntimeRecord:
+    """Project an Execution into the fields needed by child capabilities."""
     remaining = max(
         0.0,
         (parse_time(str(record["work_deadline_at"])) - utc_now()).total_seconds(),
     )
-    view["work_deadline_monotonic"] = time.monotonic() + remaining
-    return view
+    return {
+        "artifact_dir": str(record["artifact_dir"]),
+        "work_deadline_monotonic": time.monotonic() + remaining,
+    }
 
 
-def remaining_seconds(record: dict[str, object]) -> float:
-    return max(0.0, float(record["work_deadline_monotonic"]) - time.monotonic())
+def remaining_seconds(record: RuntimeRecord) -> float:
+    return max(0.0, record["work_deadline_monotonic"] - time.monotonic())
 
 
-def child_budget(record: dict[str, object], policy_seconds: float) -> float:
+def child_budget(record: RuntimeRecord, policy_seconds: float) -> float:
     if policy_seconds <= 0:
         raise ValueError("child capability policy must be greater than 0")
     remaining = remaining_seconds(record)
@@ -51,8 +52,8 @@ def child_budget(record: dict[str, object], policy_seconds: float) -> float:
     return min(policy_seconds, remaining)
 
 
-def spill_path(record: dict[str, object], prefix: str) -> Path:
-    directory = Path(str(record["artifact_dir"])) / "capability-output"
+def spill_path(record: RuntimeRecord, prefix: str) -> Path:
+    directory = Path(record["artifact_dir"]) / "capability-output"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     return directory / f"{prefix}-{uuid.uuid4().hex}.log"
 
@@ -67,7 +68,8 @@ def _sanitized_environment() -> dict[str, str]:
         key: value
         for key, value in os.environ.items()
         if not any(
-            fnmatch.fnmatchcase(key, pattern) for pattern in _DENIED_ENV_PATTERNS
+            fnmatch.fnmatchcase(key, pattern)
+            for pattern in DENIED_MODEL_ENV_PATTERNS
         )
     }
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
@@ -151,11 +153,150 @@ def _write_spill(stdout_path: Path, stderr_path: Path, spill_path: Path) -> None
         _copy_stream(stderr_path, target)
 
 
+def _read_shell_outputs(
+    stdout_path: Path,
+    stderr_path: Path,
+    *,
+    stdout_overflow: bool,
+    stderr_overflow: bool,
+) -> tuple[str, str, bool]:
+    stdout_size = stdout_path.stat().st_size
+    stderr_size = stderr_path.stat().st_size
+    if stdout_size and stderr_size:
+        stdout_budget = _CONTEXT_CHARS // 2
+        stderr_budget = _CONTEXT_CHARS - stdout_budget
+    elif stdout_size:
+        stdout_budget, stderr_budget = _CONTEXT_CHARS, 0
+    else:
+        stdout_budget, stderr_budget = 0, _CONTEXT_CHARS
+    stdout, stdout_context_truncated = _read_bounded_text(stdout_path, stdout_budget)
+    stderr, stderr_context_truncated = _read_bounded_text(stderr_path, stderr_budget)
+    return stdout, stderr, any(
+        (
+            stdout_overflow,
+            stderr_overflow,
+            stdout_context_truncated,
+            stderr_context_truncated,
+        )
+    )
+
+
+async def _run_shell_process(
+    command: str,
+    *,
+    cwd: str | None,
+    env: dict[str, str] | None,
+    timeout: float,
+    stdout_path: Path,
+    stderr_path: Path,
+    log_label: str,
+) -> tuple[int | None, bool, bool, bool]:
+    proc = await asyncio.create_subprocess_exec(
+        "/bin/bash",
+        "-lc",
+        command,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+        cwd=cwd,
+        env=env,
+    )
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    stdout_task = asyncio.create_task(
+        _drain_stream(proc.stdout, stdout_path, max_bytes=_SPOOL_BYTES_PER_STREAM)
+    )
+    stderr_task = asyncio.create_task(
+        _drain_stream(proc.stderr, stderr_path, max_bytes=_SPOOL_BYTES_PER_STREAM)
+    )
+    communicate_task = asyncio.create_task(
+        _wait_and_drain(proc, stdout_task, stderr_task)
+    )
+    timed_out = False
+    try:
+        await asyncio.wait_for(asyncio.shield(communicate_task), timeout=timeout)
+    except TimeoutError:
+        timed_out = True
+        cleanup = await terminate_and_reap(
+            proc,
+            communicate_task,
+            grace_seconds=4.0,
+            final_grace_seconds=4.0,
+            log_label=log_label,
+        )
+        if not cleanup.reaped:
+            raise RuntimeError(
+                f"{log_label.lower()} process group could not be reaped"
+            ) from None
+    except asyncio.CancelledError:
+        cleanup = await terminate_and_reap(
+            proc,
+            communicate_task,
+            grace_seconds=4.0,
+            final_grace_seconds=4.0,
+            log_label=log_label,
+        )
+        if not cleanup.reaped:
+            raise RuntimeError(
+                f"{log_label.lower()} process group could not be reaped"
+            ) from None
+        raise
+    return (
+        proc.returncode,
+        timed_out,
+        stdout_task.result() if stdout_task.done() else True,
+        stderr_task.result() if stderr_task.done() else True,
+    )
+
+
+async def run_wsl_command(
+    command: str,
+    *,
+    cwd: str | None,
+    timeout: float = WSL_EXEC_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run one raw WSL shell with bounded output and process-group cleanup."""
+    if not command.strip():
+        raise ValueError("command must not be empty")
+    run_cwd = str(Path(cwd).expanduser().resolve()) if cwd else None
+    if run_cwd is not None and not Path(run_cwd).is_dir():
+        raise ValueError(f"cwd does not exist or is not a directory: {run_cwd}")
+    with tempfile.TemporaryDirectory(prefix="gpt-dive-wsl-exec-") as temporary:
+        stdout_path = Path(temporary) / "stdout.log"
+        stderr_path = Path(temporary) / "stderr.log"
+        returncode, timed_out, stdout_overflow, stderr_overflow = (
+            await _run_shell_process(
+                command,
+                cwd=run_cwd,
+                env=None,
+                timeout=timeout,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                log_label="WSL EXEC",
+            )
+        )
+        stdout, stderr, truncated = _read_shell_outputs(
+            stdout_path,
+            stderr_path,
+            stdout_overflow=stdout_overflow,
+            stderr_overflow=stderr_overflow,
+        )
+    if timed_out:
+        stderr = f"{stderr}\n[wsl_exec] timed out after {timeout:g} seconds".lstrip()
+    return {
+        "exit_code": 124 if timed_out else returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "truncated": truncated,
+    }
+
+
 async def run_command(
     command: str,
     *,
     cwd: str,
-    record: dict[str, object],
+    record: RuntimeRecord,
 ) -> dict[str, Any]:
     """Run one awaited local shell command inside the owning Execution.
 
@@ -177,80 +318,20 @@ async def run_command(
     runtime_path = environment["PATH"]
     guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
     started = time.monotonic()
-    proc = await asyncio.create_subprocess_exec(
-        "/bin/bash",
-        "-lc",
+    returncode, timed_out, stdout_overflow, stderr_overflow = await _run_shell_process(
         guarded_command,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
         cwd=cwd,
         env=environment,
+        timeout=command_timeout,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        log_label="RUN COMMAND",
     )
-    assert proc.stdout is not None
-    assert proc.stderr is not None
-    stdout_task = asyncio.create_task(
-        _drain_stream(proc.stdout, stdout_path, max_bytes=_SPOOL_BYTES_PER_STREAM)
-    )
-    stderr_task = asyncio.create_task(
-        _drain_stream(proc.stderr, stderr_path, max_bytes=_SPOOL_BYTES_PER_STREAM)
-    )
-    communicate_task = asyncio.create_task(
-        _wait_and_drain(proc, stdout_task, stderr_task)
-    )
-    timed_out = False
-    try:
-        await asyncio.wait_for(
-            asyncio.shield(communicate_task), timeout=command_timeout
-        )
-    except TimeoutError:
-        timed_out = True
-        cleanup = await terminate_and_reap(
-            proc,
-            communicate_task,
-            grace_seconds=4.0,
-            final_grace_seconds=4.0,
-            log_label="RUN COMMAND",
-        )
-        if not cleanup.reaped:
-            raise RuntimeError(
-                "run_command process group could not be reaped"
-            ) from None
-    except asyncio.CancelledError:
-        cleanup = await terminate_and_reap(
-            proc,
-            communicate_task,
-            grace_seconds=4.0,
-            final_grace_seconds=4.0,
-            log_label="RUN COMMAND",
-        )
-        if not cleanup.reaped:
-            raise RuntimeError(
-                "run_command process group could not be reaped"
-            ) from None
-        raise
-
-    stdout_overflow = stdout_task.result() if stdout_task.done() else True
-    stderr_overflow = stderr_task.result() if stderr_task.done() else True
-    stdout_size = stdout_path.stat().st_size
-    stderr_size = stderr_path.stat().st_size
-    if stdout_size and stderr_size:
-        stdout_budget = _CONTEXT_CHARS // 2
-        stderr_budget = _CONTEXT_CHARS - stdout_budget
-    elif stdout_size:
-        stdout_budget, stderr_budget = _CONTEXT_CHARS, 0
-    else:
-        stdout_budget, stderr_budget = 0, _CONTEXT_CHARS
-    stdout, stdout_context_truncated = _read_bounded_text(stdout_path, stdout_budget)
-    stderr, stderr_context_truncated = _read_bounded_text(stderr_path, stderr_budget)
-    truncated = any(
-        (
-            stdout_overflow,
-            stderr_overflow,
-            stdout_context_truncated,
-            stderr_context_truncated,
-        )
+    stdout, stderr, truncated = _read_shell_outputs(
+        stdout_path,
+        stderr_path,
+        stdout_overflow=stdout_overflow,
+        stderr_overflow=stderr_overflow,
     )
     spill_file: Path | None = None
     if truncated:
@@ -260,7 +341,7 @@ async def run_command(
     stderr_path.unlink(missing_ok=True)
 
     return {
-        "exit_code": 124 if timed_out else proc.returncode,
+        "exit_code": 124 if timed_out else returncode,
         "stdout": stdout,
         "stderr": stderr,
         "duration_ms": int((time.monotonic() - started) * 1000),

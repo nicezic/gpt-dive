@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic_monty import AsyncMonty, CollectString, MontyComplete
+from pydantic_monty import AsyncMonty, MontyComplete
 
 from .filesystem_policy import HostFileSystemOS
 
@@ -105,13 +105,12 @@ class MontyCodeRuntime:
         registry: CallableRegistry,
         cwd: str | None = None,
         payload: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         if not code.strip():
             raise ValueError("code must not be empty")
 
         runtime_code = f"import asyncio\n{code}"
         run_cwd = str(Path(cwd).expanduser().resolve()) if cwd else str(Path.home())
-        capture = CollectString()
         host_os = HostFileSystemOS(cwd=run_cwd, home=Path.home())
         inputs: dict[str, Any] = {
             "CWD": run_cwd,
@@ -134,16 +133,13 @@ class MontyCodeRuntime:
                     runtime_code,
                     inputs=inputs,
                     external_lookup=registry.as_external_lookup(),
-                    print_callback=capture,
+                    print_callback=lambda _stream, _text: None,
                     os=host_os,
                     skip_type_check=False,
                 )
                 while not isinstance(state, MontyComplete):
                     state = await state.resume_auto()
 
-            result: dict[str, Any] = {"result": state.output}
-            if capture.output:
-                result["stdout"] = capture.output
-            return result
+            return state.output
         finally:
             await registry.aclose()

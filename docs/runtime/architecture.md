@@ -10,9 +10,9 @@ GPT Dive는 하나의 불안정한 MCP 응답에 로컬 작업의 수명을 맡�
 ChatGPT Web
       │ MCP
       ▼
-bootstrap / code_mode / task
-      │
-      ▼
+bootstrap      code_mode / task                 wsl_exec
+                     │                             └─ bounded raw shell
+                     ▼
 SQLite Execution control plane ───────────────┐
       │ accepted                              │ published Task
       ▼                                       ▼
@@ -43,6 +43,9 @@ task(request)
 ├─ get       비파괴 조회
 ├─ cancel    명시적 cancellation만 수행
 └─ dismiss   terminal awareness만 제거
+
+wsl_exec(command, cwd?)
+└─ 비상용 raw shell; durable Execution/Task lifecycle 밖에서 bounded 실행
 ```
 
 고정 input object는 알 수 없는 property를 모두 거부한다. `code_mode`에는 `label`과 `code`가 필수이며 모델은 runtime deadline을 넘길 수 없다. Output은 `kind=completed|task|error`인 discriminated union(식별 필드로 variant를 고르는 합 타입)이다. `task`도 action-discriminated request와 action별 output을 사용한다. `execution_id`가 유일한 lifecycle identity다.

@@ -1,6 +1,6 @@
 # GPT Dive Runtime Deadline
 
-> 현재 clock ownership과 containment 계약. ADR 0004가 결정을 소유하고 `app.py`, `execution_manager.py`, `execution_worker.py`, `execution_context.py`가 구현한다.
+> 현재 clock ownership과 containment 계약. ADR 0004가 결정을 소유하고 `app.py`, `execution_manager.py`, `execution_worker.py`, `command_runtime.py`가 구현한다.
 
 ## 이 clock들이 필요한 이유
 
@@ -124,7 +124,7 @@ tunnel 502 / MCP request-entry log 없음
 
 - `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
   - Durability, fixed clock, transport-loss 정책의 accepted rationale.
-- `src/gpt_dive/execution_context.py`, `src/gpt_dive/code_capabilities.py`
+- `src/gpt_dive/command_runtime.py`, `src/gpt_dive/code_capabilities.py`
   - Child budget 계산과 capability별 ceiling.
 - `src/gpt_dive/execution_worker.py`, `src/gpt_dive/command_runtime.py`
   - Process-tree termination, cleanup reserve, bounded output drain.

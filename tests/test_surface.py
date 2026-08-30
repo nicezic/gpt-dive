@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -21,17 +23,31 @@ def test_mcp_surface_is_exactly_four_tools() -> None:
     }
 
 
-def test_wsl_exec_is_minimal_raw_shell(tmp_path) -> None:
+def test_wsl_exec_is_minimal_raw_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     schema = tools["wsl_exec"].input_schema
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["command"]
     assert set(schema["properties"]) == {"command", "cwd"}
 
-    result = app.wsl_exec("printf 'RAW_WSL\n'; pwd", cwd=str(tmp_path))
+    result = asyncio.run(app.wsl_exec("printf 'RAW_WSL\n'; pwd", cwd=str(tmp_path)))
     assert result["exit_code"] == 0
     assert result["stderr"] == ""
     assert result["stdout"].splitlines() == ["RAW_WSL", str(tmp_path)]
+    assert result["truncated"] is False
+
+    monkeypatch.setattr(app, "WSL_EXEC_TIMEOUT_SECONDS", 0.05)
+    timed_out = asyncio.run(app.wsl_exec("sleep 30 & echo $!; wait", cwd=str(tmp_path)))
+    child = Path("/proc") / timed_out["stdout"].strip()
+    deadline = time.monotonic() + 1
+    while child.exists() and time.monotonic() < deadline:
+        if child.joinpath("stat").read_text().split()[2] == "Z":
+            break
+        time.sleep(0.01)
+    assert timed_out["exit_code"] == 124
+    assert not child.exists() or child.joinpath("stat").read_text().split()[2] == "Z"
 
 
 def test_server_description_exposes_minimal_raw_wsl_escape_hatch() -> None:

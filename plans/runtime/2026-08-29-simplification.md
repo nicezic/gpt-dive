@@ -1,8 +1,8 @@
 # Runtime Simplification - Phase 2
 
-**Created**: 2026-08-29  
-**Status**: In Progress  
-**Branch**: renewal/260829-simplify  
+**Created**: 2026-08-29
+**Status**: In Progress
+**Branch**: renewal/260829-simplify
 **Predecessor**: ADR 0004 (renewal/260827-always-durable-runtime)
 
 ## Context

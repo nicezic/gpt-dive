@@ -44,7 +44,7 @@ for tool in asyncio.run(mcp.list_tools()):
 PY
 ```
 
-예상 top-level set은 `bootstrap`, `code_mode`, `task`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 둘 다 알 수 없는 인자를 거부해야 한다.
+예상 top-level set은 `bootstrap`, `code_mode`, `task`, `wsl_exec`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 모든 tool은 알 수 없는 인자를 거부해야 한다.
 
 ## Runtime state
 

@@ -10,8 +10,11 @@ from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .command_runtime import (
+    RuntimeRecord,
     child_budget,
     remaining_seconds,
+)
+from .command_runtime import (
     run_command as run_runtime_command,
 )
 from .council import emit_sol_response
@@ -47,7 +50,7 @@ def reject_broad_search_root(path: Path, *, operation: str) -> None:
 def build_code_registry(
     default_cwd: str | None,
     *,
-    record: dict[str, object],
+    record: RuntimeRecord,
 ) -> CallableRegistry:
     registry = CallableRegistry()
     effective_cwd = (

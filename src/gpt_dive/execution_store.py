@@ -378,11 +378,11 @@ class ExecutionStore:
             reason_sql = "?"
             state_vals = (terminal_state,)
             reason_vals = (reason,)
-        
+
         exit_code_sql = "exit_code = ?, " if include_exit_code else ""
         exit_code_vals = (exit_code,) if include_exit_code else ()
         entry_placeholders = ", ".join("?" for _ in entry_states)
-        
+
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 f"""

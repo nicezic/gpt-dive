@@ -222,7 +222,11 @@ inline MCP wait이 취소되거나 끊겼는데 Runtime이 사용자 취소와 t
 bootstrap
 code_mode   Execution 하나를 launch 하고 bounded inline wait 수행
 task        publish 된 Task 의 list / get / cancel / dismiss
+wsl_exec    비상용 bounded raw shell
 ```
+
+`wsl_exec`은 2026-08-30에 추가된 후속 escape hatch다. 이 ADR의 durable
+Execution/Task contract에는 속하지 않으며, 재사용 workflow는 계속 `code_mode` 뒤에 둔다.
 
 `code_mode` 입력(개념):
 

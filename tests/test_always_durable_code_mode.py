@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from gpt_dive import app
 import gpt_dive.execution_manager as execution_manager
+from gpt_dive import app
+from gpt_dive.code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from gpt_dive.execution_manager import ExecutionManager
 
 
@@ -102,7 +104,7 @@ def test_inline_completion_preserves_final_expression_value(
 def test_inline_completion_does_not_replay_print_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    install_manager(monkeypatch, tmp_path / "executions")
+    manager = install_manager(monkeypatch, tmp_path / "executions")
 
     outcome = asyncio.run(
         app.code_mode(
@@ -117,6 +119,13 @@ def test_inline_completion_does_not_replay_print_output(
     assert outcome.model_dump() == {
         "kind": "completed",
         "execution_id": outcome.execution_id,
+        "output": {"answer": 3},
+    }
+    record = manager.store.get(outcome.execution_id)
+    envelope = json.loads(Path(str(record["stdout_path"])).read_text())
+    assert envelope == {
+        "v": CODE_MODE_WORKER_PROTOCOL,
+        "ok": True,
         "output": {"answer": 3},
     }
 
@@ -151,7 +160,11 @@ def test_inline_runtime_failure_exposes_compact_error_outcome(
     install_manager(monkeypatch, tmp_path / "executions")
 
     outcome = asyncio.run(
-        app.code_mode(label="runtime failure", code="1 / 0", cwd=str(tmp_path))
+        app.code_mode(
+            label="runtime failure",
+            code="raise ValueError('X' * 100_000)",
+            cwd=str(tmp_path),
+        )
     )
 
     assert isinstance(outcome, app.CodeModeError)
@@ -159,9 +172,8 @@ def test_inline_runtime_failure_exposes_compact_error_outcome(
         "kind": "error",
         "execution_id": outcome.execution_id,
         "code": "execution_error",
-        "message": outcome.message,
+        "message": "Code Mode Execution failed.",
     }
-    assert outcome.message
 
 
 def test_inline_wait_expiry_publishes_same_continuing_execution(
@@ -379,11 +391,12 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
         "kind": "error",
         "execution_id": outcome.execution_id,
         "code": "launch_interrupted",
-        "message": "launcher response timed out",
+        "message": "Code Mode Worker could not be launched.",
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"
     assert record["reason"] == "launch_interrupted"
+    assert "launcher response timed out" in Path(str(record["stderr_path"])).read_text()
 
 
 def test_immediate_task_mode_uses_execution_id_as_handle(

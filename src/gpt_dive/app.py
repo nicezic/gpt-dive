@@ -8,11 +8,11 @@ import logging
 import os
 import re
 import shlex
-import subprocess
 import sys
 import time
+from collections.abc import Coroutine
 from pathlib import Path
-from typing import Annotated, Any, Coroutine, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -21,6 +21,7 @@ from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
+from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
 from .execution_manager import ExecutionManager
 from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import request_lifecycle_middleware
@@ -665,14 +666,6 @@ _CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
 
 
 def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
-    if value.get("kind") == "completed":
-        retained = value.get("result")
-        if isinstance(retained, dict) and "result" in retained:
-            value = {
-                "kind": "completed",
-                "execution_id": value["execution_id"],
-                "output": retained["result"],
-            }
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
@@ -712,7 +705,7 @@ async def _code_mode_launch_error(
     return _code_mode_error(
         execution_id,
         code="launch_interrupted",
-        message=str(exc) or "Code Mode Worker could not be launched.",
+        message="Code Mode Worker could not be launched.",
     )
 
 
@@ -848,12 +841,15 @@ async def code_mode(
                         "did not finish before the response deadline."
                     ),
                 )
-            except Exception as exc:
+            except Exception:
+                logger.exception(
+                    "TASK PUBLICATION FAILED execution_id=%s", execution_id
+                )
                 _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
                 return _code_mode_error(
                     execution_id,
                     code="task_publication_failed",
-                    message=str(exc) or "Task publication failed.",
+                    message="Task publication failed.",
                 )
             _spawn_followup(_observe_launch(launch_task))
             return CodeModeTask(
@@ -893,9 +889,12 @@ async def code_mode(
 @mcp.tool(
     name="wsl_exec",
     title="Raw WSL Shell",
-    description="Run one raw shell command directly in local WSL2 outside Code Mode; bounded to 600 seconds.",
+    description=(
+        "Run one raw shell command directly in local WSL2 outside Code Mode; "
+        "bounded to 600 seconds."
+    ),
 )
-def wsl_exec(
+async def wsl_exec(
     command: Annotated[
         str,
         Field(
@@ -908,37 +907,11 @@ def wsl_exec(
         Field(description="Optional WSL2 working directory."),
     ] = None,
 ) -> dict[str, Any]:
-    if not command.strip():
-        raise ValueError("command must not be empty")
-    run_cwd = str(Path(cwd).expanduser()) if cwd else None
-    try:
-        completed = subprocess.run(
-            ["/bin/bash", "-lc", command],
-            cwd=run_cwd,
-            capture_output=True,
-            text=True,
-            timeout=600.0,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
-        return {
-            "exit_code": 124,
-            "stdout": stdout,
-            "stderr": (
-                f"{stderr}\n[wsl_exec] timed out after 600 seconds"
-            ).lstrip(),
-        }
-    return {
-        "exit_code": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
-    }
+    return await run_wsl_command(
+        command,
+        cwd=cwd,
+        timeout=WSL_EXEC_TIMEOUT_SECONDS,
+    )
 
 
 @mcp.tool(

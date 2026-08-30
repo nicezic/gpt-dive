@@ -11,7 +11,6 @@ from typing import Any
 from pydantic_ai import Agent, UsageLimits
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.tool_output_limits import (
     Band,
     LocalFileStore,
@@ -21,7 +20,7 @@ from pydantic_ai_harness.tool_output_limits import (
 )
 
 from .model_registry import build_model, resolve_model
-from .runtime_env import build_runtime_path
+from .runtime_env import DENIED_MODEL_ENV_PATTERNS, build_runtime_path
 
 _TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 8_000
 _TOOL_OUTPUT_SPILL_TTL = timedelta(hours=48)
@@ -49,18 +48,12 @@ def _build_worker_capabilities(workspace_dir: str):
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
     shell_env = os.environ.copy()
     shell_env["PATH"] = build_runtime_path(guard_bin, inherited=shell_env.get("PATH"))
-    denied_env_patterns = [
-        *LLM_API_KEY_ENV_PATTERNS,
-        "MINIMAX_*",
-        "MICU_*",
-    ]
-
     return [
         FileSystem(root_dir=workspace),
         Shell(
             cwd=workspace,
             env=shell_env,
-            denied_env_patterns=denied_env_patterns,
+            denied_env_patterns=DENIED_MODEL_ENV_PATTERNS,
             default_timeout=60.0,
             max_output_chars=50_000,
         ),
