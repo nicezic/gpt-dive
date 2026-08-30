@@ -1,7 +1,7 @@
 ---
 title: ADR - Code Mode Output Contract as a Local Reduction Boundary
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-08-31
 type: decision
 status: accepted
 ---
@@ -61,7 +61,7 @@ Execution / Task
 
 - model-visible metadata는 **엄청 간소화**한다. 정상 경로의 판단에 필요하지 않은 label, backend, pid, timestamp, elapsed 같은 정보는 싣지 않는다.
 - `execution_id`는 남긴다. 최종 `output`이 원하는 결과가 아니거나 이상할 때 retained result/raw artifact를 다시 조회할 수 있는 recovery/debug handle이기 때문이다.
-- 2~3겹의 `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
+- `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. **모델이 실제로 받는 MCP structured output의 최상위도 outcome object 자체여야 하며**, SDK/host projection이 의미 없는 `{"result": ...}` 한 겹을 자동 추가하는 경우에도 이를 정상 contract로 승인하지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
 - 짧은 이름보다 **일관되고 명시적인 vocabulary**를 우선한다. `id` 대신 모든 runtime surface에서 `execution_id`를 사용한다.
 - 사람이 보기에는 다소 중복처럼 보여도 `kind`는 유지한다. 명시적 discriminator는 LLM이 결과 shape를 추론하지 않고 바로 분기하게 해 오류 가능성을 낮춘다.
 - machine contract에 별도 emoji delimiter/text framing protocol을 만들지 않는다. 눈에 잘 띄는 `🔵🟢🟣 ... 🟣🟢🔵` 같은 표식은 debug/presentation layer에서는 쓸 수 있지만, runtime parser가 알아야 하는 두 번째 protocol로 만들지 않는다.
@@ -350,7 +350,23 @@ Monty가 list를 조립하면 그대로 list다.
 
 `label`은 completed/error outcome에서 제거한다. 호출 직전에 이미 알고 있는 정보를 반복하기 때문이다. 여러 Execution을 구분해야 하는 `task(list)` 같은 awareness surface에서는 label이 여전히 가치가 있으므로 별도 유지할 수 있다.
 
-이 public contract에서 GPT Dive가 소유하는 semantic wrapper는 **outcome object 한 겹**뿐이다. MCP/host가 외부 transport wrapper를 추가하더라도 GPT Dive 내부에서 `result → result → output` 같은 중첩을 만들지 않는다.
+이 public contract에서 **모델이 실제로 받는 structured output 자체가 outcome object 한 겹**이어야 한다. 따라서 다음 shape는 contract 위반이다.
+
+```json
+{
+  "result": {
+    "kind": "completed",
+    "execution_id": "abc123",
+    "output": 42
+  }
+}
+```
+
+현재 사용하는 MCP SDK 2.0.0은 generic/Union return annotation을 structured output으로 변환할 때 `{"result": value}`를 자동 추가할 수 있다. 이 SDK 편의 wrapper는 transport implementation detail일 뿐 model-facing semantic value가 없으므로 public contract로 승인하지 않는다.
+
+따라서 구현은 특정 Pydantic helper 자체가 아니라 **advertised `outputSchema`와 실제 `structuredContent`가 outcome object를 top-level에 직접 노출한다는 결과**를 만족해야 한다. `RootModel` 같은 object model은 가능한 구현 수단일 뿐이며, 이 ADR이 고정하는 public contract 자체는 아니다.
+
+이 결정은 새 semantic wrapper를 추가하는 것이 아니라 **SDK-generated wrapper를 제거하기 위한 public projection constraint**다.
 
 ## 폐기한 대안
 
@@ -457,6 +473,7 @@ Output contract를 구현·검증하는 동안 MCP preview는 실제 Monty code�
 
 - final Monty expression이 정상적인 durable program result이며 public field 이름은 `output`이다.
 - completed outcome은 `kind + execution_id + output`을 기본 shape로 하고, final program value를 `result.result` 같은 중첩으로 감싸지 않는다.
+- MCP tool의 advertised `outputSchema`와 실제 live `structuredContent` 모두 outcome object를 top-level에 직접 노출해야 하며, 최상위 `result` property/wrapper를 허용하지 않는다.
 - task outcome은 `kind + execution_id + state`, error outcome은 `kind + execution_id + code + message`의 동일 union vocabulary를 사용한다.
 - completed/error 정상 경로에 `label`, `stdout`, backend, pid, timestamp, elapsed 등 판단에 불필요한 metadata를 추가하지 않는다.
 - `execution_id`는 compact output이 이상할 때 retained/raw evidence를 조회하는 recovery/debug handle로 항상 유지한다.

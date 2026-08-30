@@ -7,7 +7,7 @@ Code Mode의 현재 model-visible output은 원래 의도한 **local reduction b
 Monty 안에서 capability의 큰 중간값을 병렬로 가져와 로컬에서 선별·조합한 뒤 작은 final expression만 caller/model에게 돌려주는 것이 핵심인데, 현재 projection은 다음 문제를 만든다.
 
 - Monty `print()`의 console/progress 의미를 실행 종료 시 누적 `stdout` 필드로 다시 final response에 섞는다.
-- runtime/worker/public outcome을 지나며 `result` 의미의 wrapper가 여러 겹 생겨 실제 program value까지 불필요한 JSON 경로를 따라가야 한다.
+- runtime/worker/public outcome을 지나며 `result` 의미의 wrapper가 생겨 실제 program value까지 불필요한 JSON 경로를 따라가야 한다. 특히 MCP SDK가 generic/Union return annotation을 `{"result": value}`로 자동 projection하는 경우도 model-visible contract 위반으로 취급한다.
 - 정상 completed outcome에 caller가 이미 알고 있는 `label` 같은 metadata가 반복된다.
 - lifecycle, program result, console/progress, Task awareness가 하나의 output surface에서 필요 이상으로 섞인다.
 - `code_mode`와 `task(get)`이 같은 durable Execution을 다루면서도 서로 다른 return vocabulary를 사용하면 LLM이 별도 분기 규칙을 학습해야 한다.
@@ -26,6 +26,7 @@ Code Mode를 **programmable local reduction boundary**로 유지하고, model-vi
 - `code_mode`와 `task(get)`은 같은 outcome vocabulary를 사용한다.
 - public outcome은 `kind`를 명시적 discriminator로 유지하고, durable identifier는 항상 `execution_id`라는 한 이름만 사용한다.
 - 정상 outcome에 필요 없는 metadata와 duplicate semantic wrapper를 제거한다.
+- MCP tool의 advertised `outputSchema`와 실제 live `structuredContent`는 outcome object를 top-level에 직접 노출해야 하며, SDK-generated 최상위 `result` wrapper를 허용하지 않는다.
 - 이상한 결과를 조사할 수 있도록 `execution_id`는 항상 보존한다.
 - public `output` 안의 string/list/dict 구조는 Monty program이 결정하며 runtime은 다시 장식하거나 중첩하지 않는다.
 
@@ -84,6 +85,7 @@ one discriminator
 33. As a runtime maintainer, I want the same retained program value to back inline and Task delivery, so that there is no second source of truth for completed output.
 34. As a runtime maintainer, I want no new event bus, transcript persistence model, or streaming framework in this change, so that the semantic correction is not buried under speculative infrastructure.
 35. As a future maintainer reading the spec, I want the rejected alternatives and scope boundaries preserved, so that later cleanup does not accidentally recreate the context-polluting design.
+36. As an LLM receiving MCP structured output, I want the outcome object itself at the top level rather than `{"result": outcome}`, so that SDK projection details do not become part of the reasoning contract.
 
 ## Implementation Decisions
 
@@ -127,6 +129,8 @@ The value of `output` may be any supported serializable final Monty value, inclu
 - **error** — `kind`, `execution_id`, `code`, `message`
 
 Delivery timing may differ, but a completed durable Execution must have the same public meaning regardless of whether it was returned inline or collected later.
+
+The current MCP SDK 2.0.0 wraps generic/Union return annotations as `{"result": value}` for structured output. That SDK-generated wrapper is not part of the approved contract. The implementation must therefore choose a registration/return model whose advertised `outputSchema` and live `structuredContent` expose the discriminated outcome union itself at the top level. A Pydantic `RootModel` is one possible implementation candidate if it satisfies that canary; it is not itself a contract requirement.
 
 ### 5. Keep `kind` even when another field appears to imply the outcome
 
@@ -198,16 +202,17 @@ If implementation pressure suggests reintroducing extra wrappers or metadata, th
 
 The smallest useful Test Contract is the public outcome behavior plus one narrow Monty runtime semantic check.
 
-1. **Public completed outcome** — a successful inline Code Mode call returns exactly `kind`, `execution_id`, and `output` with no redundant metadata.
+1. **Public completed outcome** — a successful inline Code Mode call exposes exactly `kind`, `execution_id`, and `output` at the top level of model-visible structured output, with no outer `result` property.
 2. **Output type preservation** — representative string, list, and dict final expressions arrive unchanged under `output`.
 3. **No final print replay** — a program that uses `print()` and then returns a final expression does not expose accumulated print text as a normal final field.
 4. **Local reduction** — independent capability calls can be gathered and reduced to a compact final output without intermediate full results appearing in the public outcome.
 5. **Public task outcome** — a still-running/published execution returns exactly `kind`, `execution_id`, and `state` on the Code Mode/Task collection surface being tested.
 6. **Inline/Task equivalence** — a completed Execution retrieved through `task(get)` has the same completed outcome vocabulary and same retained program value as inline completion.
 7. **Public error outcome** — a runtime failure exposes exactly `kind`, `execution_id`, `code`, and `message` in the normal error surface.
-8. **Metadata absence** — completed/task/error contract tests explicitly fail if `label`, `stdout`, backend/process/timestamp/elapsed metadata, or nested semantic `result` wrappers return on the normal path.
-9. **Durability regression** — existing ADR 0004 behavior remains intact: one durable execution identity, normal task lifecycle, and retained completion behavior.
-10. **TrackedTasks non-regression** — this change does not attempt to fix the connector projection bug and must not silently replace or redefine Task awareness semantics.
+8. **Metadata/wrapper absence** — completed/task/error contract tests explicitly fail if `label`, `stdout`, backend/process/timestamp/elapsed metadata, nested semantic `result` wrappers, or an SDK-generated top-level `result` wrapper return on the normal path.
+9. **Advertised schema shape** — `code_mode` and the delivery branch of `task` advertise the discriminated outcome union at the top level; tests must fail if `outputSchema.properties.result` reappears.
+10. **Durability regression** — existing ADR 0004 behavior remains intact: one durable execution identity, normal task lifecycle, and retained completion behavior.
+11. **TrackedTasks non-regression** — this change does not attempt to fix the connector projection bug and must not silently replace or redefine Task awareness semantics.
 
 ### Preferred seams
 
@@ -220,7 +225,7 @@ The smallest useful Test Contract is the public outcome behavior plus one narrow
 
 ### Acceptance rule
 
-A green test suite is necessary but not sufficient. Final acceptance also requires inspecting the actual model-visible result from a live MCP canary and confirming that the normal response no longer contains duplicate semantic wrappers or accumulated `print()` output.
+A green test suite is necessary but not sufficient. Final acceptance also requires inspecting both the advertised MCP `outputSchema` and the actual model-visible `structuredContent` from a live canary. `code_mode` must expose `kind` at the top level, must not advertise or return a top-level `result` wrapper, and must not replay accumulated `print()` output.
 
 ## Out of Scope
 
@@ -242,4 +247,4 @@ A green test suite is necessary but not sufficient. Final acceptance also requir
 - The previous ADR 0005 refactoring narrative is not the authority for this work.
 - The public contract is deliberately optimized for LLM consumption rather than human inspection. Human/operator diagnostics should remain available through separate, explicit recovery surfaces rather than normal-path metadata.
 - Temporary MCP debug preview remains useful during implementation because it exposes the actual received response. It is an operating aid, not part of the runtime contract.
-- The next workflow step is `/to-tickets`; ticket decomposition should follow the semantic seams above rather than split work mechanically by file.
+- Tickets 01–04 already decompose the original ADR 0005 work. Removing an SDK-generated top-level `result` wrapper remains ADR 0005 follow-up work because it violates the same LLM-facing output boundary; it does not require a new ADR.
