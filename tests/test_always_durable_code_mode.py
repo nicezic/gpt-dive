@@ -25,6 +25,50 @@ def install_manager(monkeypatch: pytest.MonkeyPatch, root: Path) -> ExecutionMan
     return manager
 
 
+def create_terminal_code_mode_record(
+    manager: ExecutionManager,
+    *,
+    execution_id: str,
+    cwd: Path,
+    label: str,
+    envelope: dict[str, object],
+    exit_code: int,
+    publish: bool = False,
+) -> Path:
+    execution_dir = manager.root / execution_id
+    execution_dir.mkdir(parents=True)
+    request_path = execution_dir / "request.json"
+    stdout_path = execution_dir / "stdout.log"
+    stderr_path = execution_dir / "stderr.log"
+    outcome_path = execution_dir / "outcome.json"
+    request_path.write_text("{}")
+    stdout_path.write_text(json.dumps(envelope))
+    stderr_path.write_text("")
+    manager.store.create(
+        execution_id=execution_id,
+        kind="code_mode",
+        label=label,
+        cwd=str(cwd),
+        backend="popen",
+        systemd_unit=None,
+        work_timeout_seconds=12,
+        cleanup_timeout_seconds=2,
+        request_path=request_path,
+        artifact_dir=execution_dir,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        outcome_path=outcome_path,
+        publish=publish,
+    )
+    assert manager.store.claim(
+        execution_id,
+        worker_pid=1_000_000,
+        worker_start_ticks=None,
+    )
+    manager.store.finish(execution_id, exit_code=exit_code)
+    return stdout_path
+
+
 async def wait_task_ready(
     execution_id: str, *, timeout: float = 6.0
 ) -> app.CodeModeOutcome:
@@ -90,25 +134,42 @@ def test_inline_completion_returns_typed_output_without_publication_or_print_rep
     }
 
 
-def test_inline_runtime_failure_exposes_compact_error_outcome(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("execution_id", "code", "message"),
+    [
+        ("fail01", "execution_error", "Code Mode Execution failed."),
+        ("fail02", "non_json_result", "Code Mode result is not strict JSON."),
+    ],
+)
+def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_id: str,
+    code: str,
+    message: str,
 ) -> None:
-    install_manager(monkeypatch, tmp_path / "executions")
-
-    outcome = asyncio.run(
-        app.code_mode(
-            label="runtime failure",
-            code="raise ValueError('X' * 100_000)",
-            cwd=str(tmp_path),
-        )
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    create_terminal_code_mode_record(
+        manager,
+        execution_id=execution_id,
+        cwd=tmp_path,
+        label="runtime failure",
+        envelope={
+            "v": CODE_MODE_WORKER_PROTOCOL,
+            "ok": False,
+            "error": {"code": code},
+        },
+        exit_code=1,
     )
+
+    outcome = app._code_mode_outcome(manager.result(execution_id))
 
     assert isinstance(outcome, app.CodeModeError)
     assert outcome.model_dump() == {
         "kind": "error",
-        "execution_id": outcome.execution_id,
-        "code": "execution_error",
-        "message": "Code Mode Execution failed.",
+        "execution_id": execution_id,
+        "code": code,
+        "message": message,
     }
 
 
@@ -158,32 +219,34 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
+    execution_id = "lost01"
+    stdout_path = create_terminal_code_mode_record(
+        manager,
+        execution_id=execution_id,
+        cwd=tmp_path,
+        label="retained result",
+        envelope={
+            "v": CODE_MODE_WORKER_PROTOCOL,
+            "ok": True,
+            "output": {"answer": 3},
+        },
+        exit_code=0,
+        publish=True,
+    )
+    stdout_path.unlink()
 
     async def scenario() -> None:
-        started = await app.code_mode(
-            label="retained result",
-            code="{'answer': 3}",
-            cwd=str(tmp_path),
-            mode="task",
-        )
-        assert isinstance(started, app.CodeModeTask)
-        completed = await wait_task_ready(started.execution_id)
-        assert isinstance(completed, app.CodeModeCompleted)
-
-        record = manager.store.get(started.execution_id)
-        Path(str(record["stdout_path"])).unlink()
-
         first = await app.task(
-            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+            app.TaskGetRequest(action="get", execution_id=execution_id)
         )
         second = await app.task(
-            app.TaskGetRequest(action="get", execution_id=started.execution_id)
+            app.TaskGetRequest(action="get", execution_id=execution_id)
         )
         assert isinstance(first, app.CodeModeError)
         assert isinstance(second, app.CodeModeError)
         assert first.model_dump() == {
             "kind": "error",
-            "execution_id": started.execution_id,
+            "execution_id": execution_id,
             "code": "lost",
             "message": "Code Mode Execution outcome is no longer observable.",
         }
