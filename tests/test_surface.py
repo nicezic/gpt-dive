@@ -116,21 +116,26 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         for definition in schema["$defs"].values()
     )
 
-    awareness = tool.output_schema["$defs"]["TaskAwarenessView"]
-    assert set(awareness["properties"]) == {
+    task_view = tool.output_schema["$defs"]["TaskView"]
+    assert set(task_view["properties"]) == {
         "execution_id",
         "label",
         "state",
         "reason",
+        "accepted_at",
+        "finished_at",
+        "published_at",
+        "updated_at",
+        "elapsed_seconds",
     }
     task_list = tool.output_schema["$defs"]["TaskListOutput"]
     assert task_list["properties"]["tasks"]["items"]["$ref"].endswith(
-        "/TaskAwarenessView"
+        "/TaskView"
     )
 
 
-def test_task_list_model_visible_awareness_is_compact(monkeypatch) -> None:
-    def awareness_tasks(*, limit=None):
+def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
+    def detailed_tasks(*, limit=None):
         assert limit == 50
         return [
             {
@@ -143,8 +148,6 @@ def test_task_list_model_visible_awareness_is_compact(monkeypatch) -> None:
                 "published_at": "2026-08-31T00:00:01Z",
                 "updated_at": "2026-08-31T00:00:02Z",
                 "elapsed_seconds": 61,
-                "backend": "popen",
-                "worker_pid": 1234,
             }
         ]
 
@@ -156,7 +159,7 @@ def test_task_list_model_visible_awareness_is_compact(monkeypatch) -> None:
             convert_result=True,
         )
 
-    monkeypatch.setattr(app, "_task_list", awareness_tasks)
+    monkeypatch.setattr(app, "_task_list", detailed_tasks)
     result = asyncio.run(call())
 
     assert result.structured_content == {
@@ -167,6 +170,11 @@ def test_task_list_model_visible_awareness_is_compact(monkeypatch) -> None:
                 "label": "compile",
                 "state": "running",
                 "reason": None,
+                "accepted_at": "2026-08-31T00:00:00Z",
+                "finished_at": None,
+                "published_at": "2026-08-31T00:00:01Z",
+                "updated_at": "2026-08-31T00:00:02Z",
+                "elapsed_seconds": 61,
             }
         ],
     }
@@ -306,7 +314,7 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
     assert "TrackedTasks" in awareness.text
     assert "AGY worker" in awareness.text
     assert "running" in awareness.text
-    assert "4:21" not in awareness.text
+    assert "4:21" in awareness.text
     assert "a" * 6 in awareness.text
 
 

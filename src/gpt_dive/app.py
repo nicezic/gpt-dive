@@ -53,6 +53,15 @@ def _task_awareness(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def format_task_elapsed(seconds: int) -> str:
+    if seconds < 3600:
+        minutes, secs = divmod(seconds, 60)
+        return f"{minutes}:{secs:02d}"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
 def render_tracked_tasks(
     tasks: list[dict[str, Any]],
     *,
@@ -60,16 +69,16 @@ def render_tracked_tasks(
     max_bytes: int = TRACKED_TASKS_MAX_BYTES,
 ) -> str:
     lines = ["TrackedTasks"]
-    for raw_task in tasks[:limit]:
-        task = _task_awareness(raw_task)
+    for task in tasks[:limit]:
         state = str(task["state"])
         marker = _TASK_STATE_MARKERS.get(state, "•")
         parts = [
             str(task["label"]),
             f"{marker} {state}",
+            format_task_elapsed(int(task["elapsed_seconds"])),
             str(task["execution_id"]),
         ]
-        reason = str(task["reason"] or "").strip()
+        reason = str(task.get("reason") or "").strip()
         if reason:
             parts.append(reason)
         candidate = "\n".join([*lines, " · ".join(parts)])
@@ -1001,13 +1010,6 @@ TaskRequest = Annotated[
 ]
 
 
-class TaskAwarenessView(_ClosedModel):
-    execution_id: str
-    label: str
-    state: ExecutionState
-    reason: str | None
-
-
 class TaskView(_ClosedModel):
     execution_id: str
     label: str
@@ -1022,7 +1024,7 @@ class TaskView(_ClosedModel):
 
 class TaskListOutput(_ClosedModel):
     action: Literal["list"] = "list"
-    tasks: list[TaskAwarenessView]
+    tasks: list[TaskView]
 
 
 class TaskCancelOutput(_ClosedModel):
@@ -1044,10 +1046,6 @@ class _TaskPublicOutcome(RootModel[TaskOutcome]):
     pass
 
 
-def _task_awareness_view(value: dict[str, Any]) -> TaskAwarenessView:
-    return TaskAwarenessView.model_validate(_task_awareness(value))
-
-
 def _task_view(value: dict[str, Any]) -> TaskView:
     return TaskView.model_validate(value)
 
@@ -1055,7 +1053,7 @@ def _task_view(value: dict[str, Any]) -> TaskView:
 async def task(request: TaskRequest) -> TaskOutcome:
     if isinstance(request, TaskListRequest):
         rows = await asyncio.to_thread(_task_list, limit=_TASK_LIST_LIMIT)
-        return TaskListOutput(tasks=[_task_awareness_view(row) for row in rows])
+        return TaskListOutput(tasks=[_task_view(row) for row in rows])
 
     if isinstance(request, TaskGetRequest):
         result = await asyncio.to_thread(_task_get, request.execution_id)
