@@ -110,6 +110,15 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     }
 
 
+def test_task_description_distinguishes_automatic_awareness_from_inspection() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    description = tools["task"].description
+    assert description is not None
+    assert "list performs explicit detailed inspection" in description
+    assert "get is non-destructive" in description
+    assert "dismiss removes terminal awareness" in description
+
+
 def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     schema = tools["task"].input_schema
@@ -276,7 +285,12 @@ def test_server_instructions_keep_raw_wsl_out_of_structured_guidance() -> None:
         in instructions
     )
     assert "Never invent capability names" in instructions
-    assert "task tool for list/get/cancel/dismiss" in instructions
+    assert "ordinary work result includes tracked_tasks" in instructions
+    assert "compact passive awareness with elapsed_seconds" in instructions
+    assert "task(list) is explicit detailed inspection, not polling" in instructions
+    assert "task(get) is non-destructive" in instructions
+    assert "task(dismiss) removes terminal awareness" in instructions
+    assert "Program output semantics stay separate from Task awareness" in instructions
 
 
 def test_bootstrap_description_is_only_for_structured_harness() -> None:

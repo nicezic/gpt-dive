@@ -109,8 +109,12 @@ mcp = MCPServer(
         "live contract plus local state before retrying. Use Web Search only when the missing evidence "
         "is external and current. Use mode='task' for immediate Task awareness; otherwise code_mode "
         "waits briefly and publishes the same continuing Execution only when inline delivery ends "
-        "first. Transport loss never cancels work. Use the task tool for list/get/cancel/dismiss. "
-        "Results are retained for 5 days."
+        "first. Transport loss never cancels work. Every successful ordinary work result includes "
+        "tracked_tasks as compact passive awareness with elapsed_seconds, so background completion "
+        "is rediscovered without remembered polling. task(list) is explicit detailed inspection, "
+        "not polling; task(get) is non-destructive result pickup, and task(dismiss) removes terminal "
+        "awareness. Program output semantics stay separate from Task awareness. Results are retained "
+        "for 5 days."
     ),
 )
 
@@ -1092,10 +1096,9 @@ async def task(request: TaskRequest) -> TaskOutcome:
     name="task",
     title="GPT Dive Task Lifecycle",
     description=(
-        "Operate a published Code Mode Task by its single execution_id. list returns "
-        "outstanding awareness, get returns the same delivery outcome vocabulary as code_mode, "
-        "cancel explicitly cancels running work, and dismiss removes terminal awareness without "
-        "deleting retention."
+        "Operate a published Code Mode Task by its single execution_id. list performs explicit "
+        "detailed inspection, get is non-destructive status/result pickup, cancel explicitly cancels "
+        "running work, and dismiss removes terminal awareness without deleting retention."
     ),
 )
 async def _mcp_task(request: TaskRequest) -> _TaskPublicOutcome:
