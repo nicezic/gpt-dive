@@ -1,11 +1,11 @@
 ---
-title: ADR - Durable AGY Worker MCP Surface
+title: TODO - Durable AGY Worker MCP Surface
 created: 2026-08-30
 type: decision
 status: accepted
 ---
 
-# ADR 0010 — Durable AGY Worker MCP Surface
+# TODO — Durable AGY Worker MCP Surface
 
 > `agy_worker`를 Code Mode 내부 capability로 유지하면서, Zed 같은 외부 agent harness가
 > 직접 위임할 수 있는 top-level MCP tool로도 노출하는 결정 기록이다.
@@ -358,7 +358,7 @@ ADR 0004의 `Rejected alternatives`에 있던 다음 일반 결정은 **AGY에 �
 > agent/model 호출을 top-level MCP tool로 노출하면 lifecycle contract가 중복되고
 > deadline ownership이 여러 root로 갈라진다.
 
-이 우려는 top-level AGY가 별도 lifecycle을 만들 경우에는 여전히 맞다. ADR 0010은
+이 우려는 top-level AGY가 별도 lifecycle을 만들 경우에는 여전히 맞다. 이 TODO는
 `ExecutionManager`를 동일한 root authority로 재사용함으로써 그 중복을 만들지 않으면서,
 새로운 외부 orchestrator 요구를 충족한다.
 
