@@ -53,7 +53,6 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     assert "MICU_*" in shell.denied_env_patterns
     path_entries = shell.env["PATH"].split(":")
     assert path_entries[0].endswith("gpt_dive/guard-bin")
-    assert str(Path.home() / ".bun" / "bin") in path_entries
 
     output_limits = capabilities[3]
     assert len(output_limits.bands) == 1

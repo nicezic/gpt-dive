@@ -123,6 +123,23 @@ def test_run_command_is_awaited_bounded_and_preserves_output(tmp_path: Path) -> 
     assert result["duration_ms"] >= 0
 
 
+def test_run_command_resolves_tool_from_mise_shims(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    shim_dir = fake_home / ".local" / "share" / "mise" / "shims"
+    shim_dir.mkdir(parents=True)
+    tool = shim_dir / "mise-probe"
+    tool.write_text("#!/bin/sh\nprintf 'MISE_SHIM_OK\\n'\n")
+    tool.chmod(0o755)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = run_code(tmp_path, 'await run_command("mise-probe")')
+
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "MISE_SHIM_OK\n"
+
+
 def test_deadline_remaining_is_read_only_and_dynamic(tmp_path: Path) -> None:
     result = run_code(
         tmp_path,
