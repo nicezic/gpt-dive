@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gpt_dive.app import projection_revision, render_tracked_tasks
+from gpt_dive.app import render_tracked_tasks
 from gpt_dive.execution_manager import ExecutionManager, ExecutionNotFoundError
 
 
@@ -55,26 +55,6 @@ def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
     assert manager.result(execution_id)["stdout"] == "TASK_OK"
     with pytest.raises(ExecutionNotFoundError):
         manager.task_with_result(execution_id)
-
-
-def test_projection_revision_ignores_elapsed_time_but_tracks_state() -> None:
-    base = {
-        "execution_id": "a" * 6,
-        "label": "compile",
-        "state": "running",
-        "reason": None,
-        "finished_at": None,
-        "elapsed_seconds": 1,
-    }
-    later = {**base, "elapsed_seconds": 99}
-    completed = {
-        **later,
-        "state": "completed",
-        "finished_at": "2026-08-27T00:00:00Z",
-    }
-
-    assert projection_revision([base]) == projection_revision([later])
-    assert projection_revision([base]) != projection_revision([completed])
 
 
 def test_tracked_tasks_is_bounded_and_uses_single_execution_id() -> None:
