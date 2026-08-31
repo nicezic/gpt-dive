@@ -92,8 +92,11 @@ def test_tracked_tasks_is_bounded_and_uses_single_execution_id() -> None:
     rendered = render_tracked_tasks(tasks, limit=3, max_bytes=4096)
 
     assert rendered.startswith("TrackedTasks\n")
+    assert rendered.splitlines()[1] == "task-0 · 🧵 running · e00000"
     assert "task-0" in rendered and "task-2" in rendered
     assert "task-3" not in rendered
+    assert "0:00" not in rendered
+    assert "elapsed_seconds" not in rendered
     assert "task_id" not in rendered
 
 

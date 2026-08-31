@@ -44,13 +44,13 @@ _TASK_STATE_MARKERS = {
 }
 
 
-def format_task_elapsed(seconds: int) -> str:
-    if seconds < 3600:
-        minutes, secs = divmod(seconds, 60)
-        return f"{minutes}:{secs:02d}"
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}"
+def _task_awareness(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "execution_id": value["execution_id"],
+        "label": value["label"],
+        "state": value["state"],
+        "reason": value.get("reason"),
+    }
 
 
 def render_tracked_tasks(
@@ -60,16 +60,16 @@ def render_tracked_tasks(
     max_bytes: int = TRACKED_TASKS_MAX_BYTES,
 ) -> str:
     lines = ["TrackedTasks"]
-    for task in tasks[:limit]:
+    for raw_task in tasks[:limit]:
+        task = _task_awareness(raw_task)
         state = str(task["state"])
         marker = _TASK_STATE_MARKERS.get(state, "•")
         parts = [
             str(task["label"]),
             f"{marker} {state}",
-            format_task_elapsed(int(task["elapsed_seconds"])),
             str(task["execution_id"]),
         ]
-        reason = str(task.get("reason") or "").strip()
+        reason = str(task["reason"] or "").strip()
         if reason:
             parts.append(reason)
         candidate = "\n".join([*lines, " · ".join(parts)])
@@ -81,16 +81,7 @@ def render_tracked_tasks(
 
 
 def projection_revision(tasks: list[dict[str, Any]]) -> str:
-    visible = [
-        {
-            "execution_id": task["execution_id"],
-            "label": task["label"],
-            "state": task["state"],
-            "reason": task.get("reason"),
-            "finished_at": task.get("finished_at"),
-        }
-        for task in tasks
-    ]
+    visible = [_task_awareness(task) for task in tasks]
     encoded = json.dumps(
         visible,
         ensure_ascii=False,
@@ -98,6 +89,7 @@ def projection_revision(tasks: list[dict[str, Any]]) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
 # the base before tool registration makes both validation and advertised schemas strict.
@@ -1009,6 +1001,13 @@ TaskRequest = Annotated[
 ]
 
 
+class TaskAwarenessView(_ClosedModel):
+    execution_id: str
+    label: str
+    state: ExecutionState
+    reason: str | None
+
+
 class TaskView(_ClosedModel):
     execution_id: str
     label: str
@@ -1023,7 +1022,7 @@ class TaskView(_ClosedModel):
 
 class TaskListOutput(_ClosedModel):
     action: Literal["list"] = "list"
-    tasks: list[TaskView]
+    tasks: list[TaskAwarenessView]
 
 
 class TaskCancelOutput(_ClosedModel):
@@ -1045,6 +1044,10 @@ class _TaskPublicOutcome(RootModel[TaskOutcome]):
     pass
 
 
+def _task_awareness_view(value: dict[str, Any]) -> TaskAwarenessView:
+    return TaskAwarenessView.model_validate(_task_awareness(value))
+
+
 def _task_view(value: dict[str, Any]) -> TaskView:
     return TaskView.model_validate(value)
 
@@ -1052,7 +1055,8 @@ def _task_view(value: dict[str, Any]) -> TaskView:
 async def task(request: TaskRequest) -> TaskOutcome:
     if isinstance(request, TaskListRequest):
         rows = await asyncio.to_thread(_task_list, limit=_TASK_LIST_LIMIT)
-        return TaskListOutput(tasks=[_task_view(row) for row in rows])
+        return TaskListOutput(tasks=[_task_awareness_view(row) for row in rows])
+
     if isinstance(request, TaskGetRequest):
         result = await asyncio.to_thread(_task_get, request.execution_id)
         if bool(result["ready"]):

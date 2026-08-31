@@ -116,6 +116,61 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         for definition in schema["$defs"].values()
     )
 
+    awareness = tool.output_schema["$defs"]["TaskAwarenessView"]
+    assert set(awareness["properties"]) == {
+        "execution_id",
+        "label",
+        "state",
+        "reason",
+    }
+    task_list = tool.output_schema["$defs"]["TaskListOutput"]
+    assert task_list["properties"]["tasks"]["items"]["$ref"].endswith(
+        "/TaskAwarenessView"
+    )
+
+
+def test_task_list_model_visible_awareness_is_compact(monkeypatch) -> None:
+    def awareness_tasks(*, limit=None):
+        assert limit == 50
+        return [
+            {
+                "execution_id": "abc123",
+                "label": "compile",
+                "state": "running",
+                "reason": None,
+                "accepted_at": "2026-08-31T00:00:00Z",
+                "finished_at": None,
+                "published_at": "2026-08-31T00:00:01Z",
+                "updated_at": "2026-08-31T00:00:02Z",
+                "elapsed_seconds": 61,
+                "backend": "popen",
+                "worker_pid": 1234,
+            }
+        ]
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "task",
+            {"request": {"action": "list"}},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "_task_list", awareness_tasks)
+    result = asyncio.run(call())
+
+    assert result.structured_content == {
+        "action": "list",
+        "tasks": [
+            {
+                "execution_id": "abc123",
+                "label": "compile",
+                "state": "running",
+                "reason": None,
+            }
+        ],
+    }
+
 
 def test_model_visible_structured_content_has_no_outer_result(
     monkeypatch: pytest.MonkeyPatch,
@@ -251,7 +306,7 @@ def test_tracked_tasks_middleware_preserves_primary_result(monkeypatch) -> None:
     assert "TrackedTasks" in awareness.text
     assert "AGY worker" in awareness.text
     assert "running" in awareness.text
-    assert "4:21" in awareness.text
+    assert "4:21" not in awareness.text
     assert "a" * 6 in awareness.text
 
 
