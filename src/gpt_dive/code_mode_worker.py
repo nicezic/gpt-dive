@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .code_capabilities import build_code_registry, code_runtime
-from .command_runtime import runtime_record
-from .execution_store import ExecutionStore
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
+from .command_runtime import RuntimeRecord, runtime_record
+from .execution_store import ExecutionStore
 
 
 def _emit(envelope: dict[str, Any]) -> None:
@@ -26,8 +26,8 @@ def _emit(envelope: dict[str, Any]) -> None:
 
 
 async def _run(
-    request: dict[str, Any], *, record: dict[str, object]
-) -> dict[str, Any]:
+    request: dict[str, Any], *, record: RuntimeRecord
+) -> Any:
     if request.get("v") != CODE_MODE_WORKER_PROTOCOL:
         raise ValueError("unsupported Code Mode Worker request protocol version")
     code = request.get("code")
@@ -63,11 +63,11 @@ def main() -> None:
         args.request.unlink(missing_ok=True)
 
     store = ExecutionStore(args.store)
-    record = runtime_record(store.get(args.execution))
+    record = runtime_record(store.get(args.execution), store=store)
     try:
-        result = asyncio.run(_run(request, record=record))
+        output = asyncio.run(_run(request, record=record))
         try:
-            _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": result})
+            _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "output": output})
         except (TypeError, ValueError) as exc:
             _emit(
                 {
@@ -75,7 +75,7 @@ def main() -> None:
                     "ok": False,
                     "error": {
                         "code": "non_json_result",
-                        "message": f"Code Mode result is not strict JSON: {exc}",
+                        "message": "Code Mode result is not strict JSON.",
                     },
                 }
             )
@@ -90,7 +90,7 @@ def main() -> None:
                 "ok": False,
                 "error": {
                     "code": "execution_error",
-                    "message": str(exc) or type(exc).__name__,
+                    "message": "Code Mode Execution failed.",
                 },
             }
         )

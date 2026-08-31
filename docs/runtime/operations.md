@@ -44,22 +44,25 @@ for tool in asyncio.run(mcp.list_tools()):
 PY
 ```
 
-예상 top-level set은 `bootstrap`, `code_mode`, `task`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 둘 다 알 수 없는 인자를 거부해야 한다.
+예상 top-level set은 `bootstrap`, `code_mode`, `task`, `wsl_exec`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 모든 tool은 알 수 없는 인자를 거부해야 한다.
 
 ## Runtime state
 
 ```text
 ~/.local/state/gpt-dive/
-├─ runtime-v2.sqlite3          lifecycle + Task awareness SSOT
+├─ runtime-v2.sqlite3          lifecycle + Task awareness + run_command evidence
 ├─ runtime-v2.sqlite3-wal      active SQLite WAL
 ├─ runtime-v2.sqlite3-shm
-├─ executions-v2/<id>/
-│  ├─ request.json             Worker가 읽으면 삭제
-│  ├─ stdout.log
-│  ├─ stderr.log
-│  ├─ outcome.json             recovery evidence
-│  ├─ input.json               짧게 존재하는 Code Mode input
-│  └─ capability-output/       bounded run_command spill
+└─ executions-v2/<id>/
+   ├─ request.json             Worker가 읽으면 삭제
+   ├─ stdout.log
+   ├─ stderr.log
+   ├─ outcome.json             recovery evidence
+   └─ input.json               짧게 존재하는 Code Mode input
+
+/tmp/gpt-dive-run-command/<execution_id>/<run_ordinal>/
+├─ stdout                      private 0600, ≤ 8 MiB
+└─ stderr                      private 0600, ≤ 8 MiB
 ```
 
 Database가 lifecycle state를 소유한다. Artifact directory나 systemd unit만 보고 상태를 추론하지 않는다.
@@ -162,7 +165,7 @@ systemctl --user stop gd-detached-download.service
 
 ## Retention
 
-Terminal artifact는 5일 보존한다. Dismissal은 awareness만 없애며 retained result는 즉시 삭제하지 않는다. Artifact가 만료된 undismissed Task는 `lost(reason=retention_expired)`로 바뀌어 명시적 dismiss 전까지 정직하게 남는다.
+Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한다. `/tmp` working evidence는 Execution `accepted_at`으로부터 48시간 후 cleanup 대상이 된다. Dismissal은 awareness만 없애며 retained result는 즉시 삭제하지 않는다. Durable artifact가 만료된 undismissed Task는 `lost(reason=retention_expired)`로 바뀌어 명시적 dismiss 전까지 정직하게 남는다.
 
 ## Council 참고
 

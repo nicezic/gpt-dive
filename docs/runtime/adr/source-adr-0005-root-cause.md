@@ -1001,7 +1001,7 @@ The user separately proposed:
 후속작업 phase2
 - 원본 stdout 은 조합 후 이상하면 원래 소스 조회 기능.
   - python코드가 하니까. 컨텍스트 부담x.
-  - sqlite화? just /tmp? TTL 1 day 삭제.
+  - sqlite화? just /tmp?
 - ~/wiki/ERROR_CASE.md 개편
 ```
 

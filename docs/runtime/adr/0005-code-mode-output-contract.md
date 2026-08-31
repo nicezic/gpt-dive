@@ -1,7 +1,7 @@
 ---
 title: ADR - Code Mode Output Contract as a Local Reduction Boundary
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-08-31
 type: decision
 status: accepted
 ---
@@ -61,7 +61,7 @@ Execution / Task
 
 - model-visible metadata는 **엄청 간소화**한다. 정상 경로의 판단에 필요하지 않은 label, backend, pid, timestamp, elapsed 같은 정보는 싣지 않는다.
 - `execution_id`는 남긴다. 최종 `output`이 원하는 결과가 아니거나 이상할 때 retained result/raw artifact를 다시 조회할 수 있는 recovery/debug handle이기 때문이다.
-- 2~3겹의 `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
+- `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. **모델이 실제로 받는 MCP structured output의 최상위도 outcome object 자체여야 하며**, SDK/host projection이 의미 없는 `{"result": ...}` 한 겹을 자동 추가하는 경우에도 이를 정상 contract로 승인하지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
 - 짧은 이름보다 **일관되고 명시적인 vocabulary**를 우선한다. `id` 대신 모든 runtime surface에서 `execution_id`를 사용한다.
 - 사람이 보기에는 다소 중복처럼 보여도 `kind`는 유지한다. 명시적 discriminator는 LLM이 결과 shape를 추론하지 않고 바로 분기하게 해 오류 가능성을 낮춘다.
 - machine contract에 별도 emoji delimiter/text framing protocol을 만들지 않는다. 눈에 잘 띄는 `🔵🟢🟣 ... 🟣🟢🔵` 같은 표식은 debug/presentation layer에서는 쓸 수 있지만, runtime parser가 알아야 하는 두 번째 protocol로 만들지 않는다.
@@ -250,7 +250,9 @@ Task awareness        published/dismissed
 
 Task publication 여부가 프로그램 결과의 의미를 바꾸지 않는다.
 
-특히 현재 ChatGPT connector에서 TrackedTasks awareness가 보이지 않는 문제를 해결하기 위해 Code Mode result contract를 변형하지 않는다.
+TrackedTasks awareness는 program `output`과 별개다. ADR 0006은 model-visible ordinary result에 top-level sibling `tracked_tasks`를 추가할 수 있지만, 그 field를 `output` 내부에 넣거나 primary outcome을 `result` wrapper로 다시 감싸지 않는다.
+
+이 ADR의 compactness 요구는 `code_mode` / `task(get)` normal outcome에 한정된다. 별도 Task-awareness surface인 explicit `task(list)`의 detailed Task fields나 passive TrackedTasks의 elapsed 표시를 축약·제거하는 근거로 사용하지 않는다.
 
 ### 6. Output bounding은 final-result seam에서 한다
 
@@ -298,6 +300,8 @@ CodeModeOutcome
 ```
 
 `output`은 **final Monty expression 자체**다. 내부에 다시 `result`, `output`, `data` wrapper를 자동 추가하지 않는다.
+
+이 섹션의 JSON은 primary outcome fields를 설명한다. ADR 0006의 cross-cutting `tracked_tasks`는 실제 model-visible ordinary result에서 top-level sibling으로 추가될 수 있으며, `output` 의미에는 포함되지 않는다.
 
 Monty가 string을 마지막 expression으로 반환하면:
 
@@ -348,9 +352,25 @@ Monty가 list를 조립하면 그대로 list다.
 
 정상 error surface는 원인 분류와 사람이/모델이 이해할 message까지만 제공한다. 더 깊은 traceback, cleanup detail, retained raw evidence는 `execution_id`를 통해 필요할 때 조회한다.
 
-`label`은 completed/error outcome에서 제거한다. 호출 직전에 이미 알고 있는 정보를 반복하기 때문이다. 여러 Execution을 구분해야 하는 `task(list)` 같은 awareness surface에서는 label이 여전히 가치가 있으므로 별도 유지할 수 있다.
+`label`은 completed/error primary outcome에서 제거한다. 호출 직전에 이미 알고 있는 정보를 반복하기 때문이다. 여러 Execution을 구분해야 하는 automatic `tracked_tasks`와 `task(list)` awareness surface에서는 label이 여전히 가치가 있으므로 유지한다.
 
-이 public contract에서 GPT Dive가 소유하는 semantic wrapper는 **outcome object 한 겹**뿐이다. MCP/host가 외부 transport wrapper를 추가하더라도 GPT Dive 내부에서 `result → result → output` 같은 중첩을 만들지 않는다.
+이 public contract에서 **모델이 실제로 받는 structured output 자체가 outcome object 한 겹**이어야 한다. 따라서 다음 shape는 contract 위반이다.
+
+```json
+{
+  "result": {
+    "kind": "completed",
+    "execution_id": "abc123",
+    "output": 42
+  }
+}
+```
+
+현재 사용하는 MCP SDK 2.0.0은 generic/Union return annotation을 structured output으로 변환할 때 `{"result": value}`를 자동 추가할 수 있다. 이 SDK 편의 wrapper는 transport implementation detail일 뿐 model-facing semantic value가 없으므로 public contract로 승인하지 않는다.
+
+따라서 구현은 특정 Pydantic helper 자체가 아니라 **advertised `outputSchema`와 실제 `structuredContent`가 outcome object를 top-level에 직접 노출한다는 결과**를 만족해야 한다. `RootModel` 같은 object model은 가능한 구현 수단일 뿐이며, 이 ADR이 고정하는 public contract 자체는 아니다.
+
+이 결정은 새 semantic wrapper를 추가하는 것이 아니라 **SDK-generated wrapper를 제거하기 위한 public projection constraint**다.
 
 ## 폐기한 대안
 
@@ -416,18 +436,7 @@ final expression → compact result
 
 정상 경로는 compact result만 model context에 넣는다.
 
-결과가 이상해 보일 때만 retained execution artifact에서 정확한 raw evidence를 다시 읽는 기능을 검토한다.
-
-```text
-normal path
-    compact result only
-
-suspicious result
-    ↓
-on-demand raw artifact inspection
-```
-
-현재 `~/.local/state/gpt-dive/executions-v2/<execution_id>/`가 자연스러운 artifact authority이므로 별도 SQLite blob 저장소를 기본 전제로 두지 않는다. TTL과 exact retention policy는 Phase 2에서 결정한다.
+결과가 이상해 보일 때는 `execution_id`를 recovery handle로 사용한다. Evidence의 저장·discovery·selected-read 방식은 ADR 0008이 소유한다.
 
 ### Temporary debug preview
 
@@ -456,9 +465,10 @@ Output contract를 구현·검증하는 동안 MCP preview는 실제 Monty code�
 후속 구현과 리뷰는 최소한 다음을 만족해야 한다.
 
 - final Monty expression이 정상적인 durable program result이며 public field 이름은 `output`이다.
-- completed outcome은 `kind + execution_id + output`을 기본 shape로 하고, final program value를 `result.result` 같은 중첩으로 감싸지 않는다.
+- completed primary outcome fields는 `kind + execution_id + output`을 기본 shape로 하고, final program value를 `result.result` 같은 중첩으로 감싸지 않는다. ADR 0006의 cross-cutting `tracked_tasks` sibling metadata는 별도다.
+- MCP tool의 advertised `outputSchema`와 실제 live `structuredContent` 모두 outcome object를 top-level에 직접 노출해야 하며, 최상위 `result` property/wrapper를 허용하지 않는다.
 - task outcome은 `kind + execution_id + state`, error outcome은 `kind + execution_id + code + message`의 동일 union vocabulary를 사용한다.
-- completed/error 정상 경로에 `label`, `stdout`, backend, pid, timestamp, elapsed 등 판단에 불필요한 metadata를 추가하지 않는다.
+- completed/error primary outcome에 `label`, `stdout`, backend, pid, timestamp, elapsed 등 판단에 불필요한 metadata를 추가하지 않는다. ADR 0006의 `tracked_tasks`는 별도 awareness metadata다.
 - `execution_id`는 compact output이 이상할 때 retained/raw evidence를 조회하는 recovery/debug handle로 항상 유지한다.
 - `print()`가 자동으로 두 번째 final payload가 되지 않는다.
 - 큰 intermediate capability result가 Monty 내부에 머물 수 있다.
@@ -466,7 +476,7 @@ Output contract를 구현·검증하는 동안 MCP preview는 실제 Monty code�
 - inline 완료와 `task(get)`은 동일한 outcome vocabulary와 retained result 의미를 가진다.
 - Execution lifecycle과 Task awareness가 output semantics를 바꾸지 않는다.
 - final-output bounding이 필요하면 intermediate capability가 아니라 final result seam에 적용한다.
-- TrackedTasks connector 버그를 이 계약에 섞지 않는다.
+- TrackedTasks projection의 carrier/refresh semantics는 ADR 0006이 소유한다. `tracked_tasks`를 program `output` 내부에 섞지 않는다.
 
 ## 참고 문서
 

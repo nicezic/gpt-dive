@@ -222,7 +222,11 @@ inline MCP wait이 취소되거나 끊겼는데 Runtime이 사용자 취소와 t
 bootstrap
 code_mode   Execution 하나를 launch 하고 bounded inline wait 수행
 task        publish 된 Task 의 list / get / cancel / dismiss
+wsl_exec    비상용 bounded raw shell
 ```
+
+`wsl_exec`은 2026-08-30에 추가된 후속 escape hatch다. 이 ADR의 durable
+Execution/Task contract에는 속하지 않으며, 재사용 workflow는 계속 `code_mode` 뒤에 둔다.
 
 `code_mode` 입력(개념):
 
@@ -282,10 +286,11 @@ agent/model 3종은 그대로 유지한다. 내부 transport 통합은 **이번 
 - Execution의 작업 디렉터리, 정제된 환경, guard-bin `PATH`, effective child budget을 상속한다
 - `/bin/bash -lc`를 통해 실행한다
 - 명령 프로세스 그룹을 격리하고 bounded TERM → KILL → reap으로 종료한다
-- 실행 중 stdout/stderr를 **bounded memory로 spool**한다 (전량 메모리 적재 금지)
+- 실행 중 stdout/stderr를 private `/tmp` working file에 stream별 최대 8 MiB까지 spool한다
 - `.strip()`을 적용하지 않고 출력 경계를 보존한다
-- Monty/모델 컨텍스트로 들어가기 전에 spill·truncate한다
-- `exit_code`, `stdout`, `stderr`, `duration_ms`, `truncated`, 선택적 `spill_path`를 반환한다
+- terminal bounded evidence는 ADR 0008에 따라 SQLite 저장을 시도하며, 저장 실패는 원래 command 결과를 바꾸지 않는다
+- Monty/모델 컨텍스트에는 compact preview만 전달한다
+- `exit_code`, `stdout`, `stderr`, `duration_ms`, `truncated`를 반환하며 private evidence path는 반환하지 않는다
 
 ### 10. 장시간 작업의 명시적 위임은 Runtime 밖이다
 

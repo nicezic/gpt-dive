@@ -36,7 +36,7 @@ Local MCP bridge
 
 **Change**
 - Added `code_mode` as the primary programmable MCP execution root, backed by a fresh Monty runtime and a per-run `CallableRegistry`.
-- Reduced the current Web MCP surface to `bootstrap`, `code_mode`, and the Runtime-owned `task` lifecycle tool instead of adding one top-level tool per local capability.
+- Reduced the structured Web MCP surface to `bootstrap`, `code_mode`, and the Runtime-owned `task` lifecycle tool; `wsl_exec` remains an emergency raw-shell escape hatch instead of a reusable capability surface.
 
 **Why**
 - Multiple operations can be composed or run concurrently inside one model-visible call.
@@ -113,7 +113,7 @@ Implementation: `src/gpt_dive/repo_search.py`.
 
 ```text
 Web MCP surface
-  bootstrap / code_mode / task
+  bootstrap / code_mode / task / wsl_exec
 
 GPT Dive runtime
   lifecycle + registry + local execution policy + provider routing

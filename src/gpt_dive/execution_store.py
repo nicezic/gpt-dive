@@ -101,9 +101,36 @@ class ExecutionStore:
                 )
                 """
             )
+            execution_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(executions)")
+            }
+            if "run_command_next_ordinal" in execution_columns:
+                connection.execute(
+                    "ALTER TABLE executions DROP COLUMN run_command_next_ordinal"
+                )
+
+            expected_evidence_columns = {
+                "execution_id",
+                "run_ordinal",
+                "stdout",
+                "stderr",
+                "stdout_overflow",
+                "stderr_overflow",
+            }
+            evidence_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(run_command_evidence)"
+                )
+            }
+            if evidence_columns and evidence_columns != expected_evidence_columns:
+                connection.execute("DROP TABLE run_command_evidence")
+
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS executions_task_projection
+
                 ON executions (published_at, dismissed_at, accepted_at)
                 """
             )
@@ -111,6 +138,22 @@ class ExecutionStore:
                 """
                 CREATE INDEX IF NOT EXISTS executions_retention
                 ON executions (state, updated_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_command_evidence (
+                    execution_id TEXT NOT NULL,
+                    run_ordinal INTEGER NOT NULL,
+                    stdout BLOB NOT NULL,
+                    stderr BLOB NOT NULL,
+                    stdout_overflow INTEGER NOT NULL,
+                    stderr_overflow INTEGER NOT NULL,
+                    PRIMARY KEY (execution_id, run_ordinal),
+                    CHECK (run_ordinal > 0),
+                    CHECK (stdout_overflow IN (0, 1)),
+                    CHECK (stderr_overflow IN (0, 1))
+                )
                 """
             )
             connection.execute(
@@ -378,11 +421,11 @@ class ExecutionStore:
             reason_sql = "?"
             state_vals = (terminal_state,)
             reason_vals = (reason,)
-        
+
         exit_code_sql = "exit_code = ?, " if include_exit_code else ""
         exit_code_vals = (exit_code,) if include_exit_code else ()
         entry_placeholders = ", ".join("?" for _ in entry_states)
-        
+
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 f"""
@@ -455,6 +498,68 @@ class ExecutionStore:
             reason=reason,
         )
 
+    def persist_run_command_evidence(
+        self,
+        execution_id: str,
+        run_ordinal: int,
+        *,
+        stdout: bytes,
+        stderr: bytes,
+        stdout_overflow: bool,
+        stderr_overflow: bool,
+    ) -> None:
+        if run_ordinal <= 0:
+            raise ValueError("run_ordinal must be greater than 0")
+        self.get(execution_id)
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO run_command_evidence (
+                    execution_id, run_ordinal, stdout, stderr,
+                    stdout_overflow, stderr_overflow
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_id,
+                    run_ordinal,
+                    stdout,
+                    stderr,
+                    int(stdout_overflow),
+                    int(stderr_overflow),
+                ),
+            )
+
+    def get_run_command_evidence(
+        self, execution_id: str, run_ordinal: int
+    ) -> dict[str, Any]:
+        if run_ordinal <= 0:
+            raise ValueError("run_ordinal must be greater than 0")
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT execution_id, run_ordinal, stdout, stderr,
+                       stdout_overflow, stderr_overflow
+                FROM run_command_evidence
+                WHERE execution_id = ? AND run_ordinal = ?
+                """,
+                (execution_id, run_ordinal),
+            ).fetchone()
+        if row is None:
+            raise KeyError((execution_id, run_ordinal))
+        evidence = dict(row)
+        evidence["stdout"] = bytes(evidence["stdout"])
+        evidence["stderr"] = bytes(evidence["stderr"])
+        evidence["stdout_overflow"] = bool(evidence["stdout_overflow"])
+        evidence["stderr_overflow"] = bool(evidence["stderr_overflow"])
+        return evidence
+
+    def delete_run_command_evidence(self, execution_id: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "DELETE FROM run_command_evidence WHERE execution_id = ?",
+                (execution_id,),
+            )
+
     def mark_lost(self, execution_id: str, *, reason: str) -> dict[str, Any]:
         current = self.get(execution_id)
         if current["state"] == "accepted":
@@ -472,6 +577,10 @@ class ExecutionStore:
     def delete(self, execution_id: str) -> None:
         self.get(execution_id)
         with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "DELETE FROM run_command_evidence WHERE execution_id = ?",
+                (execution_id,),
+            )
             connection.execute(
                 "DELETE FROM executions WHERE execution_id = ?", (execution_id,)
             )

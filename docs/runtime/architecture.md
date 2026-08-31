@@ -10,9 +10,9 @@ GPT Dive는 하나의 불안정한 MCP 응답에 로컬 작업의 수명을 맡�
 ChatGPT Web
       │ MCP
       ▼
-bootstrap / code_mode / task
-      │
-      ▼
+bootstrap      code_mode / task                 wsl_exec
+                     │                             └─ bounded raw shell
+                     ▼
 SQLite Execution control plane ───────────────┐
       │ accepted                              │ published Task
       ▼                                       ▼
@@ -43,6 +43,9 @@ task(request)
 ├─ get       비파괴 조회
 ├─ cancel    명시적 cancellation만 수행
 └─ dismiss   terminal awareness만 제거
+
+wsl_exec(command, cwd?)
+└─ 비상용 raw shell; durable Execution/Task lifecycle 밖에서 bounded 실행
 ```
 
 고정 input object는 알 수 없는 property를 모두 거부한다. `code_mode`에는 `label`과 `code`가 필수이며 모델은 runtime deadline을 넘길 수 없다. Output은 `kind=completed|task|error`인 discriminated union(식별 필드로 variant를 고르는 합 타입)이다. `task`도 action-discriminated request와 action별 output을 사용한다. `execution_id`가 유일한 lifecycle identity다.
@@ -126,10 +129,10 @@ Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS
 
 ### Direct command 경계
 
-`run_command(command)`는 awaited capability 하나다. Execution의 cwd, sanitized environment, shared runtime `PATH`, 남은 work budget을 상속한다. PATH는 `guard-bin → ~/.local/share/mise/shims → stable user utility bins → inherited/system PATH` 순서이며, mise가 Node.js, Python, `pnpm`, `uv` / `uvx`의 버전 선택을 소유한다. 따라서 project-local mise 설정이 있으면 mise의 일반 resolution 규칙대로 global 기본값보다 우선하며, 보통의 `run_command()`에서는 `node`, `pnpm`, `uv` 같은 자연 명령을 그대로 사용한다. `mise exec -- ...`는 명시적인 버전 override나 GPT Dive의 일반 runtime PATH를 의도적으로 우회하는 context에서만 필요하다. 실행 중 output을 stream별 8 MiB까지 spool하고, model context에는 합계 8,000자 이하만 반환하며, 잘린 경우 bounded spill path를 함께 돌려준다. Stdout/stderr whitespace를 보존하며 결과는 다음과 같다.
+`run_command(command)`는 awaited capability 하나다. Execution의 cwd, sanitized environment, shared runtime `PATH`, 남은 work budget을 상속한다. PATH는 `guard-bin → ~/.local/share/mise/shims → stable user utility bins → inherited/system PATH` 순서이며, mise가 Node.js, Python, `pnpm`, `uv` / `uvx`의 버전 선택을 소유한다. 따라서 project-local mise 설정이 있으면 mise의 일반 resolution 규칙대로 global 기본값보다 우선하며, 보통의 `run_command()`에서는 `node`, `pnpm`, `uv` 같은 자연 명령을 그대로 사용한다. `mise exec -- ...`는 명시적인 버전 override나 GPT Dive의 일반 runtime PATH를 의도적으로 우회하는 context에서만 필요하다. 실행 중 stdout/stderr는 private `/tmp`에 stream별 8 MiB까지 spool하고, model context에는 합계 8,000자 이하만 반환한다. Terminal 시점에는 bounded evidence를 SQLite에 저장 시도하며 private evidence path는 반환하지 않는다. Stdout/stderr whitespace를 보존하며 결과는 다음과 같다.
 
 ```text
-exit_code / stdout / stderr / duration_ms / truncated / spill_path?
+exit_code / stdout / stderr / duration_ms / truncated
 ```
 
 `start_command`, `check_command`, `stop_command` mode는 없다.
@@ -159,7 +162,7 @@ Conduit는 두 번째 Task store를 소유하거나 별도 ID를 만들지 않�
 
 ## Retention
 
-Terminal artifact는 5일 보존한다. 아직 dismiss하지 않은 Task의 retained outcome이 만료되면 `lost(reason=retention_expired)`로 계속 보이게 한다. Dismiss됐거나 publish되지 않은 terminal Execution은 retention 뒤 row와 artifact를 함께 제거한다. 장기 실행 server에서는 정상 API activity 중 시간당 최대 한 번 이 정리를 수행한다.
+Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한다. `/tmp` working evidence는 Execution `accepted_at`으로부터 48시간 후 정리한다. 아직 dismiss하지 않은 Task의 retained outcome이 만료되면 `lost(reason=retention_expired)`로 계속 보이게 한다. Dismiss됐거나 publish되지 않은 terminal Execution은 retention 뒤 row와 durable artifact를 함께 제거한다. Runtime 시작 시 cleanup하고, 이후 새 Execution을 시작할 때 하루에 최대 한 번 정리한다.
 
 ## Source map
 

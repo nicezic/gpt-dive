@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import timedelta
 from pathlib import Path
 
@@ -39,7 +40,55 @@ def create_execution(
     )
 
 
+def test_store_removes_obsolete_run_command_schema(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.sqlite3"
+    ExecutionStore(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "ALTER TABLE executions ADD COLUMN "
+            "run_command_next_ordinal INTEGER NOT NULL DEFAULT 1"
+        )
+        connection.execute("DROP TABLE run_command_evidence")
+        connection.execute(
+            """
+            CREATE TABLE run_command_evidence (
+                execution_id TEXT NOT NULL,
+                run_ordinal INTEGER NOT NULL,
+                stdout BLOB NOT NULL,
+                stderr BLOB NOT NULL,
+                stdout_overflow INTEGER NOT NULL,
+                stderr_overflow INTEGER NOT NULL,
+                outcome TEXT NOT NULL,
+                exit_code INTEGER,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (execution_id, run_ordinal)
+            )
+            """
+        )
+
+    ExecutionStore(path)
+
+    with sqlite3.connect(path) as connection:
+        execution_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(executions)")
+        }
+        evidence_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(run_command_evidence)")
+        }
+    assert "run_command_next_ordinal" not in execution_columns
+    assert evidence_columns == {
+        "execution_id",
+        "run_ordinal",
+        "stdout",
+        "stderr",
+        "stdout_overflow",
+        "stderr_overflow",
+    }
+
+
 def test_execution_and_task_share_one_identity_but_not_one_lifecycle(
+
     tmp_path: Path,
 ) -> None:
     store = ExecutionStore(tmp_path / "runtime.sqlite3")

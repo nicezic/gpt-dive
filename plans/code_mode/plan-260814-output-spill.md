@@ -58,18 +58,18 @@ The safety net is intentionally simple. When a successful final Code Mode respon
 - **Rejected alternatives:** Harness-style opaque handle plus a new read-back capability; exposing both handle and path.
 - **Consequences / tradeoffs:** The contract is intentionally local-machine-specific. The dedicated spill directory must also be exposed as a read-only trusted FileSystem root so the returned absolute path is directly useful to `read_file`/`search_files`; this must not expand write authority. If Code Mode later gains a remote/distributed storage backend, this decision may need supersession rather than pretending the path is portable.
 
-### 3. Reuse Harness `LocalFileStore` lifecycle semantics where practical
+### 3. Reuse Harness `LocalFileStore` path semantics where practical
 
-- **Decision:** Use a dedicated explicit `LocalFileStore(base_dir=..., cleanup_after=timedelta(hours=48))` for persistence/cleanup, while the Code Mode adapter owns threshold measurement and preview formatting.
-- **Reason:** The public store already provides safe path handling, owner-only root creation, and non-blocking age-based cleanup. Reusing it avoids writing a second TTL sweeper merely because Code Mode does not use the Agent hook.
-- **Rejected alternatives:** Custom file store and cleanup implementation; no TTL because the root is under `/tmp`.
-- **Consequences / tradeoffs:** Cleanup is lazy, not an exact 48-hour timer. A stale file can remain beyond 48 hours until another spill write occurs or WSL clears `/tmp`.
+- **Decision:** Use a dedicated explicit `LocalFileStore(base_dir=...)` for persistence, while the Code Mode adapter owns threshold measurement and preview formatting.
+- **Reason:** The public store already provides safe path handling and owner-only root creation.
+- **Rejected alternatives:** A custom file store used only to reproduce the same path handling.
+- **Consequences / tradeoffs:** The Runtime does not attach an age-based cleanup policy to this `/tmp` root.
 
 ### 4. Keep the policy aligned with the SubAgent defaults chosen for GPT Dive
 
-- **Decision:** Final Code Mode spill threshold is 8,000 characters and retention is 48 hours. Preview stays small (target about 1,000 characters head+tail). No LLM summarization.
-- **Reason:** These values already reflect the user-approved context policy: spill before a roughly 2K-token tool payload becomes persistent baggage, retain the exact source long enough for follow-up work, and prefer lossless local read-back over lossy summaries.
-- **Rejected alternatives:** Harness default 10K threshold; M3 summarization; indefinite retention.
+- **Decision:** Final Code Mode spill threshold is 8,000 characters. Preview stays small (target about 1,000 characters head+tail). No LLM summarization.
+- **Reason:** This value reflects the user-approved context policy: spill before a roughly 2K-token tool payload becomes persistent baggage and prefer lossless local read-back over lossy summaries.
+- **Rejected alternatives:** Harness default 10K threshold; M3 summarization.
 - **Consequences / tradeoffs:** Outputs in the 8K-10K range will spill more often, but the full data remains locally available.
 
 ### 5. Preserve failure diagnostics
@@ -118,7 +118,7 @@ registered capabilities
        - preview: head + tail
 ```
 
-Implementation should provide one helper that both foreground completion and successful background result retrieval can call. Keep the storage root dedicated to Code Mode, for example `/tmp/gpt-dive-code-mode-spill/`, so returned paths are obvious and cleanup is scoped. Register that exact directory as an additional read-only trusted FileSystem root in the Code Mode registry; `read_file`, `list_directory`, `search_files`, `find_files`, and `file_info` may route there, while `write_file`, `edit_file`, and `create_directory` remain workspace-only.
+Implementation should provide one helper that both foreground completion and successful background result retrieval can call. Keep the storage root dedicated to Code Mode, for example `/tmp/gpt-dive-code-mode-spill/`, so returned paths are obvious and path ownership is scoped. Register that exact directory as an additional read-only trusted FileSystem root in the Code Mode registry; `read_file`, `list_directory`, `search_files`, `find_files`, and `file_info` may route there, while `write_file`, `edit_file`, and `create_directory` remain workspace-only.
 
 Measure the serialized model-visible successful response, not each internal capability result. The spill file should preserve enough structure to reconstruct the original response; JSON is preferred for the current dict-shaped Code Mode envelope, encoded as UTF-8. The compact replacement must state that the full result is stored at the returned path and can be inspected with existing Code Mode file/shell operations.
 
@@ -193,10 +193,10 @@ Code Mode
 - **When:** those paths are returned/raised.
 - **Then:** the existing diagnostic shape/content is preserved and no success spill marker replaces it.
 
-### 6. Retention policy is configured
+### 6. Temporary storage root is configured
 
 - **Given:** the Code Mode spill store.
-- **Then:** it has an explicit 48-hour cleanup policy and a dedicated `/tmp` base directory. A focused store test may verify stale-file pruning behavior through the public store semantics without duplicating upstream Harness tests.
+- **Then:** it has a dedicated `/tmp` base directory without a Runtime-owned TTL or cleanup policy.
 
 ### 7. Spill path is readable but not writable through trusted-root routing
 

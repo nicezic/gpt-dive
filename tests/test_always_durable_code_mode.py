@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from gpt_dive import app
 import gpt_dive.execution_manager as execution_manager
+from gpt_dive import app
+from gpt_dive.code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from gpt_dive.execution_manager import ExecutionManager
 
 
@@ -54,95 +56,38 @@ def test_public_outcome_models_lock_llm_contract_fields(
     assert outcome_type.model_config["extra"] == "forbid"
 
 
-def test_inline_completion_keeps_execution_unpublished(
+def test_inline_completion_returns_typed_output_without_publication_or_print_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
+    expected = {"answer": 3, "items": [1, "two", {"three": 3}]}
 
     outcome = asyncio.run(
-        app.code_mode(label="inline arithmetic", code="1 + 2", cwd=str(tmp_path))
+        app.code_mode(
+            label="inline completion",
+            code="""print('INTERMEDIATE NOISE')
+{'answer': 3, 'items': [1, 'two', {'three': 3}]}""",
+            cwd=str(tmp_path),
+        )
     )
 
     assert isinstance(outcome, app.CodeModeCompleted)
     assert outcome.model_dump() == {
         "kind": "completed",
         "execution_id": outcome.execution_id,
-        "output": 3,
+        "output": expected,
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "completed"
     assert record["published_at"] is None
     assert record["request_path"] == ""
     assert not (manager.root / outcome.execution_id / "input.json").exists()
-
-
-@pytest.mark.parametrize(
-    ("code", "expected"),
-    [
-        ("'direct text'", "direct text"),
-        ("[1, 'two', {'three': 3}]", [1, "two", {"three": 3}]),
-        ("{'answer': 42, 'items': [1, 2]}", {"answer": 42, "items": [1, 2]}),
-    ],
-)
-def test_inline_completion_preserves_final_expression_value(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    code: str,
-    expected: object,
-) -> None:
-    install_manager(monkeypatch, tmp_path / "executions")
-
-    outcome = asyncio.run(app.code_mode(label="typed output", code=code, cwd=str(tmp_path)))
-
-    assert isinstance(outcome, app.CodeModeCompleted)
-    assert outcome.output == expected
-    assert set(outcome.model_dump()) == {"kind", "execution_id", "output"}
-
-
-def test_inline_completion_does_not_replay_print_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    install_manager(monkeypatch, tmp_path / "executions")
-
-    outcome = asyncio.run(
-        app.code_mode(
-            label="print separation",
-            code="""print('INTERMEDIATE NOISE')
-{'answer': 3}""",
-            cwd=str(tmp_path),
-        )
-    )
-
-    assert isinstance(outcome, app.CodeModeCompleted)
-    assert outcome.model_dump() == {
-        "kind": "completed",
-        "execution_id": outcome.execution_id,
-        "output": {"answer": 3},
+    envelope = json.loads(Path(str(record["stdout_path"])).read_text())
+    assert envelope == {
+        "v": CODE_MODE_WORKER_PROTOCOL,
+        "ok": True,
+        "output": expected,
     }
-
-
-def test_inline_completion_keeps_gathered_intermediates_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    install_manager(monkeypatch, tmp_path / "executions")
-    (tmp_path / "left.txt").write_text("LEFT_MARK " + "A" * 20_000)
-    (tmp_path / "right.txt").write_text("RIGHT_MARK " + "B" * 20_000)
-
-    outcome = asyncio.run(
-        app.code_mode(
-            label="local reduction",
-            code="""left, right = await asyncio.gather(
-    read_file('left.txt'), read_file('right.txt')
-)
-{'left': 'LEFT_MARK' in left, 'right': 'RIGHT_MARK' in right}""",
-            cwd=str(tmp_path),
-        )
-    )
-
-    assert isinstance(outcome, app.CodeModeCompleted)
-    assert outcome.output == {"left": True, "right": True}
-    assert "AAAA" not in repr(outcome.model_dump())
-    assert "BBBB" not in repr(outcome.model_dump())
 
 
 def test_inline_runtime_failure_exposes_compact_error_outcome(
@@ -151,7 +96,11 @@ def test_inline_runtime_failure_exposes_compact_error_outcome(
     install_manager(monkeypatch, tmp_path / "executions")
 
     outcome = asyncio.run(
-        app.code_mode(label="runtime failure", code="1 / 0", cwd=str(tmp_path))
+        app.code_mode(
+            label="runtime failure",
+            code="raise ValueError('X' * 100_000)",
+            cwd=str(tmp_path),
+        )
     )
 
     assert isinstance(outcome, app.CodeModeError)
@@ -159,9 +108,8 @@ def test_inline_runtime_failure_exposes_compact_error_outcome(
         "kind": "error",
         "execution_id": outcome.execution_id,
         "code": "execution_error",
-        "message": outcome.message,
+        "message": "Code Mode Execution failed.",
     }
-    assert outcome.message
 
 
 def test_inline_wait_expiry_publishes_same_continuing_execution(
@@ -379,11 +327,12 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
         "kind": "error",
         "execution_id": outcome.execution_id,
         "code": "launch_interrupted",
-        "message": "launcher response timed out",
+        "message": "Code Mode Worker could not be launched.",
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"
     assert record["reason"] == "launch_interrupted"
+    assert "launcher response timed out" in Path(str(record["stderr_path"])).read_text()
 
 
 def test_immediate_task_mode_uses_execution_id_as_handle(

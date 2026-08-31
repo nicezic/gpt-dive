@@ -26,7 +26,7 @@ Durability and Task publication are outside Monty. There are no Task lifecycle c
 
 ## Construction
 
-`build_code_registry(default_cwd, *, execution_context)` constructs one registry per Execution. `ExecutionContext` supplies the immutable Execution identity, artifact boundary, and live remaining work deadline inherited by child capabilities.
+`build_code_registry(default_cwd, *, record)` constructs one registry per Execution. The small typed runtime record carries only the artifact boundary and live remaining work deadline inherited by child capabilities.
 
 ```python
 effective_cwd = (
@@ -119,12 +119,12 @@ await run_command(command)
 ├─ provider/API secret environment removed
 ├─ timeout = Runtime-owned remaining budget
 ├─ process = isolated session/process group
-├─ output = bounded live spool
-└─ return = exit_code / stdout / stderr / duration_ms /
-            truncated / spill_path?
+├─ raw stdout/stderr = private /tmp spool, ≤ 8 MiB each
+├─ terminal = SQLite evidence 저장 시도
+└─ return = exit_code / stdout / stderr / duration_ms / truncated
 ```
 
-The command has no caller timeout and no start/check/stop action. Stdout and stderr are not stripped. Model-visible output is capped at 8,000 characters; larger bounded spools remain under the Execution artifact directory.
+The command has no caller timeout and no start/check/stop action. Stdout and stderr are not stripped. Model-visible output is capped at 8,000 characters. Raw evidence stays private; SQLite persistence failure does not replace the original `run_command` result, and no private evidence path is returned.
 
 An explicit `systemd-run --user` sibling handoff is permitted only when the caller intentionally leaves GPT Dive Runtime and accepts the loss of Execution/Task/deadline guarantees. `setsid` is not an escape contract.
 
@@ -174,11 +174,11 @@ When inline delivery ends first, Runtime publishes a Task for the same `executio
 
 Changes to Code Mode should prove:
 
-1. the registry exposes exactly the intended sixteen names and current signatures;
+1. the registry exposes exactly the intended fifteen names and current signatures;
 2. `BACKGROUND`, inner `task_*`, caller `timeout`, and removed command lifecycle names stay absent;
 3. representative FileSystem and `run_command` calls work with their policy boundaries;
 4. static invalid arguments fail before host dispatch;
-5. child budgets come from `ExecutionContext`;
+5. child budgets come from the owning Execution record;
 6. output bounding, cancellation, and process reap are verified;
 7. inline completion, Task publication, non-destructive get, and explicit dismissal pass through the public runtime;
 8. the fresh-session MCP schema is accepted after service reload.

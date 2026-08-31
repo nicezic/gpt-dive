@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
+from .command_runtime import remove_run_command_evidence_directory
 from .execution_store import (
     TERMINAL_EXECUTION_STATES,
     ExecutionStore,
@@ -31,7 +32,12 @@ DEFAULT_WORK_TIMEOUT_SECONDS = 43190.0
 DEFAULT_CLEANUP_TIMEOUT_SECONDS = 10.0
 _ACCEPTED_LAUNCH_GRACE_SECONDS = 30.0
 _EXIT_MARKER_GRACE_SECONDS = 0.25
-_CLEANUP_INTERVAL_SECONDS = 3600.0
+_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+_RUN_COMMAND_TMP_RETENTION = timedelta(hours=48)
+_CODE_MODE_ERROR_MESSAGES = {
+    "execution_error": "Code Mode Execution failed.",
+    "non_json_result": "Code Mode result is not strict JSON.",
+}
 
 
 class ExecutionNotFoundError(KeyError):
@@ -48,7 +54,7 @@ def _parse_code_mode_envelope(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not isinstance(envelope, dict):
         return None
-    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(
+    if envelope.get("v") not in {3, CODE_MODE_WORKER_PROTOCOL} or not isinstance(
         envelope.get("ok"), bool
     ):
         return None
@@ -60,7 +66,6 @@ def _code_mode_error_result(
     *,
     code: str,
     message: str,
-    reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": "error",
@@ -217,12 +222,17 @@ class ExecutionManager:
                         stderr=subprocess.DEVNULL,
                         start_new_session=True,
                     )
-            except Exception:
+            except Exception as exc:
                 record = self.store.fail_accepted(
                     identifier, reason="launch_interrupted"
                 )
                 if record["claimed_at"] is not None:
                     return self._public_status(record)
+                stdout_path.touch(mode=0o600, exist_ok=True)
+                stderr_path.write_text(
+                    f"{type(exc).__name__}: {exc}\n", errors="replace"
+                )
+                stderr_path.chmod(0o600)
                 request_path.unlink(missing_ok=True)
                 input_path.unlink(missing_ok=True)
                 with contextlib.suppress(Exception):
@@ -232,13 +242,11 @@ class ExecutionManager:
 
     def status(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self._refresh(self._get(execution_id))
             return self._public_status(record)
 
     def result(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self._refresh(self._get(execution_id))
             payload = self._public_status(record)
             state = str(record["state"])
@@ -284,28 +292,24 @@ class ExecutionManager:
                 payload,
                 code="lost",
                 message="Code Mode Execution outcome is no longer observable.",
-                reason=reason,
             )
         if state == "cancelled":
             return _code_mode_error_result(
                 payload,
                 code="cancelled",
                 message="Code Mode Execution was cancelled.",
-                reason=reason,
             )
         if reason == "deadline_exceeded":
             return _code_mode_error_result(
                 payload,
                 code="deadline_exceeded",
                 message="Code Mode Execution reached its absolute work deadline.",
-                reason=reason,
             )
         if reason == "launch_interrupted":
             return _code_mode_error_result(
                 payload,
                 code="launch_interrupted",
                 message="Code Mode Worker could not be launched.",
-                reason=reason,
             )
 
         envelope = _parse_code_mode_envelope(payload)
@@ -314,36 +318,52 @@ class ExecutionManager:
                 payload,
                 code="worker_protocol_error",
                 message="Code Mode Worker produced no valid result envelope.",
-                reason=reason,
             )
         if envelope["ok"] is True and state == "completed":
+            if envelope["v"] == 3:
+                legacy = envelope.get("result")
+                if not isinstance(legacy, dict) or "result" not in legacy:
+                    return _code_mode_error_result(
+                        payload,
+                        code="worker_protocol_error",
+                        message="Code Mode Worker produced no valid result envelope.",
+                    )
+                output = legacy["result"]
+            else:
+                if "output" not in envelope:
+                    return _code_mode_error_result(
+                        payload,
+                        code="worker_protocol_error",
+                        message="Code Mode Worker produced no valid result envelope.",
+                    )
+                output = envelope.get("output")
             return {
                 "kind": "completed",
                 "execution_id": str(payload["execution_id"]),
-                "label": str(payload["label"]),
-                "result": envelope.get("result"),
+                "output": output,
             }
 
         error = envelope.get("error")
         if isinstance(error, dict):
-            code = str(error.get("code") or "execution_failed")
-            message = str(error.get("message") or "Code Mode Execution failed.")
+            raw_code = str(error.get("code") or "")
+            if raw_code in _CODE_MODE_ERROR_MESSAGES:
+                code = raw_code
+                message = _CODE_MODE_ERROR_MESSAGES[raw_code]
+            else:
+                code = "worker_protocol_error"
+                message = "Code Mode Worker exited without a valid error envelope."
         else:
             code = "worker_protocol_error"
             message = "Code Mode Worker exited without a valid error envelope."
-        return _code_mode_error_result(
-            payload, code=code, message=message, reason=reason
-        )
+        return _code_mode_error_result(payload, code=code, message=message)
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.publish(execution_id)
             return self._public_task(record)
 
     def dismiss(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.dismiss(execution_id)
             return {
                 "execution_id": execution_id,
@@ -353,7 +373,6 @@ class ExecutionManager:
 
     def cancel(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.request_cancel(execution_id)
             self._signal_execution(record)
             deadline = time.monotonic() + self.cleanup_timeout_seconds
@@ -367,7 +386,6 @@ class ExecutionManager:
 
     def task(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             try:
                 record = self.store.get_task(execution_id)
             except KeyError as exc:
@@ -377,7 +395,6 @@ class ExecutionManager:
 
     def tasks(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            self._maybe_cleanup()
             records = self.store.list_tasks(limit=limit)
             refreshed = [self._refresh(record) for record in records]
             return [self._public_task(record) for record in refreshed]
@@ -393,15 +410,22 @@ class ExecutionManager:
 
     def cleanup(self) -> int:
         with self._lock:
-            cutoff = utc_now() - timedelta(days=self.retention_days)
+            now = utc_now()
+            cutoff = now - timedelta(days=self.retention_days)
+            tmp_cutoff = now - _RUN_COMMAND_TMP_RETENTION
             removed = 0
             for record in self.store.list_executions():
                 if record["state"] not in TERMINAL_EXECUTION_STATES:
                     continue
                 try:
+                    created = parse_time(str(record["accepted_at"]))
                     updated = parse_time(str(record["updated_at"]))
                 except ValueError:
                     continue
+                if created < tmp_cutoff:
+                    remove_run_command_evidence_directory(
+                        str(record["execution_id"])
+                    )
                 if updated >= cutoff:
                     continue
 
@@ -409,6 +433,8 @@ class ExecutionManager:
                     record["published_at"] is not None
                     and record["dismissed_at"] is None
                 )
+                execution_id = str(record["execution_id"])
+                self.store.delete_run_command_evidence(execution_id)
                 self._remove_artifacts(record)
                 if outstanding_task:
                     if record["state"] != "lost":
