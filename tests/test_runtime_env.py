@@ -5,19 +5,20 @@ from pathlib import Path
 from gpt_dive.runtime_env import build_runtime_path
 
 
-def test_build_runtime_path_adds_stable_user_bins_without_duplicates() -> None:
+def test_build_runtime_path_prefers_guard_then_mise_without_legacy_toolchains() -> None:
+    home = Path.home()
     guard_bin = "/tmp/guard-bin"
-    bun_bin = str(Path.home() / ".bun" / "bin")
+    mise_shims = str(home / ".local" / "share" / "mise" / "shims")
 
     entries = build_runtime_path(
         guard_bin,
-        inherited=f"/usr/bin:{bun_bin}:/bin",
+        inherited=f"/usr/bin:{mise_shims}:/bin",
     ).split(":")
 
-    assert entries[0] == guard_bin
-    assert str(Path.home() / ".local" / "share" / "pnpm" / "bin") in entries
-    assert str(Path.home() / ".local" / "share" / "pnpm") in entries
-    assert bun_bin in entries
-    assert str(Path.home() / ".local" / "bin") in entries
-    assert str(Path.home() / ".cargo" / "bin") in entries
-    assert entries.count(bun_bin) == 1
+    assert entries[:2] == [guard_bin, mise_shims]
+    assert str(home / ".local" / "share" / "pnpm" / "bin") not in entries
+    assert str(home / ".local" / "share" / "pnpm") not in entries
+    assert str(home / ".bun" / "bin") not in entries
+    assert str(home / ".local" / "bin") in entries
+    assert str(home / ".cargo" / "bin") in entries
+    assert entries.count(mise_shims) == 1

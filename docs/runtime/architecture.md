@@ -126,7 +126,7 @@ Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS
 
 ### Direct command 경계
 
-`run_command(command)`는 awaited capability 하나다. Execution의 cwd, sanitized environment, guard-bin `PATH`, 남은 work budget을 상속한다. 실행 중 output을 stream별 8 MiB까지 spool하고, model context에는 합계 8,000자 이하만 반환하며, 잘린 경우 bounded spill path를 함께 돌려준다. Stdout/stderr whitespace를 보존하며 결과는 다음과 같다.
+`run_command(command)`는 awaited capability 하나다. Execution의 cwd, sanitized environment, shared runtime `PATH`, 남은 work budget을 상속한다. PATH는 `guard-bin → ~/.local/share/mise/shims → stable user utility bins → inherited/system PATH` 순서이며, mise가 Node.js, Python, `pnpm`, `uv` / `uvx`의 버전 선택을 소유한다. 따라서 project-local mise 설정이 있으면 mise의 일반 resolution 규칙대로 global 기본값보다 우선하며, 보통의 `run_command()`에서는 `node`, `pnpm`, `uv` 같은 자연 명령을 그대로 사용한다. `mise exec -- ...`는 명시적인 버전 override나 GPT Dive의 일반 runtime PATH를 의도적으로 우회하는 context에서만 필요하다. 실행 중 output을 stream별 8 MiB까지 spool하고, model context에는 합계 8,000자 이하만 반환하며, 잘린 경우 bounded spill path를 함께 돌려준다. Stdout/stderr whitespace를 보존하며 결과는 다음과 같다.
 
 ```text
 exit_code / stdout / stderr / duration_ms / truncated / spill_path?

@@ -11,7 +11,7 @@ ChatGPT Web
        -> task           # lifecycle operations (list, get, cancel, dismiss)
 ```
 
-Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and whole-file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map re-emits the full `USER_RULES.md` plus focused GPT Dive / Code Mode sections every 3 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior belongs behind `code_mode` as the single model-facing execution surface.
+Fresh sessions begin with `bootstrap`. Preload files come from `~/wiki/bootstrap/preload.json`. Periodic reminder cadence and whole-file/section sources come from `~/wiki/bootstrap/reminder.json`; the current map re-emits the full `USER_RULES.md` plus focused GPT Dive / Code Mode sections every 11 non-bootstrap `@dive` tool calls, and an explicit `bootstrap` resets that connection's counter. `ERROR_CASE.md` is read only after MCP/Dive failures. Reusable execution and orchestration behavior belongs behind `code_mode` as the single model-facing execution surface.
 
 Code Mode enforces deterministic server-side execution deadlines (not AI arguments):
 

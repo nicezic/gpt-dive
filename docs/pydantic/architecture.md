@@ -84,7 +84,7 @@ GPT Dive still owns lower local execution policy such as `guard-bin` PATH preced
 
 ### 6. Host filesystem boundary
 
-Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. `run_command` inherits the same cwd, guard-bin precedence, denied secret environment, and outer Execution deadline. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
+Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. `run_command` inherits the same cwd, shared runtime PATH, denied secret environment, and outer Execution deadline; guard-bin stays first and the mise-managed toolchain is exposed immediately behind it as documented in `docs/runtime/architecture.md`. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
 
 ### 7. Local ChatGPT Codex subscription compatibility
 
