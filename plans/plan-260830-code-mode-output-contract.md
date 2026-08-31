@@ -228,7 +228,7 @@ A green test suite is necessary but not sufficient. Final acceptance also requir
 - Bootstrap/model guidance overhaul for Monty versus CPython, CAPABILITIES, PAYLOAD, `asyncio.gather()`, and the new output idiom. This is reserved for ADR 0007.
 - On-demand raw execution evidence recovery, raw-source inspection API, TTL decisions, or new storage. This is reserved for ADR 0008.
 - Repo-wide `/grill-with-docs` terminology review or global naming cleanup. This is reserved for ADR 0009.
-- Durable AGY worker top-level MCP surface work covered by ADR 0010.
+- Durable AGY worker top-level MCP surface work tracked in `TODO-durable-agy-worker-mcp-surface.md`.
 - A general ordered event stream, transcript model, event bus, sequence schema, or live console streaming system.
 - Removing Monty's `print()` language feature.
 - Designing an emoji-delimited machine protocol.
