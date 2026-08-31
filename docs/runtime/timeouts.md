@@ -105,7 +105,7 @@ Wall-clock deadline timestamp 덕분에 이미 spawn된 Worker는 새 43,190초�
 
 ## Retention clock
 
-`run_command` spill을 포함한 terminal artifact는 Execution과 함께 5일 보존한다. Published Task를 dismiss하지 않았다고 해서 만료된 artifact를 계속 보관하지는 않는다. 대신 Task를 `lost(reason=retention_expired)`로 남겨 처리되지 않은 awareness가 조용히 사라지지 않게 한다.
+Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한다. `/tmp` working evidence는 Execution `accepted_at`으로부터 48시간 후 cleanup 대상이 된다. Published Task를 dismiss하지 않았다고 해서 만료된 durable artifact를 계속 보관하지는 않는다. 대신 Task를 `lost(reason=retention_expired)`로 남겨 처리되지 않은 awareness가 조용히 사라지지 않게 한다.
 
 ## 첫 failure boundary 진단
 

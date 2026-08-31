@@ -78,7 +78,6 @@ stdout / stderr                              → subprocess streams
 ```text
 public/model-facing contract → clean replacement
 old/new alias 동시 유지     → 하지 않음
-private artifact filename    → 건드리지 않음
 generic local variable       → 필요 없으면 건드리지 않음
 semantic behavior            → 변경하지 않음
 ```
@@ -89,7 +88,6 @@ semantic behavior            → 변경하지 않음
 
 - Execution / Task / Worker 재설계
 - lifecycle/output/awareness/evidence behavior 변경
-- retained artifact layout migration
 - repository-wide mechanical rename
 - historical ADR 전면 rewrite
 

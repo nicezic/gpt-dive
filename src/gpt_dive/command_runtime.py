@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import os
 import shlex
+import shutil
 import tempfile
 import time
-import uuid
 from pathlib import Path
 from typing import Any, BinaryIO, TypedDict
 
-from .execution_store import parse_time, utc_now
+from .execution_store import ExecutionStore, parse_time, utc_now
 from .runtime_env import DENIED_MODEL_ENV_PATTERNS, build_runtime_path
 from .worker_subprocess import terminate_and_reap
 
@@ -23,19 +24,25 @@ WSL_EXEC_TIMEOUT_SECONDS = 600.0
 
 
 class RuntimeRecord(TypedDict):
-    artifact_dir: str
+    execution_id: str
+    store: ExecutionStore
     work_deadline_monotonic: float
+    next_run_ordinal: int
 
 
-def runtime_record(record: dict[str, Any]) -> RuntimeRecord:
+def runtime_record(
+    record: dict[str, Any], *, store: ExecutionStore
+) -> RuntimeRecord:
     """Project an Execution into the fields needed by child capabilities."""
     remaining = max(
         0.0,
         (parse_time(str(record["work_deadline_at"])) - utc_now()).total_seconds(),
     )
     return {
-        "artifact_dir": str(record["artifact_dir"]),
+        "execution_id": str(record["execution_id"]),
+        "store": store,
         "work_deadline_monotonic": time.monotonic() + remaining,
+        "next_run_ordinal": 1,
     }
 
 
@@ -52,11 +59,61 @@ def child_budget(record: RuntimeRecord, policy_seconds: float) -> float:
     return min(policy_seconds, remaining)
 
 
-def spill_path(record: RuntimeRecord, prefix: str) -> Path:
-    directory = Path(record["artifact_dir"]) / "capability-output"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return directory / f"{prefix}-{uuid.uuid4().hex}.log"
+def _run_command_root() -> Path:
+    return Path(tempfile.gettempdir()) / "gpt-dive-run-command"
 
+
+def _run_command_execution_directory(execution_id: str) -> Path:
+    return _run_command_root() / execution_id
+
+
+def _run_command_directory(execution_id: str, run_ordinal: int) -> Path:
+    return _run_command_execution_directory(execution_id) / str(run_ordinal)
+
+
+def _ensure_private_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+
+
+def _prepare_run_command_directory(execution_id: str, run_ordinal: int) -> Path:
+    root = _run_command_root()
+    execution_directory = _run_command_execution_directory(execution_id)
+    directory = _run_command_directory(execution_id, run_ordinal)
+    for candidate in (root, execution_directory, directory):
+        _ensure_private_directory(candidate)
+    return directory
+
+
+def _allocate_run_command_ordinal(record: RuntimeRecord) -> int:
+    run_ordinal = record["next_run_ordinal"]
+    record["next_run_ordinal"] = run_ordinal + 1
+    return run_ordinal
+
+
+def remove_run_command_evidence_directory(execution_id: str) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        shutil.rmtree(_run_command_execution_directory(execution_id))
+
+
+def materialize_run_command_stream(
+    record: RuntimeRecord, run_ordinal: int, stream: str
+) -> Path:
+    if stream not in {"stdout", "stderr"}:
+        raise ValueError("stream must be 'stdout' or 'stderr'")
+    path = _run_command_directory(record["execution_id"], run_ordinal) / stream
+    if path.is_file():
+        return path
+
+    evidence = record["store"].get_run_command_evidence(
+        record["execution_id"], run_ordinal
+    )
+    directory = _prepare_run_command_directory(record["execution_id"], run_ordinal)
+    path = directory / stream
+    if not path.is_file():
+        with _open_private_binary(path) as handle:
+            handle.write(bytes(evidence[stream]))
+    return path
 
 def _open_private_binary(path: Path) -> BinaryIO:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -139,20 +196,6 @@ def _read_bounded_text(path: Path, max_chars: int) -> tuple[str, bool]:
     )
 
 
-def _copy_stream(source: Path, target: BinaryIO) -> None:
-    with source.open("rb") as handle:
-        while chunk := handle.read(_DRAIN_CHUNK_BYTES):
-            target.write(chunk)
-
-
-def _write_spill(stdout_path: Path, stderr_path: Path, spill_path: Path) -> None:
-    with _open_private_binary(spill_path) as target:
-        target.write(b"===== stdout =====\n")
-        _copy_stream(stdout_path, target)
-        target.write(b"\n===== stderr =====\n")
-        _copy_stream(stderr_path, target)
-
-
 def _read_shell_outputs(
     stdout_path: Path,
     stderr_path: Path,
@@ -190,7 +233,7 @@ async def _run_shell_process(
     stdout_path: Path,
     stderr_path: Path,
     log_label: str,
-) -> tuple[int | None, bool, bool, bool]:
+) -> tuple[int | None, bool, bool, bool, bool]:
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash",
         "-lc",
@@ -214,6 +257,7 @@ async def _run_shell_process(
         _wait_and_drain(proc, stdout_task, stderr_task)
     )
     timed_out = False
+    cancelled = False
     try:
         await asyncio.wait_for(asyncio.shield(communicate_task), timeout=timeout)
     except TimeoutError:
@@ -241,12 +285,13 @@ async def _run_shell_process(
             raise RuntimeError(
                 f"{log_label.lower()} process group could not be reaped"
             ) from None
-        raise
+        cancelled = True
     return (
         proc.returncode,
         timed_out,
         stdout_task.result() if stdout_task.done() else True,
         stderr_task.result() if stderr_task.done() else True,
+        cancelled,
     )
 
 
@@ -265,8 +310,13 @@ async def run_wsl_command(
     with tempfile.TemporaryDirectory(prefix="gpt-dive-wsl-exec-") as temporary:
         stdout_path = Path(temporary) / "stdout.log"
         stderr_path = Path(temporary) / "stderr.log"
-        returncode, timed_out, stdout_overflow, stderr_overflow = (
-            await _run_shell_process(
+        (
+            returncode,
+            timed_out,
+            stdout_overflow,
+            stderr_overflow,
+            cancelled,
+        ) = await _run_shell_process(
                 command,
                 cwd=run_cwd,
                 env=None,
@@ -275,13 +325,14 @@ async def run_wsl_command(
                 stderr_path=stderr_path,
                 log_label="WSL EXEC",
             )
-        )
         stdout, stderr, truncated = _read_shell_outputs(
             stdout_path,
             stderr_path,
             stdout_overflow=stdout_overflow,
             stderr_overflow=stderr_overflow,
         )
+    if cancelled:
+        raise asyncio.CancelledError
     if timed_out:
         stderr = f"{stderr}\n[wsl_exec] timed out after {timeout:g} seconds".lstrip()
     return {
@@ -312,13 +363,21 @@ async def run_command(
     if command_timeout <= 0:
         raise TimeoutError("insufficient Execution budget to start run_command")
 
-    stdout_path = spill_path(record, "run-command-stdout")
-    stderr_path = spill_path(record, "run-command-stderr")
+    run_ordinal = _allocate_run_command_ordinal(record)
+    directory = _prepare_run_command_directory(record["execution_id"], run_ordinal)
+    stdout_path = directory / "stdout"
+    stderr_path = directory / "stderr"
     environment = _sanitized_environment()
     runtime_path = environment["PATH"]
     guarded_command = f"export PATH={shlex.quote(runtime_path)}; {command}"
     started = time.monotonic()
-    returncode, timed_out, stdout_overflow, stderr_overflow = await _run_shell_process(
+    (
+        returncode,
+        timed_out,
+        stdout_overflow,
+        stderr_overflow,
+        cancelled,
+    ) = await _run_shell_process(
         guarded_command,
         cwd=cwd,
         env=environment,
@@ -333,18 +392,22 @@ async def run_command(
         stdout_overflow=stdout_overflow,
         stderr_overflow=stderr_overflow,
     )
-    spill_file: Path | None = None
-    if truncated:
-        spill_file = spill_path(record, "run-command")
-        _write_spill(stdout_path, stderr_path, spill_file)
-    stdout_path.unlink(missing_ok=True)
-    stderr_path.unlink(missing_ok=True)
+    with contextlib.suppress(Exception):
+        record["store"].persist_run_command_evidence(
+            record["execution_id"],
+            run_ordinal,
+            stdout=stdout_path.read_bytes(),
+            stderr=stderr_path.read_bytes(),
+            stdout_overflow=stdout_overflow,
+            stderr_overflow=stderr_overflow,
+        )
 
+    if cancelled:
+        raise asyncio.CancelledError
     return {
         "exit_code": 124 if timed_out else returncode,
         "stdout": stdout,
         "stderr": stderr,
         "duration_ms": int((time.monotonic() - started) * 1000),
         "truncated": truncated,
-        **({"spill_path": str(spill_file)} if spill_file is not None else {}),
     }

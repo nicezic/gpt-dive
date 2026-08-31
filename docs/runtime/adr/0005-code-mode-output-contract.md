@@ -436,18 +436,7 @@ final expression → compact result
 
 정상 경로는 compact result만 model context에 넣는다.
 
-결과가 이상해 보일 때만 retained execution artifact에서 정확한 raw evidence를 다시 읽는 기능을 검토한다.
-
-```text
-normal path
-    compact result only
-
-suspicious result
-    ↓
-on-demand raw artifact inspection
-```
-
-현재 `~/.local/state/gpt-dive/executions-v2/<execution_id>/`가 자연스러운 artifact authority이므로 별도 SQLite blob 저장소를 기본 전제로 두지 않는다. TTL과 exact retention policy는 Phase 2에서 결정한다.
+결과가 이상해 보일 때는 `execution_id`를 recovery handle로 사용한다. Evidence의 저장·discovery·selected-read 방식은 ADR 0008이 소유한다.
 
 ### Temporary debug preview
 

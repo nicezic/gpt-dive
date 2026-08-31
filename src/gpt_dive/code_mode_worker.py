@@ -63,7 +63,7 @@ def main() -> None:
         args.request.unlink(missing_ok=True)
 
     store = ExecutionStore(args.store)
-    record = runtime_record(store.get(args.execution))
+    record = runtime_record(store.get(args.execution), store=store)
     try:
         output = asyncio.run(_run(request, record=record))
         try:

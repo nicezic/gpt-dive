@@ -53,7 +53,7 @@ def registry_for_test(
         stderr_path=root / "stderr.log",
         outcome_path=root / "outcome.json",
     )
-    record = runtime_record(store.get(execution_id))
+    record = runtime_record(store.get(execution_id), store=store)
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
     return build_code_registry(str(root), record=record)
 

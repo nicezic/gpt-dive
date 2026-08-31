@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
+from .command_runtime import remove_run_command_evidence_directory
 from .execution_store import (
     TERMINAL_EXECUTION_STATES,
     ExecutionStore,
@@ -31,7 +32,8 @@ DEFAULT_WORK_TIMEOUT_SECONDS = 43190.0
 DEFAULT_CLEANUP_TIMEOUT_SECONDS = 10.0
 _ACCEPTED_LAUNCH_GRACE_SECONDS = 30.0
 _EXIT_MARKER_GRACE_SECONDS = 0.25
-_CLEANUP_INTERVAL_SECONDS = 3600.0
+_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+_RUN_COMMAND_TMP_RETENTION = timedelta(hours=48)
 _CODE_MODE_ERROR_MESSAGES = {
     "execution_error": "Code Mode Execution failed.",
     "non_json_result": "Code Mode result is not strict JSON.",
@@ -240,13 +242,11 @@ class ExecutionManager:
 
     def status(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self._refresh(self._get(execution_id))
             return self._public_status(record)
 
     def result(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self._refresh(self._get(execution_id))
             payload = self._public_status(record)
             state = str(record["state"])
@@ -359,13 +359,11 @@ class ExecutionManager:
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.publish(execution_id)
             return self._public_task(record)
 
     def dismiss(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.dismiss(execution_id)
             return {
                 "execution_id": execution_id,
@@ -375,7 +373,6 @@ class ExecutionManager:
 
     def cancel(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             record = self.store.request_cancel(execution_id)
             self._signal_execution(record)
             deadline = time.monotonic() + self.cleanup_timeout_seconds
@@ -389,7 +386,6 @@ class ExecutionManager:
 
     def task(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
-            self._maybe_cleanup()
             try:
                 record = self.store.get_task(execution_id)
             except KeyError as exc:
@@ -399,7 +395,6 @@ class ExecutionManager:
 
     def tasks(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            self._maybe_cleanup()
             records = self.store.list_tasks(limit=limit)
             refreshed = [self._refresh(record) for record in records]
             return [self._public_task(record) for record in refreshed]
@@ -415,15 +410,22 @@ class ExecutionManager:
 
     def cleanup(self) -> int:
         with self._lock:
-            cutoff = utc_now() - timedelta(days=self.retention_days)
+            now = utc_now()
+            cutoff = now - timedelta(days=self.retention_days)
+            tmp_cutoff = now - _RUN_COMMAND_TMP_RETENTION
             removed = 0
             for record in self.store.list_executions():
                 if record["state"] not in TERMINAL_EXECUTION_STATES:
                     continue
                 try:
+                    created = parse_time(str(record["accepted_at"]))
                     updated = parse_time(str(record["updated_at"]))
                 except ValueError:
                     continue
+                if created < tmp_cutoff:
+                    remove_run_command_evidence_directory(
+                        str(record["execution_id"])
+                    )
                 if updated >= cutoff:
                     continue
 
@@ -431,6 +433,8 @@ class ExecutionManager:
                     record["published_at"] is not None
                     and record["dismissed_at"] is None
                 )
+                execution_id = str(record["execution_id"])
+                self.store.delete_run_command_evidence(execution_id)
                 self._remove_artifacts(record)
                 if outstanding_task:
                     if record["state"] != "lost":

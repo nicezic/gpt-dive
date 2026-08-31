@@ -1,148 +1,93 @@
 ---
 title: ADR - Raw Execution Evidence Recovery
 created: 2026-08-30
-updated: 2026-08-31
+updated: 2026-09-01
 type: decision
 status: proposed
 ---
 
 # ADR 0008 — Raw Execution Evidence Recovery
 
-> ADR 0005의 normal path는 compact `output`이다. 이 ADR은 결과가 이상할 때 **retained Execution evidence를 `execution_id`로 다시 찾아 선택적으로 검사하는 경로**만 결정한다. Naming은 ADR 0009가 소유한다.
+## Why
 
-## 결정 요약
+Normal `run_command` 결과는 model context에 맞게 compact하게 전달한다. 하지만 이후 더 자세한 조사가 필요할 때는 command를 다시 실행하거나 raw output 전체를 model context에 넣지 않고, 이미 수집한 bounded stdout/stderr를 다시 확인할 수 있어야 한다.
 
-```text
-suspicious compact output
-        ↓ execution_id
-compact evidence discovery
-        ↓
-selected retained artifact read
-        ↓ local grep / parse / compare
-small final output
-```
-
-> **Retain locally, inspect selectively, return compactly.**
-
-새 로그 저장소를 만들지 않는다. SQLite는 lifecycle truth를, 기존 Execution artifact directory는 retained evidence bytes를 소유한다.
-
-## 현재 retained evidence
+## Decision
 
 ```text
-~/.local/state/gpt-dive/
-├─ runtime-v2.sqlite3              lifecycle authority
-└─ executions-v2/<execution_id>/   artifact authority
-   ├─ stdout.log
-   ├─ stderr.log
-   ├─ outcome.json
-   └─ capability-output/
-      └─ run-command-*.log
+run_command #N
+    │
+    ├─ stdout ≤ 8 MiB
+    └─ stderr ≤ 8 MiB
+         │
+         ▼
+      /tmp evidence
+         │
+      terminal
+         │
+         ├─ /tmp 유지
+         └─ SQLite 저장 시도
+                └─ 실패해도 run_command 결과 유지
+
+recovery
+    │
+    ├─ /tmp 있음 → 사용
+    └─ /tmp 없음 → SQLite 확인
+                     ├─ 있음 → 같은 /tmp 위치로 복원
+                     └─ 없음 → recovery 불가
+
+GC
+    └─ Execution 생성 48시간 후 /tmp evidence 삭제
+       + 5일 지난 SQLite raw evidence 삭제
 ```
 
-| Artifact | 의미 |
-|---|---|
-| `outcome.json` | process-level exit/reason marker |
-| `stdout.log` | Code Mode worker protocol의 retained final output |
-| `stderr.log` | worker/runtime failure evidence |
-| `run-command-*.log` | truncated `run_command` stdout/stderr spill |
+### 1. Raw evidence는 run 단위로 bounded한다
 
-`stdout.log`는 Monty `print()` transcript가 아니다. 현재 `run_command`는 stdout/stderr를 stream당 최대 8 MiB spool하고 model-facing preview를 8,000 chars로 제한하며, preview가 truncated됐을 때 combined spill을 남긴다.
+각 `run_command`의 stdout/stderr는 각각 최대 8 MiB까지 보존한다.
 
-## 결정
+한 Execution 안의 여러 `run_command`는 실행 순서대로 `run_ordinal = 1, 2, 3, ...`으로 식별한다.
 
-### 1. 기존 authority와 retention을 재사용한다
+### 2. `/tmp` evidence는 terminal 뒤에도 유지한다
+
+실행 중 raw evidence는 Runtime이 소유하는 private canonical path에 둔다.
 
 ```text
-SQLite     → state / reason / publication / retention truth
-filesystem → retained evidence bytes
+/tmp/gpt-dive-run-command/
+└─ <execution_id>/                  directory 0700
+   └─ <run_ordinal>/                directory 0700
+      ├─ stdout                     file 0600
+      └─ stderr                     file 0600
 ```
 
-- 별도 SQLite BLOB/evidence store를 만들지 않는다.
-- terminal artifact는 기존 5-day retention을 따른다.
-- Task dismissal은 artifact deletion이 아니다.
-- expired/missing/unretained evidence를 자동 replay로 만들어내지 않는다.
+이 layout은 active spool과 recovery가 함께 사용한다. Runtime 내부 working path이며 model-facing protocol로 노출하거나 GPT가 직접 조립하게 하지 않는다.
 
-### 2. Recovery는 `execution_id → compact manifest` discovery다
+`run_command`가 끝났다는 이유로 이 evidence를 즉시 삭제하지 않는다.
 
-Top-level raw-dump MCP tool이나 `task(get, raw=...)`를 추가하지 않는다. Inline-only Execution도 recovery할 수 있어야 하므로 Task publication과 결합하지 않는다.
+Terminal 시점에는 같은 bounded evidence를 SQLite에도 저장 시도한다. SQLite 저장 실패는 원래 `run_command` 결과를 storage failure로 바꾸지 않는다.
 
-개념적 manifest:
+### 3. Recovery는 `/tmp`를 먼저 사용한다
 
-```json
-{
-  "execution_id": "abc123",
-  "state": "completed",
-  "reason": null,
-  "artifact_dir": "/home/.../executions-v2/abc123",
-  "artifacts": [
-    {"path": "stdout.log", "bytes": 42},
-    {"path": "stderr.log", "bytes": 0},
-    {"path": "capability-output/run-command-....log", "bytes": 37695}
-  ]
-}
-```
+`/tmp` evidence가 있으면 그대로 사용한다. 없을 때만 SQLite를 확인하고, evidence가 있으면 같은 `/tmp` 위치로 복원한다.
 
-Discovery capability는 raw content를 기본 반환하지 않고, `execution_id`를 current retained artifact set으로 안전하게 resolve한다. Capability 이름은 ADR 0009에서 확정한다.
+`/tmp`와 SQLite 양쪽에 evidence가 없으면 recovery할 수 없다. Command를 다시 실행하거나 별도 retry store, second database로 보완하지 않는다.
 
-### 3. Raw 내용 읽기와 reduction은 기존 capability를 재사용한다
+### 4. SQLite raw evidence는 5일 후 GC한다
 
-```python
-manifest = await execution_evidence("abc123")  # working name
-raw = await read_file(manifest["artifact_dir"] + "/stderr.log")
-{"errors": [line for line in raw.splitlines() if "Error" in line][:20]}
-```
+5일은 SQLite recovery 보장 기간이 아니라 durable 저장 공간 증가를 막기 위한 GC 기준이다.
 
-새 recovery surface를 arbitrary filesystem browser로 만들지 않는다. 큰 raw artifact도 Monty 안에서 선택적으로 읽고 줄인 뒤 작은 final `output`만 model context로 보낸다.
+별도 GC 시스템을 만들지 않는다. 기존 `ExecutionManager.cleanup()`은 Execution `accepted_at`으로부터 48시간이 지나면 해당 `/tmp` working evidence를 삭제하고, 기존 retention 기준에 따라 SQLite raw evidence를 정리한다. Cleanup은 Runtime 시작 시와 이후 새 Execution 시작 시 하루에 최대 한 번 수행한다.
 
-### 4. Complete transcript를 만들지 않는다
+## Scope
 
-모든 intermediate capability result를 자동 persistence하지 않는다. Final output로 선택되지 않았고 별도 retained artifact도 없으면 after-the-fact recovery를 보장하지 않는다.
+이 ADR은 `run_command` stdout/stderr raw evidence의 저장, recovery, SQLite GC만 다룬다.
 
 ```text
-read_file / repo_search intermediate result
-model/reviewer response
-non-truncated run_command rich object
-other Monty local intermediate data
+included
+└─ run_command stdout/stderr
+
+out of scope
+├─ arbitrary capability results
+├─ arbitrary Monty variables
+├─ complete Execution transcript
+└─ final model-facing recovery capability name/schema
 ```
-
-모든 값을 기록하면 disk/privacy/cleanup 비용이 커지고 ADR 0005의 local-reduction boundary가 transcript recorder로 변한다.
-
-## 폐기한 대안
-
-| 대안 | 폐기 이유 |
-|---|---|
-| every capability output persistence | transcript system화 + disk/privacy/cleanup 비용 |
-| SQLite BLOB | lifecycle authority와 raw-byte authority 혼합 |
-| top-level raw evidence tool | model context에 raw dump 유도 |
-| `task(get, raw=...)` | Task가 아닌 Execution recovery 불가 + lifecycle 의미 혼합 |
-| artifact path 암기 | private layout이 public API가 됨 |
-| 별도 evidence TTL | 기존 retention과 이중 clock |
-| missing evidence replay | side-effect safety를 추측해야 함 |
-
-## 구현 불변조건
-
-- lifecycle authority는 SQLite, retained raw bytes authority는 existing artifact directory다.
-- recovery는 Task publication 여부와 무관하게 retained Execution `execution_id`를 처리한다.
-- discovery result는 compact manifest이며 raw bytes를 기본 model-facing result로 dump하지 않는다.
-- selected artifact inspection은 existing filesystem capability와 local reduction을 재사용한다.
-- existing 5-day retention을 재사용하고 missing evidence를 replay하지 않는다.
-- 모든 intermediate capability result를 자동 persistence하지 않는다.
-
-## Non-goal
-
-- complete execution transcript / every capability recording
-- automatic replay/retry or permanent audit archive
-- Task awareness — ADR 0006
-- model guidance — ADR 0007
-- final vocabulary — ADR 0009
-
-## 참고 문서
-
-- `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
-- `docs/runtime/adr/0005-code-mode-output-contract.md`
-- `docs/runtime/adr/0009-runtime-terminology-and-naming.md`
-- `docs/runtime/operations.md`
-- `docs/runtime/timeouts.md`
-- `src/gpt_dive/execution_store.py`, `src/gpt_dive/execution_manager.py`
-- `src/gpt_dive/execution_worker.py`
-- `src/gpt_dive/command_runtime.py`

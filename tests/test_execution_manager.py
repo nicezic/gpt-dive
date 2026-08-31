@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import gpt_dive.command_runtime as command_runtime_module
 import gpt_dive.execution_manager as execution_manager_module
 from gpt_dive.command_runtime import _RUN_COMMAND_POLICY_SECONDS
 from gpt_dive.execution_manager import (
@@ -174,16 +175,45 @@ def test_outcome_marker_recovers_terminal_state_after_worker_store_gap(
     assert manager.result(execution_id)["stdout"] == "OK"
 
 
-def test_retention_deletes_dismissed_terminal_execution(tmp_path: Path) -> None:
+def test_retention_deletes_durable_and_tmp_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        command_runtime_module,
+        "_run_command_root",
+        lambda: tmp_path / "run-command",
+    )
     manager = popen_manager(tmp_path / "executions")
     started = manager.start("true", label="retention", publish=True)
     execution_id = str(started["execution_id"])
     wait_terminal(manager, execution_id)
+    manager.store.persist_run_command_evidence(
+        execution_id,
+        1,
+        stdout=b"raw",
+        stderr=b"",
+        stdout_overflow=False,
+        stderr_overflow=False,
+    )
+    run_directory = (
+        command_runtime_module._run_command_root() / execution_id / "1"
+    )
+    run_directory.mkdir(parents=True)
+    (run_directory / "stdout").write_bytes(b"raw")
     manager.dismiss(execution_id)
     manager.retention_days = 0
+    accepted_at = parse_time(str(manager.store.get(execution_id)["accepted_at"]))
+    monkeypatch.setattr(
+        execution_manager_module,
+        "utc_now",
+        lambda: accepted_at + timedelta(hours=49),
+    )
 
     assert manager.cleanup() == 1
     assert not (manager.root / execution_id).exists()
+    assert not run_directory.parent.exists()
+    with pytest.raises(KeyError):
+        manager.store.get_run_command_evidence(execution_id, 1)
 
 
 def test_spawn_error_after_worker_claim_does_not_reclassify_or_delete_input(

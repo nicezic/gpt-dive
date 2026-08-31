@@ -119,12 +119,12 @@ await run_command(command)
 ├─ provider/API secret environment removed
 ├─ timeout = Runtime-owned remaining budget
 ├─ process = isolated session/process group
-├─ output = bounded live spool
-└─ return = exit_code / stdout / stderr / duration_ms /
-            truncated / spill_path?
+├─ raw stdout/stderr = private /tmp spool, ≤ 8 MiB each
+├─ terminal = SQLite evidence 저장 시도
+└─ return = exit_code / stdout / stderr / duration_ms / truncated
 ```
 
-The command has no caller timeout and no start/check/stop action. Stdout and stderr are not stripped. Model-visible output is capped at 8,000 characters; larger bounded spools remain under the Execution artifact directory.
+The command has no caller timeout and no start/check/stop action. Stdout and stderr are not stripped. Model-visible output is capped at 8,000 characters. Raw evidence stays private; SQLite persistence failure does not replace the original `run_command` result, and no private evidence path is returned.
 
 An explicit `systemd-run --user` sibling handoff is permitted only when the caller intentionally leaves GPT Dive Runtime and accepts the loss of Execution/Task/deadline guarantees. `setsid` is not an escape contract.
 

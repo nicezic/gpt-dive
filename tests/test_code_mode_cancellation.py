@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 import gpt_dive.worker_subprocess as worker_subprocess_module
-from gpt_dive.command_runtime import run_command, runtime_record
+from gpt_dive.command_runtime import RuntimeRecord, run_command, runtime_record
 from gpt_dive.execution_store import ExecutionStore, generate_execution_id
 
 
-def record_for_test(root: Path, *, duration_seconds: float = 60) -> dict[str, object]:
+def record_for_test(root: Path, *, duration_seconds: float = 60) -> RuntimeRecord:
     store = ExecutionStore(root / "runtime.sqlite3")
     execution_id = generate_execution_id()
     store.create(
@@ -31,18 +32,21 @@ def record_for_test(root: Path, *, duration_seconds: float = 60) -> dict[str, ob
         outcome_path=root / "outcome.json",
     )
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
-    return runtime_record(store.get(execution_id))
+    return runtime_record(store.get(execution_id), store=store)
 
 
-def test_run_command_cancellation_reaps_the_process_group(tmp_path: Path) -> None:
+def test_run_command_cancellation_reaps_and_persists_partial_evidence(
+    tmp_path: Path,
+) -> None:
     pid_path = tmp_path / "command.pid"
+    record = record_for_test(tmp_path)
 
     async def scenario() -> int:
         task = asyncio.create_task(
             run_command(
-                f"echo $$ > {pid_path}; exec sleep 30",
+                f"printf partial; echo $$ > {pid_path}; exec sleep 30",
                 cwd=str(tmp_path),
-                record=record_for_test(tmp_path),
+                record=record,
             )
         )
         deadline = time.monotonic() + 2
@@ -55,7 +59,9 @@ def test_run_command_cancellation_reaps_the_process_group(tmp_path: Path) -> Non
         return pid
 
     pid = asyncio.run(scenario())
+    evidence = record["store"].get_run_command_evidence(record["execution_id"], 1)
 
+    assert evidence["stdout"] == b"partial"
     assert not Path(f"/proc/{pid}").exists()
 
 
@@ -73,22 +79,31 @@ def test_run_command_timeout_is_terminal_and_bounded(tmp_path: Path) -> None:
     assert time.monotonic() - started < 2
 
 
-def test_run_command_truncates_context_and_retains_bounded_spill(
+def test_run_command_truncates_context_and_keeps_raw_evidence(
     tmp_path: Path,
 ) -> None:
+    record = record_for_test(tmp_path)
     result = asyncio.run(
         run_command(
             "yes X | head -c 20000",
             cwd=str(tmp_path),
-            record=record_for_test(tmp_path),
+            record=record,
         )
     )
 
     assert result["truncated"] is True
     assert len(result["stdout"]) <= 8000
-    spill = Path(result["spill_path"])
-    assert spill.is_file()
-    assert b"===== stdout =====" in spill.read_bytes()
+    assert "spill_path" not in result
+    stdout_path = (
+        Path(tempfile.gettempdir())
+        / "gpt-dive-run-command"
+        / str(record["execution_id"])
+        / "1"
+        / "stdout"
+    )
+    assert stdout_path.is_file()
+    assert stdout_path.stat().st_size == 20000
+
 
 
 def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_output(
