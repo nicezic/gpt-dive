@@ -4,7 +4,7 @@
 
 ADR 0008 Section 5의 model-facing 실행 요약을 구현한다. `run_command`의 raw stdout/stderr는 기본 model context에 다시 펼치지 않고, 각 run의 최소 실행 메타와 필요한 stderr만 보여준 뒤 기존 Monty final `output`을 전달해야 한다.
 
-ADR 0005의 public output contract는 유지한다. `kind + execution_id + output`과 `tracked_tasks` structured schema를 바꾸지 않는다.
+기존 public outcome 계약 `kind + execution_id + output`과 `tracked_tasks` sibling은 유지한다. run summary가 있는 completed result에서는 **기존 `output` field의 값만** compact presentation으로 바꾼다.
 
 ## Solution
 
@@ -18,7 +18,7 @@ run_command terminal
 run_command_evidence (SQLite)
       │
       ▼
-MCP model-visible text content
+completed.output
 id: <execution_id>
 
 [0] <exit_code>, <duration> ms, <stdout+stderr size>
@@ -28,8 +28,8 @@ id: <execution_id>
 ----
 <processed Monty output>
 
-structured_content
-└─ 기존 kind / execution_id / output / tracked_tasks 그대로
+structuredContent
+└─ kind / execution_id / output / tracked_tasks 기존 shape 유지
 ```
 
 ## Implementation Decisions
@@ -50,12 +50,12 @@ structured_content
 - stdout raw/preview는 요약 영역에 표시하지 않는다.
 - run이 없으면 run summary block을 만들지 않고 기존 output presentation을 유지한다.
 
-### 3. Structured contract preservation
+### 3. Public output contract preservation
 
-- `CodeModeCompleted` / `CodeModeTask` / `CodeModeError` schema는 변경하지 않는다.
-- Monty final `output` 값은 그대로 유지한다.
-- `tracked_tasks` semantics도 변경하지 않는다.
-- debug text presentation은 MCP `content`에만 적용한다.
+- 내부 `CodeModeCompleted` / `CodeModeTask` / `CodeModeError` lifecycle model은 변경하지 않는다.
+- public `structuredContent`의 `kind`, `execution_id`, `output`, `tracked_tasks` shape를 변경하지 않는다.
+- run evidence가 있는 completed `code_mode` / `task(get)`만 기존 `output` field의 값을 compact presentation 문자열로 바꾼다.
+- run evidence가 없는 completed result와 나머지 Task lifecycle 결과는 기존 public outcome을 그대로 유지한다.
 
 ### 4. Failure semantics
 
@@ -72,7 +72,7 @@ structured_content
 5. stdout 내용은 debug summary에 복제되지 않는다.
 6. processed Monty output이 `----` 아래에 표시된다.
 7. completed `code_mode`와 completed `task(get)`이 같은 presentation을 사용한다.
-8. `structured_content`의 기존 shape와 typed `output`은 변하지 않는다.
+8. run-summary completed result의 기존 `output` field가 compact presentation과 일치하고 outer structured shape는 유지된다.
 9. no-run completed execution은 불필요한 empty run header를 만들지 않는다.
 10. evidence persistence 실패는 기존 `run_command` outcome을 바꾸지 않는다.
 
@@ -87,7 +87,7 @@ structured_content
 
 ## Out of Scope
 
-- MCP structured schema 변경
+- 내부 lifecycle outcome schema 변경
 - raw stdout 기본 노출
 - recovery capability 이름/schema 결정
 - 새 evidence table/store

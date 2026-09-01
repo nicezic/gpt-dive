@@ -256,19 +256,24 @@ def test_model_visible_structured_content_has_no_outer_result(
     }
 
 
-def test_code_mode_debug_content_summarizes_run_command_without_changing_structured_content(
+def test_code_mode_public_output_summarizes_run_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    structured = {
-        "kind": "completed",
-        "execution_id": "abc123",
-        "output": {"pytest": "2 passed"},
-        "tracked_tasks": [],
-    }
-    original = CallToolResult(
-        content=[TextContent(type="text", text="original")],
-        structured_content=structured,
-    )
+    async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
+        return app.CodeModeCompleted(
+            execution_id="abc123", output={"pytest": "2 passed"}
+        )
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "code_mode",
+            {"label": "summary", "code": "1"},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "code_mode", fake_code_mode)
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
     monkeypatch.setattr(
         app.executions.store,
         "list_run_command_evidence",
@@ -278,8 +283,6 @@ def test_code_mode_debug_content_summarizes_run_command_without_changing_structu
                 "run_ordinal": 1,
                 "stdout": b"hidden stdout",
                 "stderr": b"",
-                "stdout_overflow": False,
-                "stderr_overflow": False,
                 "exit_code": 0,
                 "duration_ms": 2310,
             },
@@ -288,43 +291,45 @@ def test_code_mode_debug_content_summarizes_run_command_without_changing_structu
                 "run_ordinal": 3,
                 "stdout": b"more hidden stdout",
                 "stderr": b"ruff failed",
-                "stdout_overflow": False,
-                "stderr_overflow": False,
                 "exit_code": 2,
                 "duration_ms": 410,
             },
         ],
     )
 
-    rendered = app._render_code_mode_debug_content("code_mode", original)
+    result = asyncio.run(call())
 
-    assert rendered.structured_content == structured
-    assert len(rendered.content) == 1
-    assert isinstance(rendered.content[0], TextContent)
-    text = rendered.content[0].text
-    assert text == (
-        "id: abc123\n\n"
-        "[0] 0, 2310 ms, 13 B\n"
-        "[2] 2, 410 ms, 29 B, stderr ↓\n"
-        "ruff failed\n\n"
-        "----\n"
-        '{\n  "pytest": "2 passed"\n}'
-    )
-    assert "hidden stdout" not in text
-
-
-def test_task_get_completed_uses_same_run_command_debug_content(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    structured = {
+    assert result.structured_content == {
         "kind": "completed",
         "execution_id": "abc123",
-        "output": "done",
+        "output": (
+            "id: abc123\n\n"
+            "[0] 0, 2310 ms, 13 B\n"
+            "[2] 2, 410 ms, 29 B, stderr ↓\n"
+            "ruff failed\n\n"
+            "----\n"
+            '{\n  "pytest": "2 passed"\n}'
+        ),
+        "tracked_tasks": [],
     }
-    original = CallToolResult(
-        content=[TextContent(type="text", text="original")],
-        structured_content=structured,
-    )
+    assert "hidden stdout" not in result.structured_content["output"]
+
+
+def test_task_get_completed_uses_same_run_command_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
+        return app.CodeModeCompleted(execution_id="abc123", output="done")
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "task",
+            {"request": {"action": "get", "execution_id": "abc123"}},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "task", fake_task)
     monkeypatch.setattr(
         app.executions.store,
         "list_run_command_evidence",
@@ -339,30 +344,43 @@ def test_task_get_completed_uses_same_run_command_debug_content(
         ],
     )
 
-    rendered = app._render_code_mode_debug_content("task", original)
+    result = asyncio.run(call())
 
-    assert rendered.structured_content == structured
-    assert isinstance(rendered.content[0], TextContent)
-    assert rendered.content[0].text == "id: abc123\n\n[0] 0, 95 ms, 0 B\n\n----\ndone"
+    assert result.structured_content == {
+        "kind": "completed",
+        "execution_id": "abc123",
+        "output": "id: abc123\n\n[0] 0, 95 ms, 0 B\n\n----\ndone",
+    }
 
 
-def test_code_mode_debug_content_keeps_default_when_no_run_evidence(
+def test_code_mode_public_output_is_unchanged_without_run_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = CallToolResult(
-        content=[TextContent(type="text", text="original")],
-        structured_content={
-            "kind": "completed",
-            "execution_id": "abc123",
-            "output": 42,
-            "tracked_tasks": [],
-        },
-    )
+    async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
+        return app.CodeModeCompleted(execution_id="abc123", output=42)
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "code_mode",
+            {"label": "plain", "code": "42"},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "code_mode", fake_code_mode)
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
     monkeypatch.setattr(
         app.executions.store, "list_run_command_evidence", lambda _execution_id: []
     )
 
-    assert app._render_code_mode_debug_content("code_mode", original) is original
+    result = asyncio.run(call())
+
+    assert result.structured_content == {
+        "kind": "completed",
+        "execution_id": "abc123",
+        "output": 42,
+        "tracked_tasks": [],
+    }
 
 
 def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> None:

@@ -399,26 +399,16 @@ def _processed_output_text(output: Any) -> str:
     return json.dumps(output, ensure_ascii=False, indent=2)
 
 
-def _render_code_mode_debug_content(
-    tool_name: str | None, result: CallToolResult
-) -> CallToolResult:
-    if tool_name not in {"code_mode", "task"} or result.is_error:
-        return result
-    structured = result.structured_content
-    if not isinstance(structured, dict) or structured.get("kind") != "completed":
-        return result
-    execution_id = structured.get("execution_id")
-    if not isinstance(execution_id, str):
-        return result
+def _render_code_mode_completed_output(execution_id: str, output: Any) -> Any:
     try:
         evidence_rows = executions.store.list_run_command_evidence(execution_id)
     except (KeyError, sqlite3.Error):
-        return result
+        return output
     if not evidence_rows or any(
         row.get("exit_code") is None or row.get("duration_ms") is None
         for row in evidence_rows
     ):
-        return result
+        return output
 
     lines = [f"id: {execution_id}", ""]
     for row in evidence_rows:
@@ -433,10 +423,8 @@ def _render_code_mode_debug_content(
             lines.extend([line + ", stderr ↓", _bounded_stderr_preview(stderr)])
         else:
             lines.append(line)
-    lines.extend(["", "----", _processed_output_text(structured.get("output"))])
-    return result.model_copy(
-        update={"content": [TextContent(type="text", text="\n".join(lines))]}
-    )
+    lines.extend(["", "----", _processed_output_text(output)])
+    return "\n".join(lines)
 
 
 async def _periodic_reminder_middleware(
@@ -455,7 +443,6 @@ async def _periodic_reminder_middleware(
 
     if not isinstance(result, CallToolResult):
         return result
-    result = _render_code_mode_debug_content(tool_name, result)
     reminder_interval = _periodic_reminder_due(ctx)
     if reminder_interval is None:
         return result
@@ -1062,6 +1049,14 @@ async def _mcp_code_mode(
         payload=payload,
         mode=mode,
     )
+    if isinstance(primary, CodeModeCompleted):
+        primary = primary.model_copy(
+            update={
+                "output": _render_code_mode_completed_output(
+                    primary.execution_id, primary.output
+                )
+            }
+        )
     tracked_tasks = await _tracked_tasks_snapshot()
     return _CodeModeWorkPublicOutcome(
         root=_code_mode_work_outcome(primary, tracked_tasks)
@@ -1169,7 +1164,16 @@ async def task(request: TaskRequest) -> TaskOutcome:
     ),
 )
 async def _mcp_task(request: TaskRequest) -> _TaskPublicOutcome:
-    return _TaskPublicOutcome(root=await task(request))
+    outcome = await task(request)
+    if isinstance(outcome, CodeModeCompleted):
+        outcome = outcome.model_copy(
+            update={
+                "output": _render_code_mode_completed_output(
+                    outcome.execution_id, outcome.output
+                )
+            }
+        )
+    return _TaskPublicOutcome(root=outcome)
 
 
 @mcp.tool(
