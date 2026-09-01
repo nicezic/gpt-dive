@@ -392,6 +392,8 @@ async def run_command(
         stdout_overflow=stdout_overflow,
         stderr_overflow=stderr_overflow,
     )
+    exit_code = 124 if timed_out else returncode
+    duration_ms = int((time.monotonic() - started) * 1000)
     with contextlib.suppress(Exception):
         record["store"].persist_run_command_evidence(
             record["execution_id"],
@@ -400,14 +402,18 @@ async def run_command(
             stderr=stderr_path.read_bytes(),
             stdout_overflow=stdout_overflow,
             stderr_overflow=stderr_overflow,
+            exit_code=exit_code,
+            duration_ms=duration_ms,
         )
 
     if cancelled:
         raise asyncio.CancelledError
+    if exit_code is None:
+        raise RuntimeError("run_command exited without an exit code")
     return {
-        "exit_code": 124 if timed_out else returncode,
+        "exit_code": exit_code,
         "stdout": stdout,
         "stderr": stderr,
-        "duration_ms": int((time.monotonic() - started) * 1000),
+        "duration_ms": duration_ms,
         "truncated": truncated,
     }

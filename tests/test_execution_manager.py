@@ -194,6 +194,8 @@ def test_retention_deletes_durable_and_tmp_evidence(
         stderr=b"",
         stdout_overflow=False,
         stderr_overflow=False,
+        exit_code=0,
+        duration_ms=1,
     )
     run_directory = (
         command_runtime_module._run_command_root() / execution_id / "1"

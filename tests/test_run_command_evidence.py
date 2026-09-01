@@ -80,6 +80,8 @@ def test_terminal_run_keeps_private_tmp_and_persists_same_bytes(
     assert "spill_path" not in result
     assert stdout_path.read_bytes() == evidence["stdout"] == b"stdout-data"
     assert stderr_path.read_bytes() == evidence["stderr"] == b"stderr-data"
+    assert evidence["exit_code"] == result["exit_code"] == 0
+    assert evidence["duration_ms"] == result["duration_ms"]
     assert stat.S_IMODE(stdout_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(stderr_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(stdout_path.parent.stat().st_mode) == 0o700

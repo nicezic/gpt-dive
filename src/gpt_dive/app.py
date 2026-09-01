@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import sqlite3
 import sys
 import time
 from collections.abc import Coroutine
@@ -31,6 +32,7 @@ _TASK_LIST_LIMIT = 50
 _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 TRACKED_TASKS_LIMIT = 8
 TRACKED_TASKS_MAX_BYTES = 4096
+_RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
 
 _TASK_STATE_MARKERS = {
     "accepted": "◌",
@@ -373,6 +375,70 @@ def _tool_name_from_request(params: Any) -> str | None:
     return name if isinstance(name, str) else None
 
 
+def _format_byte_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def _bounded_stderr_preview(data: bytes) -> str:
+    text = data.decode(errors="replace")
+    if len(text) <= _RUN_COMMAND_STDERR_PREVIEW_CHARS:
+        return text
+    marker = "\n… stderr truncated …\n"
+    head = _RUN_COMMAND_STDERR_PREVIEW_CHARS // 2
+    tail = _RUN_COMMAND_STDERR_PREVIEW_CHARS - head - len(marker)
+    return text[:head] + marker + text[-tail:]
+
+
+def _processed_output_text(output: Any) -> str:
+    if isinstance(output, str):
+        return output
+    return json.dumps(output, ensure_ascii=False, indent=2)
+
+
+def _render_code_mode_debug_content(
+    tool_name: str | None, result: CallToolResult
+) -> CallToolResult:
+    if tool_name not in {"code_mode", "task"} or result.is_error:
+        return result
+    structured = result.structured_content
+    if not isinstance(structured, dict) or structured.get("kind") != "completed":
+        return result
+    execution_id = structured.get("execution_id")
+    if not isinstance(execution_id, str):
+        return result
+    try:
+        evidence_rows = executions.store.list_run_command_evidence(execution_id)
+    except (KeyError, sqlite3.Error):
+        return result
+    if not evidence_rows or any(
+        row.get("exit_code") is None or row.get("duration_ms") is None
+        for row in evidence_rows
+    ):
+        return result
+
+    lines = [f"id: {execution_id}", ""]
+    for row in evidence_rows:
+        index = int(row["run_ordinal"]) - 1
+        size = len(row["stdout"]) + len(row["stderr"])
+        line = (
+            f"[{index}] {int(row['exit_code'])}, {int(row['duration_ms'])} ms, "
+            f"{_format_byte_size(size)}"
+        )
+        stderr = bytes(row["stderr"])
+        if stderr:
+            lines.extend([line + ", stderr ↓", _bounded_stderr_preview(stderr)])
+        else:
+            lines.append(line)
+    lines.extend(["", "----", _processed_output_text(structured.get("output"))])
+    return result.model_copy(
+        update={"content": [TextContent(type="text", text="\n".join(lines))]}
+    )
+
+
 async def _periodic_reminder_middleware(
     ctx: ServerRequestContext[Any, Any], call_next: CallNext
 ) -> HandlerResult:
@@ -389,6 +455,7 @@ async def _periodic_reminder_middleware(
 
     if not isinstance(result, CallToolResult):
         return result
+    result = _render_code_mode_debug_content(tool_name, result)
     reminder_interval = _periodic_reminder_due(ctx)
     if reminder_interval is None:
         return result

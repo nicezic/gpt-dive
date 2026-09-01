@@ -110,7 +110,7 @@ class ExecutionStore:
                     "ALTER TABLE executions DROP COLUMN run_command_next_ordinal"
                 )
 
-            expected_evidence_columns = {
+            legacy_evidence_columns = {
                 "execution_id",
                 "run_ordinal",
                 "stdout",
@@ -118,13 +118,24 @@ class ExecutionStore:
                 "stdout_overflow",
                 "stderr_overflow",
             }
+            expected_evidence_columns = legacy_evidence_columns | {
+                "exit_code",
+                "duration_ms",
+            }
             evidence_columns = {
                 str(row["name"])
                 for row in connection.execute(
                     "PRAGMA table_info(run_command_evidence)"
                 )
             }
-            if evidence_columns and evidence_columns != expected_evidence_columns:
+            if evidence_columns == legacy_evidence_columns:
+                connection.execute(
+                    "ALTER TABLE run_command_evidence ADD COLUMN exit_code INTEGER"
+                )
+                connection.execute(
+                    "ALTER TABLE run_command_evidence ADD COLUMN duration_ms INTEGER"
+                )
+            elif evidence_columns and evidence_columns != expected_evidence_columns:
                 connection.execute("DROP TABLE run_command_evidence")
 
             connection.execute(
@@ -149,6 +160,8 @@ class ExecutionStore:
                     stderr BLOB NOT NULL,
                     stdout_overflow INTEGER NOT NULL,
                     stderr_overflow INTEGER NOT NULL,
+                    exit_code INTEGER,
+                    duration_ms INTEGER,
                     PRIMARY KEY (execution_id, run_ordinal),
                     CHECK (run_ordinal > 0),
                     CHECK (stdout_overflow IN (0, 1)),
@@ -507,6 +520,8 @@ class ExecutionStore:
         stderr: bytes,
         stdout_overflow: bool,
         stderr_overflow: bool,
+        exit_code: int | None,
+        duration_ms: int,
     ) -> None:
         if run_ordinal <= 0:
             raise ValueError("run_ordinal must be greater than 0")
@@ -516,8 +531,8 @@ class ExecutionStore:
                 """
                 INSERT INTO run_command_evidence (
                     execution_id, run_ordinal, stdout, stderr,
-                    stdout_overflow, stderr_overflow
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    stdout_overflow, stderr_overflow, exit_code, duration_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     execution_id,
@@ -526,6 +541,8 @@ class ExecutionStore:
                     stderr,
                     int(stdout_overflow),
                     int(stderr_overflow),
+                    exit_code,
+                    duration_ms,
                 ),
             )
 
@@ -538,7 +555,7 @@ class ExecutionStore:
             row = connection.execute(
                 """
                 SELECT execution_id, run_ordinal, stdout, stderr,
-                       stdout_overflow, stderr_overflow
+                       stdout_overflow, stderr_overflow, exit_code, duration_ms
                 FROM run_command_evidence
                 WHERE execution_id = ? AND run_ordinal = ?
                 """,
@@ -552,6 +569,28 @@ class ExecutionStore:
         evidence["stdout_overflow"] = bool(evidence["stdout_overflow"])
         evidence["stderr_overflow"] = bool(evidence["stderr_overflow"])
         return evidence
+
+    def list_run_command_evidence(self, execution_id: str) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT execution_id, run_ordinal, stdout, stderr,
+                       stdout_overflow, stderr_overflow, exit_code, duration_ms
+                FROM run_command_evidence
+                WHERE execution_id = ?
+                ORDER BY run_ordinal
+                """,
+                (execution_id,),
+            ).fetchall()
+        evidence_rows: list[dict[str, Any]] = []
+        for row in rows:
+            evidence = dict(row)
+            evidence["stdout"] = bytes(evidence["stdout"])
+            evidence["stderr"] = bytes(evidence["stderr"])
+            evidence["stdout_overflow"] = bool(evidence["stdout_overflow"])
+            evidence["stderr_overflow"] = bool(evidence["stderr_overflow"])
+            evidence_rows.append(evidence)
+        return evidence_rows
 
     def delete_run_command_evidence(self, execution_id: str) -> None:
         with closing(self._connect()) as connection, connection:

@@ -84,7 +84,43 @@ def test_store_removes_obsolete_run_command_schema(tmp_path: Path) -> None:
         "stderr",
         "stdout_overflow",
         "stderr_overflow",
+        "exit_code",
+        "duration_ms",
     }
+
+
+def test_store_migrates_current_evidence_schema_without_dropping_rows(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runtime.sqlite3"
+    store = ExecutionStore(path)
+    create_execution(store, tmp_path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE run_command_evidence")
+        connection.execute(
+            """
+            CREATE TABLE run_command_evidence (
+                execution_id TEXT NOT NULL,
+                run_ordinal INTEGER NOT NULL,
+                stdout BLOB NOT NULL,
+                stderr BLOB NOT NULL,
+                stdout_overflow INTEGER NOT NULL,
+                stderr_overflow INTEGER NOT NULL,
+                PRIMARY KEY (execution_id, run_ordinal)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO run_command_evidence VALUES (?, ?, ?, ?, ?, ?)",
+            ("aaaaaa", 1, b"stdout", b"stderr", 0, 0),
+        )
+
+    migrated = ExecutionStore(path).get_run_command_evidence("aaaaaa", 1)
+
+    assert migrated["stdout"] == b"stdout"
+    assert migrated["stderr"] == b"stderr"
+    assert migrated["exit_code"] is None
+    assert migrated["duration_ms"] is None
 
 
 def test_execution_and_task_share_one_identity_but_not_one_lifecycle(

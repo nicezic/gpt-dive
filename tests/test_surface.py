@@ -256,6 +256,115 @@ def test_model_visible_structured_content_has_no_outer_result(
     }
 
 
+def test_code_mode_debug_content_summarizes_run_command_without_changing_structured_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    structured = {
+        "kind": "completed",
+        "execution_id": "abc123",
+        "output": {"pytest": "2 passed"},
+        "tracked_tasks": [],
+    }
+    original = CallToolResult(
+        content=[TextContent(type="text", text="original")],
+        structured_content=structured,
+    )
+    monkeypatch.setattr(
+        app.executions.store,
+        "list_run_command_evidence",
+        lambda execution_id: [
+            {
+                "execution_id": execution_id,
+                "run_ordinal": 1,
+                "stdout": b"hidden stdout",
+                "stderr": b"",
+                "stdout_overflow": False,
+                "stderr_overflow": False,
+                "exit_code": 0,
+                "duration_ms": 2310,
+            },
+            {
+                "execution_id": execution_id,
+                "run_ordinal": 3,
+                "stdout": b"more hidden stdout",
+                "stderr": b"ruff failed",
+                "stdout_overflow": False,
+                "stderr_overflow": False,
+                "exit_code": 2,
+                "duration_ms": 410,
+            },
+        ],
+    )
+
+    rendered = app._render_code_mode_debug_content("code_mode", original)
+
+    assert rendered.structured_content == structured
+    assert len(rendered.content) == 1
+    assert isinstance(rendered.content[0], TextContent)
+    text = rendered.content[0].text
+    assert text == (
+        "id: abc123\n\n"
+        "[0] 0, 2310 ms, 13 B\n"
+        "[2] 2, 410 ms, 29 B, stderr ↓\n"
+        "ruff failed\n\n"
+        "----\n"
+        '{\n  "pytest": "2 passed"\n}'
+    )
+    assert "hidden stdout" not in text
+
+
+def test_task_get_completed_uses_same_run_command_debug_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    structured = {
+        "kind": "completed",
+        "execution_id": "abc123",
+        "output": "done",
+    }
+    original = CallToolResult(
+        content=[TextContent(type="text", text="original")],
+        structured_content=structured,
+    )
+    monkeypatch.setattr(
+        app.executions.store,
+        "list_run_command_evidence",
+        lambda _execution_id: [
+            {
+                "run_ordinal": 1,
+                "stdout": b"",
+                "stderr": b"",
+                "exit_code": 0,
+                "duration_ms": 95,
+            }
+        ],
+    )
+
+    rendered = app._render_code_mode_debug_content("task", original)
+
+    assert rendered.structured_content == structured
+    assert isinstance(rendered.content[0], TextContent)
+    assert rendered.content[0].text == "id: abc123\n\n[0] 0, 95 ms, 0 B\n\n----\ndone"
+
+
+def test_code_mode_debug_content_keeps_default_when_no_run_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = CallToolResult(
+        content=[TextContent(type="text", text="original")],
+        structured_content={
+            "kind": "completed",
+            "execution_id": "abc123",
+            "output": 42,
+            "tracked_tasks": [],
+        },
+    )
+    monkeypatch.setattr(
+        app.executions.store, "list_run_command_evidence", lambda _execution_id: []
+    )
+
+    assert app._render_code_mode_debug_content("code_mode", original) is original
+
+
 def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> None:
     async def call(name: str, arguments: dict[str, Any]) -> None:
         await app.mcp._tool_manager.call_tool(
