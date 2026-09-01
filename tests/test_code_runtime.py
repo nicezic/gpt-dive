@@ -87,6 +87,67 @@ def test_registry_has_the_renewed_fifteen_capabilities(tmp_path: Path) -> None:
         assert removed not in descriptions
     for name in ("agy_worker", "subagent_call", "peer_review"):
         assert "timeout" not in descriptions[name]["signature"]
+    assert "declaration" in descriptions["run_command"]
+
+
+def test_registry_renders_typed_run_command_contract_without_breaking_positional_calls(
+    tmp_path: Path,
+) -> None:
+    registry = registry_for_test(tmp_path)
+    catalog = registry.model_catalog()
+    stubs = registry.type_check_stubs()
+    declaration = registry.describe()["run_command"]["declaration"]
+
+    for rendered in (catalog, stubs, declaration):
+        assert "class RunCommandResult(TypedDict)" in rendered
+        assert "exit_code: int" in rendered
+        assert "stdout: str" in rendered
+        assert "stderr: str" in rendered
+        assert "duration_ms: int" in rendered
+        assert "truncated: bool" in rendered
+    assert "async def run_command(*, command: str) -> RunCommandResult:" in catalog
+    assert "async def run_command(command:" in stubs
+    assert "-> RunCommandResult" in stubs
+
+
+def test_registry_dispatches_pydantic_normalized_arguments() -> None:
+    seen: list[int] = []
+
+    def capture(value: int) -> int:
+        seen.append(value)
+        return value
+
+    registry = CallableRegistry()
+    registry.register("capture", capture)
+    result = registry.as_external_lookup()["capture"]("7")
+
+    assert result == 7
+    assert seen == [7]
+
+
+def test_registry_renders_repo_search_discriminated_result(tmp_path: Path) -> None:
+    catalog = registry_for_test(tmp_path).model_catalog()
+
+    assert "class RepoSearchItem(TypedDict)" in catalog
+    assert "class RepoSearchSuccess(TypedDict)" in catalog
+    assert "class RepoSearchFailure(TypedDict)" in catalog
+    assert "ok: Literal[True]" in catalog
+    assert "ok: Literal[False]" in catalog
+    assert "results: list[RepoSearchItem]" in catalog
+    assert "error: str" in catalog
+    assert "RepoSearchSuccess | RepoSearchFailure" in catalog
+
+
+def test_repo_search_rejects_invalid_host_result_before_monty_consumes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def invalid_search(**_kwargs: object) -> dict[str, object]:
+        return {"ok": True}
+
+    monkeypatch.setattr(capabilities_module, "search_repo", invalid_search)
+
+    with pytest.raises(MontyRuntimeError):
+        run_code(tmp_path, "await repo_search(query='needle')")
 
 
 def test_runtime_returns_expression_and_payload_results(tmp_path: Path) -> None:
@@ -121,6 +182,18 @@ def test_run_command_is_awaited_bounded_and_preserves_output(tmp_path: Path) -> 
         "truncated": False,
     }
     assert result["duration_ms"] >= 0
+
+
+def test_run_command_rejects_invalid_host_result_before_monty_consumes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def invalid_result(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"exit_code": 0, "stdout": "OK"}
+
+    monkeypatch.setattr(capabilities_module, "run_runtime_command", invalid_result)
+
+    with pytest.raises(MontyRuntimeError):
+        run_code(tmp_path, 'await run_command("true")')
 
 
 def test_run_command_resolves_tool_from_mise_shims(
@@ -240,7 +313,15 @@ def test_repo_search_and_council_emit_use_explicit_capability_seams(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake_search(**kwargs: object) -> dict[str, object]:
-        return kwargs
+        return {
+            "ok": True,
+            "engine": "probe",
+            "query": kwargs["query"],
+            "path": kwargs["path"],
+            "count": 0,
+            "total_tokens": 0,
+            "results": [],
+        }
 
     def fake_emit(
         council_dir: str, message: str, expected_head: str | None

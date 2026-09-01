@@ -46,7 +46,7 @@ dependent operations      → sequential await
 independent operations    → asyncio.gather(...)
 short direct CLI need     → await run_command(...)
 deep delegated work       → subagent_call / agy_worker / peer_review
-immediate public awareness→ outer code_mode mode="task"
+immediate public awareness→ outer code_mode delivery="task"
 Task lifecycle            → outer task MCP tool
 ```
 
@@ -80,20 +80,22 @@ Other 4
 
 The three agent/model capabilities keep separate semantic contracts. Only their common deadline ownership changed: model-supplied `timeout` arguments were removed, and Runtime passes each underlying worker an effective budget.
 
-## Static type-check boundary
+## Model-facing contract and static checking
 
-`CallableRegistry` renders type-check stubs directly from the registered Python callables used for `CAPABILITIES`. Discovery and static enforcement therefore share one signature source.
+`CallableRegistry` owns one generated capability definition per registered callable. The same definition feeds the outer pre-call catalog, Monty type-check stubs, host validation, and runtime `CAPABILITIES` reflection.
 
 ```text
-generated Monty code
+registered callable + typed return
         │
-        ▼
-static check against live stubs
-   ├─ invalid name/argument → reject before host dispatch
-   └─ valid                → execute with runtime validation backstop
+        ├─ outer generated catalog → first-call contract
+        ├─ Monty stubs             → static enforcement
+        ├─ host validation         → runtime backstop
+        └─ CAPABILITIES            → reflection / fallback
 ```
 
-There are no argument aliases, silent repair, or unchecked fallback. This matters after removing `timeout`: an invented timeout is a visible typing/validation error rather than a silently dropped field.
+The outer catalog is visible before the model writes `code`, so discovery-only calls are not the normal correctness path. Runtime stubs preserve the real Python positional/keyword signature even when the model-facing catalog renders structured arguments as named parameters.
+
+There are no argument aliases, silent repair, or unchecked fallback. An invented argument or invalid typed result is a visible typing/validation error rather than a silently dropped field.
 
 ## Filesystem boundary
 

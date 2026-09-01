@@ -20,6 +20,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, RootModel, TypeAdapter
 
+from .code_capabilities import code_mode_capability_catalog
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
 from .execution_manager import ExecutionManager
@@ -33,6 +34,7 @@ _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 TRACKED_TASKS_LIMIT = 8
 TRACKED_TASKS_MAX_BYTES = 4096
 _RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
+_CODE_MODE_CAPABILITY_CATALOG = code_mode_capability_catalog()
 
 _TASK_STATE_MARKERS = {
     "accepted": "◌",
@@ -109,7 +111,7 @@ mcp = MCPServer(
         "return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
         "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the "
         "live contract plus local state before retrying. Use Web Search only when the missing evidence "
-        "is external and current. Use mode='task' for immediate Task awareness; otherwise code_mode "
+        "is external and current. Use delivery='task' for immediate Task awareness; otherwise code_mode "
         "waits briefly and publishes the same continuing Execution only when inline delivery ends "
         "first. Transport loss never cancels work. Every successful ordinary work result includes "
         "tracked_tasks as compact passive awareness with elapsed_seconds, so background completion "
@@ -656,7 +658,7 @@ class CodeModeTask(_ClosedModel):
 class CodeModeError(_ClosedModel):
     kind: Literal["error"] = "error"
     execution_id: str
-    code: str
+    error_code: str
     message: str
 
 
@@ -709,6 +711,9 @@ _CODE_MODE_WORK_OUTCOME_ADAPTER = TypeAdapter(CodeModeWorkOutcome)
 
 
 def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
+    if value.get("kind") == "error" and "code" in value:
+        value = {**value, "error_code": value["code"]}
+        value.pop("code")
     return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
 
 
@@ -744,7 +749,7 @@ def _code_mode_error(
 ) -> CodeModeError:
     return CodeModeError(
         execution_id=execution_id,
-        code=code,
+        error_code=code,
         message=message,
     )
 
@@ -994,10 +999,15 @@ async def _mcp_wsl_exec(
     title="Pydantic Monty Code Mode",
     description=(
         "Launch one always-durable Pydantic Monty Execution. label and code are required. "
-        "mode='auto' waits up to the bounded inline delivery window and otherwise returns "
-        "a Task handle for the same continuing Execution; mode='task' publishes that Task "
+        "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
+        "a Task handle for the same continuing Execution; delivery='task' publishes that Task "
         "immediately. Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
-        "arguments, use PAYLOAD for data, and use asyncio.gather only for independent work."
+        "arguments. The generated declarations below are the first-call capability contract; "
+        "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "
+        "only for independent work.\n\n"
+        "Available Monty capabilities (generated from the live callable contract):\n```python\n"
+        + _CODE_MODE_CAPABILITY_CATALOG
+        + "\n```"
     ),
 )
 async def _mcp_code_mode(
@@ -1032,12 +1042,12 @@ async def _mcp_code_mode(
             )
         ),
     ] = None,
-    mode: Annotated[
+    delivery: Annotated[
         Literal["auto", "task"],
         Field(
             description=(
                 "auto waits for bounded inline delivery; task publishes awareness immediately. "
-                "Both modes run the same always-durable Execution."
+                "Both choices run the same always-durable Execution."
             )
         ),
     ] = "auto",
@@ -1047,7 +1057,7 @@ async def _mcp_code_mode(
         code=code,
         cwd=cwd,
         payload=payload,
-        mode=mode,
+        mode=delivery,
     )
     if isinstance(primary, CodeModeCompleted):
         primary = primary.model_copy(

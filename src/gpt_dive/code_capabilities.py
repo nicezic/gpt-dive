@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from pydantic_ai_harness import FileSystem
 
@@ -20,7 +21,7 @@ from .command_runtime import (
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .model_call import invoke_model_call
-from .repo_search import search_repo
+from .repo_search import RepoSearchResult, search_repo
 from .subagent_runtime import invoke_subagent
 
 code_runtime = MontyCodeRuntime()
@@ -28,6 +29,14 @@ code_runtime = MontyCodeRuntime()
 _AGY_WORKER_POLICY_SECONDS = 360.0
 _SUBAGENT_POLICY_SECONDS = 600.0
 _PEER_REVIEW_POLICY_SECONDS = 600.0
+
+
+class RunCommandResult(TypedDict):
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration_ms: int
+    truncated: bool
 
 
 def code_mode_home_root() -> Path:
@@ -185,17 +194,20 @@ def build_code_registry(
             workspace_dir=cwd if cwd is not None else default_cwd,
         )
 
-    async def run_command(command: str) -> dict[str, Any]:
+    async def run_command(command: str) -> RunCommandResult:
         """Run one awaited local shell command under the owning Execution budget.
 
         Output is spooled with hard bounds and truncated before entering model context.
         Use an explicit systemd-run --user sibling unit only when intentionally handing
         work outside GPT Dive Runtime and accepting loss of Task/deadline guarantees.
         """
-        return await run_runtime_command(
-            command,
-            cwd=str(effective_cwd),
-            record=record,
+        return cast(
+            RunCommandResult,
+            await run_runtime_command(
+                command,
+                cwd=str(effective_cwd),
+                record=record,
+            ),
         )
 
     def deadline_remaining() -> float:
@@ -209,7 +221,7 @@ def build_code_registry(
         max_results: int = 8,
         max_tokens: int = 6000,
         allow_tests: bool = False,
-    ) -> dict[str, Any]:
+    ) -> RepoSearchResult:
         """Search local code/docs with Probe using BM25 ranking and AST-aware blocks.
 
         Prefer this for exploring unfamiliar repositories and locating relevant code by concept.
@@ -256,3 +268,10 @@ def build_code_registry(
     registry.register("run_command", run_command)
     registry.register("deadline_remaining", deadline_remaining)
     return registry
+
+
+@functools.lru_cache(maxsize=1)
+def code_mode_capability_catalog() -> str:
+    """Render the model-facing capability catalog without launching an Execution."""
+    registry = build_code_registry(None, record=cast(RuntimeRecord, {}))
+    return registry.model_catalog()

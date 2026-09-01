@@ -3,10 +3,42 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from .runtime_env import build_runtime_path
 from .worker_subprocess import run_bounded_worker, stderr_tail
+
+
+class RepoSearchItem(TypedDict):
+    file: str
+    lines: list[int] | None
+    code: str
+    score: float | None
+    symbol: str | None
+    language: str | None
+
+
+class RepoSearchSuccess(TypedDict):
+    ok: Literal[True]
+    engine: Literal["probe"]
+    query: str
+    path: str
+    count: int
+    total_tokens: int | None
+    results: list[RepoSearchItem]
+
+
+class RepoSearchFailure(TypedDict):
+    ok: Literal[False]
+    engine: Literal["probe"]
+    query: str
+    path: str
+    error: str
+    stdout: NotRequired[str]
+    stderr: NotRequired[str]
+
+
+RepoSearchResult = RepoSearchSuccess | RepoSearchFailure
 
 
 def _compact_probe_result(data: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -46,7 +78,7 @@ async def search_repo(
     max_tokens: int = 6000,
     allow_tests: bool = False,
     timeout: float = 30.0,
-) -> dict[str, Any]:
+) -> RepoSearchResult:
     """Search a local repository with Probe and return compact AST-aware results."""
     if not query.strip():
         raise ValueError("query must not be empty")
@@ -129,10 +161,13 @@ async def search_repo(
         }
 
     compact = _compact_probe_result(data, root)
-    return {
-        "ok": True,
-        "engine": "probe",
-        "query": query,
-        "path": str(root),
-        **compact,
-    }
+    return cast(
+        RepoSearchResult,
+        {
+            "ok": True,
+            "engine": "probe",
+            "query": query,
+            "path": str(root),
+            **compact,
+        },
+    )

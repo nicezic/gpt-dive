@@ -90,7 +90,7 @@ async def wait_task_ready(
     [
         (app.CodeModeCompleted, {"kind", "execution_id", "output"}),
         (app.CodeModeTask, {"kind", "execution_id", "state"}),
-        (app.CodeModeError, {"kind", "execution_id", "code", "message"}),
+        (app.CodeModeError, {"kind", "execution_id", "error_code", "message"}),
     ],
 )
 def test_public_outcome_models_lock_llm_contract_fields(
@@ -168,7 +168,7 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
     assert outcome.model_dump() == {
         "kind": "error",
         "execution_id": execution_id,
-        "code": code,
+        "error_code": code,
         "message": message,
     }
 
@@ -247,7 +247,7 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
         assert first.model_dump() == {
             "kind": "error",
             "execution_id": execution_id,
-            "code": "lost",
+            "error_code": "lost",
             "message": "Code Mode Execution outcome is no longer observable.",
         }
         assert second.model_dump() == first.model_dump()
@@ -352,7 +352,7 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         assert outcome.model_dump() == {
             "kind": "error",
             "execution_id": outcome.execution_id,
-            "code": "response_deadline_exceeded",
+            "error_code": "response_deadline_exceeded",
             "message": (
                 "Code Mode Execution was accepted, but response shaping did not "
                 "finish before the response deadline."
@@ -389,7 +389,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
     assert outcome.model_dump() == {
         "kind": "error",
         "execution_id": outcome.execution_id,
-        "code": "launch_interrupted",
+        "error_code": "launch_interrupted",
         "message": "Code Mode Worker could not be launched.",
     }
     record = manager.store.get(outcome.execution_id)

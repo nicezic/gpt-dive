@@ -78,12 +78,15 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert "always-durable" in description
     assert "bounded inline delivery" in description
     assert "Task handle for the same continuing Execution" in description
+    assert "class RunCommandResult(TypedDict)" in description
+    assert "async def run_command(*, command: str) -> RunCommandResult:" in description
     schema = tool.input_schema
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["label", "code"]
     assert schema["properties"]["label"]["maxLength"] == 80
     assert schema["properties"]["label"]["minLength"] == 1
-    assert schema["properties"]["mode"]["enum"] == ["auto", "task"]
+    assert "mode" not in schema["properties"]
+    assert schema["properties"]["delivery"]["enum"] == ["auto", "task"]
 
     assert tool.output_schema is not None
     assert "result" not in tool.output_schema.get("properties", {})
@@ -93,7 +96,13 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     expected_fields = {
         "completed": {"kind", "execution_id", "output", "tracked_tasks"},
         "task": {"kind", "execution_id", "state", "tracked_tasks"},
-        "error": {"kind", "execution_id", "code", "message", "tracked_tasks"},
+        "error": {
+            "kind",
+            "execution_id",
+            "error_code",
+            "message",
+            "tracked_tasks",
+        },
     }
     for kind, ref in mapping.items():
         definition = tool.output_schema["$defs"][ref.rsplit("/", 1)[-1]]

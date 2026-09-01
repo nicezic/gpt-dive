@@ -10,7 +10,7 @@ GPT Dive exposes outer Code Mode `peer_review(...)` as the current peer-review l
 
 ```text
 Web SOL
-  -> code_mode(label="Peer review: …", mode="task")
+  -> code_mode(label="Peer review: …", delivery="task")
        -> Task / TrackedTasks awareness
        -> peer_review(provider, model, prompt, cwd)
             -> invoke_model_call(peer_review=True)
@@ -172,7 +172,7 @@ if result.get("ok"):
     await write_file(path="peer_answer.md", content=result["output"])
 ```
 
-The actual paid route runs only in an outer `code_mode(label="Peer review: …", mode="task")` call after the skill's provider/model preflight and explicit user approval gate. The outer call returns the Execution's single `execution_id`; Web SOL continues its own work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. `task(get)` reads the result non-destructively, `task(cancel)` is the explicit cancellation path, and `task(dismiss)` removes terminal awareness after handling. No peer-review-specific tracker or execution runtime is added. `peer_review` has no model-supplied timeout: Runtime clamps its underlying worker to the lesser of the 600-second capability policy and the remaining Execution work budget.
+The actual paid route runs only in an outer `code_mode(label="Peer review: …", delivery="task")` call after the skill's provider/model preflight and explicit user approval gate. The outer call returns the Execution's single `execution_id`; Web SOL continues its own work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. `task(get)` reads the result non-destructively, `task(cancel)` is the explicit cancellation path, and `task(dismiss)` removes terminal awareness after handling. No peer-review-specific tracker or execution runtime is added. `peer_review` has no model-supplied timeout: Runtime clamps its underlying worker to the lesser of the 600-second capability policy and the remaining Execution work budget.
 
 ## Failure semantics
 

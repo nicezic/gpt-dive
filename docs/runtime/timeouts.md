@@ -26,12 +26,12 @@ t≈120s    관찰된 외부 tunnel 경계
 ## Inline delivery
 
 ```text
-mode=auto
+delivery=auto
 ├─ 100초 전에 terminal result → completed/error, Task 없음
 ├─ 100초에도 실행 중          → Task publish + execution_id 반환
 └─ waiter/transport cancel     → Task publish, Execution 계속
 
-mode=task
+delivery=task
 └─ launch 시 publish하고 즉시 반환
 ```
 
