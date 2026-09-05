@@ -44,9 +44,7 @@ PROVIDER_ROUTES: dict[str, ProviderRoute] = {
     "micu-kimi": ProviderRoute(
         "MICU_KIMI_API_KEY", "https://www.micuapi.ai", "kimi-k3"
     ),
-    "micu-glm": ProviderRoute(
-        "MICU_GLM_API_KEY", "https://www.micuapi.ai", "glm-5.3"
-    ),
+    "micu-glm": ProviderRoute("MICU_GLM_API_KEY", "https://www.micuapi.ai", "glm-5.3"),
     "micu-grok": ProviderRoute(
         "MICU_GROK_API_KEY", "https://www.micuapi.ai", "grok-4.6"
     ),

@@ -365,11 +365,17 @@ class ExecutionManager:
             message = "Code Mode Worker exited without a valid error envelope."
 
         if not detail and payload.get("stderr"):
-            err_lines = [line.strip() for line in str(payload["stderr"]).splitlines() if line.strip()]
+            err_lines = [
+                line.strip()
+                for line in str(payload["stderr"]).splitlines()
+                if line.strip()
+            ]
             if err_lines:
                 detail = "\n".join(err_lines[-3:])
 
-        return _code_mode_error_result(payload, code=code, message=message, detail=detail)
+        return _code_mode_error_result(
+            payload, code=code, message=message, detail=detail
+        )
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
@@ -437,9 +443,7 @@ class ExecutionManager:
                 except ValueError:
                     continue
                 if created < tmp_cutoff:
-                    remove_run_command_evidence_directory(
-                        str(record["execution_id"])
-                    )
+                    remove_run_command_evidence_directory(str(record["execution_id"]))
                 if updated >= cutoff:
                     continue
 
@@ -732,7 +736,7 @@ class ExecutionManager:
             return {"task": task, "ready": False, "unavailable": True}
         try:
             result = self.result(execution_id)
-        except (ExecutionNotFoundError, FileNotFoundError):
+        except ExecutionNotFoundError, FileNotFoundError:
             self.store.mark_lost(execution_id, reason="retained_result_missing")
             return {
                 "task": self.task(execution_id),

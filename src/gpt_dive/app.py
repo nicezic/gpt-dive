@@ -366,7 +366,7 @@ def _processed_output_text(output: Any) -> str:
 def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
     try:
         evidence_rows = executions.store.list_run_command_evidence(execution_id)
-    except (KeyError, sqlite3.Error):
+    except KeyError, sqlite3.Error:
         return result
     if not evidence_rows or any(
         row.get("exit_code") is None or row.get("duration_ms") is None
@@ -505,8 +505,6 @@ async def _observe_launch(launch_task: asyncio.Task[dict[str, Any]]) -> None:
         await asyncio.shield(launch_task)
 
 
-
-
 async def _publish_during_launch(
     manager: ExecutionManager,
     launch_task: asyncio.Task[dict[str, Any]],
@@ -528,8 +526,6 @@ async def _publish_during_launch(
             await _publish_accepted_task(manager, execution_id)
 
 
-
-
 async def _preserve_interrupted_launch(
     manager: ExecutionManager,
     launch_task: asyncio.Task[dict[str, Any]],
@@ -544,8 +540,6 @@ async def _preserve_interrupted_launch(
 async def _publish_execution(manager: ExecutionManager, execution_id: str) -> None:
     with contextlib.suppress(Exception):
         await _publish_accepted_task(manager, execution_id)
-
-
 
 
 async def _wait_for_acceptance(
@@ -629,8 +623,8 @@ class TrackedTaskView(_ClosedModel):
 
 
 _TRACKED_TASKS_GUIDANCE = (
-    "Background tasks are active. "
-    "Call task(action='get', execution_id=...) to inspect progress or retrieve results."
+    "Passive background HUD. Continue current turn without polling. "
+    "When ready or completed, retrieve via task(action='get', execution_id=...) and dismiss."
 )
 
 
@@ -660,7 +654,7 @@ class CodeModeRunning(_ClosedModel):
 
 _CODE_MODE_ERROR_GUIDANCE = (
     "DO NOT invent fallbacks or assume tools are broken. "
-    "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [BUG PREVIEW], "
+    "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [FIX PREVIEW], "
     "inspect error detail and live contract, and retry only a corrected call on the canonical path."
 )
 
@@ -733,7 +727,9 @@ def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
     if payload.get("status") == "failed":
         if "error" not in payload:
             err = {
-                "code": payload.pop("error_code", payload.pop("code", "execution_error")),
+                "code": payload.pop(
+                    "error_code", payload.pop("code", "execution_error")
+                ),
                 "message": payload.pop("message", "Code Mode Execution failed."),
             }
             if "detail" in payload:
@@ -742,13 +738,15 @@ def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
         if "guidance" not in payload:
             payload["guidance"] = _CODE_MODE_ERROR_GUIDANCE
 
-    if payload.get("status") == "completed":
-        if "result" not in payload and "output" in payload:
-            payload["result"] = payload.pop("output")
+    if (
+        payload.get("status") == "completed"
+        and "result" not in payload
+        and "output" in payload
+    ):
+        payload["result"] = payload.pop("output")
 
-    if payload.get("status") == "running":
-        if "guidance" not in payload:
-            payload["guidance"] = _CODE_MODE_RUNNING_GUIDANCE
+    if payload.get("status") == "running" and "guidance" not in payload:
+        payload["guidance"] = _CODE_MODE_RUNNING_GUIDANCE
 
     return _CODE_MODE_OUTPUT_ADAPTER.validate_python(payload)
 
@@ -928,7 +926,9 @@ async def code_mode(
             await _preserve_interrupted_launch(executions, launch_task, execution_id)
             raise
         except Exception as exc:
-            _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+            _spawn_followup(
+                _publish_during_launch(executions, launch_task, execution_id)
+            )
             return await _code_mode_launch_error(
                 execution_id,
                 exc,
@@ -986,7 +986,9 @@ async def code_mode(
                         launch_exception,
                         response_deadline=response_deadline,
                     )
-                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+                _spawn_followup(
+                    _publish_during_launch(executions, launch_task, execution_id)
+                )
                 raise TimeoutError(
                     "Code Mode response deadline expired before acceptance"
                 ) from exc
@@ -1007,7 +1009,9 @@ async def code_mode(
                 )
                 raise
             except TimeoutError:
-                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+                _spawn_followup(
+                    _publish_during_launch(executions, launch_task, execution_id)
+                )
                 return _code_mode_error(
                     execution_id,
                     code="response_deadline_exceeded",
@@ -1020,7 +1024,9 @@ async def code_mode(
                 logger.exception(
                     "TASK PUBLICATION FAILED execution_id=%s", execution_id
                 )
-                _spawn_followup(_publish_during_launch(executions, launch_task, execution_id))
+                _spawn_followup(
+                    _publish_during_launch(executions, launch_task, execution_id)
+                )
                 return _code_mode_error(
                     execution_id,
                     code="task_publication_failed",
@@ -1108,7 +1114,9 @@ async def _mcp_wsl_exec(
         "Launch one always-durable Pydantic Monty Execution. label and code are required. "
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
         "a running status for the same continuing Execution; delivery='task' publishes that Task "
-        "immediately. Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
+        "immediately. Returns status ('completed' | 'running' | 'failed') and result. Ongoing "
+        "background work appears in tracked_tasks as passive HUD without need for polling. "
+        "Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
         "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "
         "only for independent work.\n\n"
@@ -1294,9 +1302,12 @@ async def _mcp_task(
     request: TaskRequest, ctx: Context | None = None
 ) -> _TaskPublicOutcome:
     outcome = await task(request)
-    if isinstance(request, TaskDismissRequest):
-        if isinstance(outcome, TaskDismissOutput) and outcome.dismissed:
-            _discard_session_task(ctx, request.execution_id)
+    if (
+        isinstance(request, TaskDismissRequest)
+        and isinstance(outcome, TaskDismissOutput)
+        and outcome.dismissed
+    ):
+        _discard_session_task(ctx, request.execution_id)
 
     if isinstance(outcome, CodeModeCompleted):
         outcome = outcome.model_copy(

@@ -1,85 +1,94 @@
 # GPT Dive — 현재 Continuation
 
-> 갱신: 2026-08-28
-> 용도: Runtime renewal을 새 세션에서 이어가기 위한 handoff. 설계 근거의 권위는 `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`에 있다.
+> 갱신: 2026-09-06
+> 용도: AI 인수인계 및 새 세션 연결용 Single Source of Truth (SSOT).
+> 설계 근거의 권위: [`docs/runtime/adr/0004-always-durable-code-mode-runtime.md`](file:///home/nicezic/gpt-dive/docs/runtime/adr/0004-always-durable-code-mode-runtime.md) 및 [`docs/runtime/adr/0011-read-file-raw-default-and-monty-alignment.md`](file:///home/nicezic/gpt-dive/docs/runtime/adr/0011-read-file-raw-default-and-monty-alignment.md).
 
-## 현재 목표
+---
 
-저장소 안의 clean replacement와 로컬 검증은 끝났다. 남은 경계는 실제 서비스에 새 schema를 반영하고 fresh ChatGPT session에서 수용 확인하는 일이다.
+## 1. 현재 목표 및 상태
 
-```text
-설계 grilling 완료
-        │
-        ▼
-glossary + ADR 확정
-        │
-        ▼
-구현 + 로컬 검증 완료
-        │
-        ▼
-서비스 reload + fresh-session acceptance 대기
-```
-
-제거한 API나 기존 Task DB를 위한 호환 계층은 만들지 않는다.
-
-## 현재 계약
+Runtime v2의 Always-Durable execution, Codex-native typed tool contract(ADR 0010), 그리고 `read_file` raw default + Monty upstream wire protocol 정합(ADR 0011)이 완료되어 안정화된 상태다.
 
 ```text
-Web MCP tools
-├─ bootstrap
-├─ code_mode(label, code, payload?, cwd?, mode=auto|task)
-└─ task({action: list|get|cancel|dismiss, execution_id?})
-
-Execution 1 → Task 0..1
-공개 identity          = execution_id (6자리 URL-safe Base64)
-control-plane 권위     = SQLite runtime-v2.sqlite3
-filesystem            = 보존 artifact 전용
+[설계 및 검증 파이프라인]
+ADR 0004 (Durable Runtime v2) ──→ ADR 0010 (Codex Contract) ──→ ADR 0011 (Raw read_file & Monty Fix)
+              │                                │                                │
+              ▼                                ▼                                ▼
+    SQLite Control-Plane             Typed Stubs Catalog               Raw File Data Pipeline
+              └────────────────────────────────┬────────────────────────────────┘
+                                               ▼
+                              로컬 검증: 169 Tests Passed (100% Green)
 ```
 
-모든 Code Mode 호출은 사용자 code보다 먼저 durable(응답 연결이 끊겨도 실행 소유권이 남는 상태)해진다. Worker는 원자적 `accepted → running` 전이를 이겨야만 code를 실행한다. Inline 전달은 100초, MCP 응답 처리는 110초, 사용자 작업은 43,190초, 정리를 포함한 절대 수명은 43,200초(12시간)로 보장한다. Transport loss는 Task를 publish하며, 오직 명시적 `task(cancel)`만 실행을 취소한다.
+---
 
-## 반영된 source delta
+## 2. 핵심 계약 (Runtime Contract)
 
-- `execution_store.py`, `execution_worker.py`, `execution_context.py`를 통해 SQLite SSOT, claim-before-code 경계, 상속 deadline, process-tree containment를 확립했다.
-- Execution 절대 수명을 12시간(`43,200s`, work cutoff `43,190s`, cleanup `10s`)으로 확장하고, direct shell `run_command` 역시 12시간 budget을 완전 상속하도록 조정했다.
-- 공개 `execution_id`를 사람이 복사하고 기억하기 쉬운 6자리 URL-safe Base64(`secrets.token_urlsafe(4)`)로 경량화했다.
-- 미참조 데드 코드인 `m3_gbrain_replay.py`(-779줄), 불필요한 `m3_evidence` capability 및 eval 도구(-1,407줄, 27개 테스트)를 제거하여 코드베이스를 대폭 슬림화했다.
-- 취약한 negative 문자열 assertion과 prompt index 단언을 선별 제거하고, subprocess 및 polling 슬립 간격을 단축해 테스트 스위트 속도를 최적화했다.
-- ExecutionManager를 accepted-row journal, 단일 ID, 고정 deadline, outcome 복구, 5일 retention 기준으로 안정화했다.
-- 공개 `code_mode`와 `task`를 strict typed contract로 관리하며, 알 수 없는 인자는 거부한다.
-- awaited `run_command` 하나를 제공하며, guard-bin, secret 환경변수 제거, bounded live spool, spill, TERM/KILL/reap을 적용한다.
+```text
+Web MCP Tools
+├─ bootstrap                                  ── 세션 오리엔테이션 및 위키 맵 로드
+├─ code_mode(label, code, payload?, cwd?)    ── Pydantic Monty 격리 파이썬 코드 실행 (Durable)
+└─ task({action: list|get|cancel|dismiss})    ── 백그라운드 Task 생명주기 관리 및 결과 수신
 
-## 로컬 검증
+Execution & Storage
+├─ 단일 식별자        : execution_id (6자리 URL-safe Base64)
+├─ 상태 권위 (SSOT)   : SQLite (~/.local/state/gpt-dive/runtime-v2.sqlite3)
+└─ 파일시스템         : OS 격리 및 artifact 보존 전용
+```
 
-- 전체 pytest: `143 passed` (~9.1초)
-- Ruff: 통과 (0 errors)
-- Pyright: 통과 (0 errors)
-- `git diff --check`: 통과
-- Popen smoke: 정상 완료, 명시적 취소, deadline 실패, `setsid` descendant 정리 통과
-- 실제 `systemd --user` smoke: `accepted → completed` 및 출력 보존 통과
-- 생성된 MCP schema: tool 3개와 고정 request object의 `additionalProperties:false` 확인
+### 불변 규칙
+- **Always Durable**: 모든 `code_mode` 호출은 코드 실행 전 SQLite에 `accepted` 상태로 원자적 기록된다.
+- **Strict Typed Contract**: Outer catalog stubs를 통해 첫 호출부터 positional/keyword signature를 준수하며, 알 수 없는 인자는 즉시 거부한다.
+- **Raw File Transport**: `read_file`은 기본적으로 순수 텍스트(`line_numbers=False`)를 반환하여 `json.loads` 및 `edit_file` 파이프라인과 즉시 호환된다.
 
-이 checkpoint 뒤 source가 바뀌면 위 gate를 다시 실행한다.
+---
 
-## 배포 경계
+## 3. 최근 소스 변경 Delta (2026-09-06)
 
-저장소 작업 완료만으로 live schema가 수용된 것은 아니다. ChatGPT Web의 기존 conversation은 이전 tool contract를 cache할 수 있다.
+```text
+변경 내역
+├─ read_file 원문 기본화 (ADR 0011)
+│  └─ line_numbers: bool = False, raw: bool | None = None 추가
+│  └─ offset / limit 1-indexed 라인 슬라이싱 보존
+│  └─ 파일: src/gpt_dive/code_capabilities.py
+│
+├─ 업스트림 라이브러리 최신화
+│  └─ pydantic-monty >= 0.0.23: multiline exception의 column span 직렬화 버그(#631) 해결
+│  └─ pydantic-ai-harness >= 0.29.0: 최신 툴체인 동기화
+│  └─ mcp >= 2.1.1: UnexpectedToolError.__cause__ 예외 체이닝 지원
+│  └─ 파일: pyproject.toml, uv.lock, src/gpt_dive/app.py
+│
+└─ 에러 아키텍처 SSOT 정립
+   └─ 매 턴 수기 작성하던 ERROR_CASE.md 폐지
+   └─ runtime-v2.sqlite3 DB 쿼리 기반 주기적 사후 감사 체제로 전환
+```
 
-1. 사용자가 요청하면 `git diff`를 검토하고 commit한다.
-2. `docs/runtime/operations.md` 절차로 지연 MCP/tunnel restart를 보낸다.
-3. restart를 보낸 응답에서는 추가 MCP call을 하지 않는다.
-4. 새 ChatGPT session을 연다.
-5. bootstrap, tool 3개 schema, inline 완료, 즉시 Task, 비파괴 get, cancel, dismiss, change-only TrackedTasks, `run_command`를 확인한다.
+---
 
-## 문서 권위
+## 4. 로컬 검증 현황 (Facts)
 
-- `docs/runtime/CONTEXT.md`
-  - Execution, Worker, Task, Task publication, Inline wait, TrackedTasks, Lost의 canonical language.
-- `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
-  - 확정 설계, 근거, 폐기안, deadline, delivery order.
-- `docs/runtime/architecture.md`, `docs/runtime/timeouts.md`, `docs/runtime/operations.md`
-  - 현재 구현 구조, clock 계약, 운영 절차.
-- `docs/conduit/CONTINUATION.md`
-  - Conduit renewal 변화와 다음 작업.
+- **Pytest**: `169 passed in 13.99s` (100% 통과)
+- **Ruff**: 통과 (`All checks passed!`)
+- **Pyright**: 통과 (0 errors)
+- **Git Diff**: `git diff --check` 클린 (0 warnings)
+- **런타임 동작**:
+  - `read_file` raw/formatted/sliced 계약 단위 테스트 통과 ([`tests/test_code_runtime.py`](file:///home/nicezic/gpt-dive/tests/test_code_runtime.py#L308-L325))
+  - MCP 2.1.1 `UnexpectedToolError` 체이닝 표면 테스트 통과 ([`tests/test_surface.py`](file:///home/nicezic/gpt-dive/tests/test_surface.py#L42-L55))
 
-Council, GBrain, provider, Pydantic compatibility 작업은 이번 Runtime renewal의 범위 밖이다. 이전 handoff의 완료된 TODO를 되살리지 말고 각 context 문서로 routing한다.
+---
+
+## 5. 인수인계 문서 권위 (Pointers & Authority)
+
+AI 에이전트가 후속 작업을 수행할 때 반드시 참조해야 하는 권위 문서 목록:
+
+1. **런타임 라이프사이클 & 상태 모델**
+   - [`docs/runtime/CONTEXT.md`](file:///home/nicezic/gpt-dive/docs/runtime/CONTEXT.md): Execution, Worker, Task, Publication, Lost의 정식 용어 정의.
+   - [`docs/runtime/adr/0004-always-durable-code-mode-runtime.md`](file:///home/nicezic/gpt-dive/docs/runtime/adr/0004-always-durable-code-mode-runtime.md): Durable 런타임 설계 근거.
+2. **Code Mode & Capability 규격**
+   - [`docs/pydantic/code-mode.md`](file:///home/nicezic/gpt-dive/docs/pydantic/code-mode.md): 15개 등록 capability 및 파일시스템 경계.
+   - [`docs/runtime/adr/0010-codex-native-tool-contract-alignment.md`](file:///home/nicezic/gpt-dive/docs/runtime/adr/0010-codex-native-tool-contract-alignment.md): 모델 제공용 typed stubs catalog 규격.
+   - [`docs/runtime/adr/0011-read-file-raw-default-and-monty-alignment.md`](file:///home/nicezic/gpt-dive/docs/runtime/adr/0011-read-file-raw-default-and-monty-alignment.md): `read_file` raw text 전환 및 Monty #631 정합.
+3. **런타임 아키텍처 & 운영**
+   - [`docs/runtime/architecture.md`](file:///home/nicezic/gpt-dive/docs/runtime/architecture.md): 현재 시스템 아키텍처 및 command/filesystem 경계.
+   - [`docs/runtime/operations.md`](file:///home/nicezic/gpt-dive/docs/runtime/operations.md): MCP tunnel 지연 재시작 및 배포 절차.

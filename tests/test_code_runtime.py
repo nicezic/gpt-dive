@@ -301,6 +301,28 @@ def test_filesystem_capabilities_keep_conflict_and_secret_policy(
         run_code(tmp_path, "await read_file('.env')")
 
 
+def test_read_file_raw_by_default_and_line_numbers(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.json"
+    sample.write_text('{\n  "key": "value"\n}\n')
+
+    # Default is exact raw content (no line numbers, no header)
+    raw = run_code(tmp_path, "await read_file('sample.json')")
+    assert raw == '{\n  "key": "value"\n}\n'
+
+    # line_numbers=True includes header and line numbers
+    formatted = run_code(tmp_path, "await read_file('sample.json', line_numbers=True)")
+    assert "sample.json | 3 lines" in formatted
+    assert "1\t{" in formatted
+
+    # raw=False also produces formatted output
+    formatted_via_raw = run_code(tmp_path, "await read_file('sample.json', raw=False)")
+    assert "sample.json | 3 lines" in formatted_via_raw
+
+    # offset & limit with raw
+    sliced = run_code(tmp_path, "await read_file('sample.json', offset=1, limit=1)")
+    assert sliced == '  "key": "value"\n'
+
+
 def test_broad_recursive_search_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(
         MontyRuntimeError,

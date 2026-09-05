@@ -125,7 +125,7 @@ Other 4
 
 ### Filesystem 경계
 
-Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다.
+Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다. `read_file`은 기본적으로 원문 텍스트(`line_numbers=False`)를 반환하여 `json.loads` 및 `edit_file`과 즉시 호환되며, 프롬프트용 줄번호 점검이 필요할 때만 `line_numbers=True`를 명시한다(ADR 0011).
 
 ### Direct command 경계
 

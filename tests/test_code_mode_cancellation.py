@@ -105,7 +105,6 @@ def test_run_command_truncates_context_and_keeps_raw_evidence(
     assert stdout_path.stat().st_size == 20000
 
 
-
 def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

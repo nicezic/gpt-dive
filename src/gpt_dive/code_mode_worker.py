@@ -25,9 +25,7 @@ def _emit(envelope: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-async def _run(
-    request: dict[str, Any], *, record: RuntimeRecord
-) -> Any:
+async def _run(request: dict[str, Any], *, record: RuntimeRecord) -> Any:
     if request.get("v") != CODE_MODE_WORKER_PROTOCOL:
         raise ValueError("unsupported Code Mode Worker request protocol version")
     code = request.get("code")
@@ -67,7 +65,14 @@ def main() -> None:
     try:
         output = asyncio.run(_run(request, record=record))
         try:
-            _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": output, "output": output})
+            _emit(
+                {
+                    "v": CODE_MODE_WORKER_PROTOCOL,
+                    "ok": True,
+                    "result": output,
+                    "output": output,
+                }
+            )
         except (TypeError, ValueError) as exc:
             _emit(
                 {

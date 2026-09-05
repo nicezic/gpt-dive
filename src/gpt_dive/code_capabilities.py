@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from pydantic_ai_harness import FileSystem
+from pydantic_ai_harness.filesystem._toolset import (
+    _RECOVERABLE_ERRORS,
+    ModelRetry,
+    _is_binary,
+)
 
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
@@ -82,11 +87,54 @@ def build_code_registry(
             return expanded.resolve()
         return (effective_cwd / expanded).resolve()
 
-    async def read_file(path: str, *, offset: int = 0, limit: int | None = None) -> str:
-        """Read a text file with line numbers. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        return await filesystem_toolset.read_file(
-            str(resolve_path(path)), offset=offset, limit=limit
-        )
+    async def read_file(
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+        line_numbers: bool = False,
+        raw: bool | None = None,
+    ) -> str:
+        """Read a text file. Returns exact raw text content by default.
+
+        Relative paths use cwd; host reads are allowed anywhere except credential/secret paths.
+        Set line_numbers=True (or raw=False) to include line numbers and metadata header for visual inspection.
+        """
+        show_line_numbers = line_numbers if raw is None else (not raw)
+        resolved_str = str(resolve_path(path))
+        if show_line_numbers:
+            return await filesystem_toolset.read_file(
+                resolved_str, offset=offset, limit=limit
+            )
+        try:
+            resolved = filesystem_toolset._safe_resolve(resolved_str)
+            if not resolved.is_file():
+                if resolved.is_dir():
+                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+                raise FileNotFoundError(f"File not found: {path}")
+
+            raw_bytes = resolved.read_bytes()
+            if _is_binary(raw_bytes):
+                size = len(raw_bytes)
+                return (
+                    f"[Binary file: {size} bytes. Use a binary-aware tool to inspect.]"
+                )
+
+            text = raw_bytes.decode("utf-8", errors="replace")
+            lines = text.splitlines(keepends=True)
+            if offset < 0:
+                raise ValueError(f"Offset {offset} must be non-negative.")
+            if offset > len(lines):
+                raise ValueError(
+                    f"Offset {offset} exceeds file length ({len(lines)} lines)."
+                )
+
+            max_lines = getattr(filesystem_toolset, "_max_read_lines", 2000)
+            capped_limit = max_lines if limit is None else max(limit, 0)
+            end = min(len(lines), offset + capped_limit)
+            return "".join(lines[offset:end])
+        except _RECOVERABLE_ERRORS as e:
+            raise ModelRetry(str(e)) from e
 
     async def list_directory(path: str = ".") -> str:
         """List a directory. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""

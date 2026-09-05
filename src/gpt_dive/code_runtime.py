@@ -58,7 +58,9 @@ class CapabilityDefinition:
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         bound = self.python_signature.bind(*args, **kwargs)
-        validated = self.function_schema.validator.validate_python(dict(bound.arguments))
+        validated = self.function_schema.validator.validate_python(
+            dict(bound.arguments)
+        )
         bound.arguments.clear()
         bound.arguments.update(validated)
         return tuple(bound.args), dict(bound.kwargs)
@@ -165,7 +167,9 @@ class CallableRegistry:
 
     def describe(self) -> dict[str, dict[str, str]]:
         """Return compact runtime metadata for capabilities available to Monty code."""
-        conflicting = FunctionSignature.get_conflicting_type_names(self._model_signatures())
+        conflicting = FunctionSignature.get_conflicting_type_names(
+            self._model_signatures()
+        )
         return {
             name: {
                 "signature": str(definition.python_signature),

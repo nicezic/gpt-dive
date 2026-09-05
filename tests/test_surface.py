@@ -198,9 +198,7 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
         "elapsed_seconds",
     }
     task_list = tool.output_schema["$defs"]["TaskListOutput"]
-    assert task_list["properties"]["tasks"]["items"]["$ref"].endswith(
-        "/TaskView"
-    )
+    assert task_list["properties"]["tasks"]["items"]["$ref"].endswith("/TaskView")
 
 
 def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
@@ -469,7 +467,9 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
     )
 
 
-def _projected_task(*, elapsed_seconds: int = 1, state: str = "running") -> dict[str, Any]:
+def _projected_task(
+    *, elapsed_seconds: int = 1, state: str = "running"
+) -> dict[str, Any]:
     return {
         "execution_id": "b" * 6,
         "label": "build",
@@ -483,7 +483,9 @@ def _projected_task(*, elapsed_seconds: int = 1, state: str = "running") -> dict
     }
 
 
-def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(monkeypatch) -> None:
+def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(
+    monkeypatch,
+) -> None:
     async def fake_wsl_exec(command: str, cwd: str | None = None) -> dict[str, Any]:
         assert command == "true"
         assert cwd is None
@@ -496,7 +498,9 @@ def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(monkeypatc
         }
 
     monkeypatch.setattr(app, "wsl_exec", fake_wsl_exec)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [_projected_task(elapsed_seconds=261)])
+    monkeypatch.setattr(
+        app, "_task_list", lambda *, limit=None: [_projected_task(elapsed_seconds=261)]
+    )
 
     result = asyncio.run(_call_tool("wsl_exec", {"command": "true"}))
 
@@ -540,7 +544,10 @@ def test_ordinary_result_always_projects_latest_snapshot(monkeypatch) -> None:
     dismissed = call()
 
     assert first.structured_content["tracked_tasks"][0]["elapsed_seconds"] == 1
-    assert unchanged.structured_content["tracked_tasks"] == first.structured_content["tracked_tasks"]
+    assert (
+        unchanged.structured_content["tracked_tasks"]
+        == first.structured_content["tracked_tasks"]
+    )
     assert elapsed.structured_content["tracked_tasks"][0]["elapsed_seconds"] == 90
     assert terminal.structured_content["tracked_tasks"][0]["state"] == "completed"
     assert "tracked_tasks" not in dismissed.structured_content
@@ -556,8 +563,12 @@ def test_projection_failure_does_not_masquerade_as_empty_snapshot(monkeypatch) -
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
     monkeypatch.setattr(app, "_task_list", fail_tasks)
 
-    with pytest.raises(Exception, match="task db unavailable"):
+    with pytest.raises(Exception) as exc_info:
         asyncio.run(_call_tool("code_mode", {"label": "shape", "code": "1"}))
+    assert "task db unavailable" in str(exc_info.value) or (
+        exc_info.value.__cause__ is not None
+        and "task db unavailable" in str(exc_info.value.__cause__)
+    )
 
 
 def _middleware_tool_result(text: str = "ok") -> CallToolResult:

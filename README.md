@@ -31,17 +31,30 @@ GPT Dive consumes official Pydantic AI. Subscription-backed `sol` / `terra` / `l
 **Update Policy**
 Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `README.patch.openai.provider.md`.
 
-## Documentation ownership
+## Documentation architecture & ownership
 
-- **AI-facing usage / capability lifecycle:** `~/wiki/workflow/pydantic-ai/README.md`
-- **Runtime architecture / operations:** `docs/runtime/architecture.md`, `docs/runtime/operations.md`
-- **MCP stdio diagnostics / journald:** `docs/runtime/mcp-stdio-lifecycle.md`
-- **GPT Dive Pydantic implementation:** `docs/pydantic/README.md`
-- **Code Mode implementation contract:** `docs/pydantic/code-mode.md`
-- **Provider integration:** `docs/pydantic/providers.md`
-- **Council:** `docs/council/README.md`
-- **Codex compatibility maintenance:** `README.patch.openai.provider.md`
-- **Current handoff:** `CONTINUATION.md`
+새 세션 작업이나 인수인계 시 아래 계층 구조와 읽기 경로를 따른다.
+
+```text
+[1. 세션 연결 / 현황]        CONTINUATION.md ── 최근 작업 delta 및 로컬 검증 상태
+                                   │
+                                   ▼
+[2. 현재 동작 SSOT]     docs/runtime/architecture.md  ── 런타임 수명 / 프로세스 경계
+                        docs/pydantic/code-mode.md    ── 15개 Capability 계약 / FS 경계
+                                   │
+                                   ▼
+[3. 설계 근거 / Why]    docs/runtime/adr/             ── 아키텍처 결정 기록 (ADR 0004 ~ 0011)
+```
+
+| 문서 역할 | 경로 | 소유 권위 |
+| :--- | :--- | :--- |
+| **인수인계 (SSOT)** | [`CONTINUATION.md`](CONTINUATION.md) | 현재 목표, 최근 변경 delta, 검증 통과 상태 |
+| **현재 아키텍처** | [`docs/runtime/architecture.md`](docs/runtime/architecture.md) | Durable Execution, 프로세스 격리, 파일시스템/명령 경계 |
+| **Capability 계약** | [`docs/pydantic/code-mode.md`](docs/pydantic/code-mode.md) | Outer catalog stubs, `read_file` raw 계약, 샌드박스 정책 |
+| **결정 기록 (ADR)** | [`docs/runtime/adr/`](docs/runtime/adr/) | 왜 그렇게 설계했는가 (ADR 0004~0011, 폐기 대안, 장애 계보) |
+| **운영 & 재시작** | [`docs/runtime/operations.md`](docs/runtime/operations.md) | Systemd 터널 서비스 관리, 지연 안전 재시작 절차 |
+| **Council** | [`docs/council/README.md`](docs/council/README.md) | 다자 협업 Room 아키텍처 및 Svelte 프론트엔드 |
+| **Codex 호환 계층** | [`README.patch.openai.provider.md`](README.patch.openai.provider.md) | Upstream 패치 경계 및 유지보수 SSOT |
 
 Registered Code Mode capability signatures and callable docstrings are model-visible live contracts exposed through `CAPABILITIES` inside `code_mode`; the public MCP schema owns the outer tool contract. `bootstrap` loads the configured Wiki preload packet, not capability signatures. When capability behavior changes, keep its signature and docstring concise and accurate; detailed AI usage/routing policy belongs in the Wiki rather than being duplicated here.
 

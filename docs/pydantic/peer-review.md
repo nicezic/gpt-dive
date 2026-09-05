@@ -64,7 +64,7 @@ peer final review text
 host local write peer_answer.md
 ```
 
-Local packet reads and answer writes add **zero provider round-trips**. Use direct `Path.read_text()` for raw packet transport; GPT Dive `read_file()` adds inspection metadata such as line numbers and must not be fed back as packet text.
+Local packet reads and answer writes add **zero provider round-trips**. Use `await read_file(...)` (raw by default per ADR 0011) or direct `Path.read_text()` for raw packet transport. Only use `read_file(..., line_numbers=True)` when formatted line-number inspection is explicitly required.
 
 For another round:
 

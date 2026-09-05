@@ -124,9 +124,7 @@ class ExecutionStore:
             }
             evidence_columns = {
                 str(row["name"])
-                for row in connection.execute(
-                    "PRAGMA table_info(run_command_evidence)"
-                )
+                for row in connection.execute("PRAGMA table_info(run_command_evidence)")
             }
             if evidence_columns == legacy_evidence_columns:
                 connection.execute(
@@ -169,9 +167,7 @@ class ExecutionStore:
                 )
                 """
             )
-            connection.execute(
-                "DELETE FROM executions WHERE length(execution_id) != 6"
-            )
+            connection.execute("DELETE FROM executions WHERE length(execution_id) != 6")
 
     @staticmethod
     def _record(row: sqlite3.Row) -> dict[str, Any]:

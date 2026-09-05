@@ -105,10 +105,13 @@ GPT Dive binds the upstream Harness FileSystem toolset and resolves relative pat
 READ / WRITE
 ├─ path allowed by OS permissions
 ├─ credential/secret deny pattern → reject
-└─ recursive root `/` or `/mnt/c` → search operation rejects as too broad
+├─ recursive root `/` or `/mnt/c` → search operation rejects as too broad
+└─ read_file contract (ADR 0011)
+   ├─ line_numbers=False (default) → pure raw text (safe for json.loads, AST, edit_file)
+   └─ line_numbers=True (raw=False) → inspection formatting with headers and line numbers
 ```
 
-Monty's direct `Path` operations use the same host-backed policy, so bypassing the registered FileSystem names does not bypass secret-path authorization. Harness optimistic `expected_hash` checks remain intact for writes and edits.
+Monty's direct `Path` operations use the same host-backed policy, so bypassing the registered FileSystem names does not bypass secret-path authorization. `read_file` returns raw file text by default (`line_numbers=False`), preventing impedance mismatches when passing read content to `json.loads` or `edit_file(old_text=...)`. Harness optimistic `expected_hash` checks remain intact for writes and edits.
 
 ## Direct command capability
 

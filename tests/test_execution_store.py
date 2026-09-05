@@ -124,7 +124,6 @@ def test_store_migrates_current_evidence_schema_without_dropping_rows(
 
 
 def test_execution_and_task_share_one_identity_but_not_one_lifecycle(
-
     tmp_path: Path,
 ) -> None:
     store = ExecutionStore(tmp_path / "runtime.sqlite3")

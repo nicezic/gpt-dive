@@ -197,9 +197,7 @@ def test_retention_deletes_durable_and_tmp_evidence(
         exit_code=0,
         duration_ms=1,
     )
-    run_directory = (
-        command_runtime_module._run_command_root() / execution_id / "1"
-    )
+    run_directory = command_runtime_module._run_command_root() / execution_id / "1"
     run_directory.mkdir(parents=True)
     (run_directory / "stdout").write_bytes(b"raw")
     manager.dismiss(execution_id)
@@ -223,11 +221,11 @@ def test_spawn_error_after_worker_claim_does_not_reclassify_or_delete_input(
 ) -> None:
     manager = popen_manager(tmp_path / "executions")
 
-    def claimed_then_error(command: list[str], *_args: object, **_kwargs: object) -> None:
+    def claimed_then_error(
+        command: list[str], *_args: object, **_kwargs: object
+    ) -> None:
         execution_id = next(
-            arg.split("=", 1)[1]
-            for arg in command
-            if arg.startswith("--execution=")
+            arg.split("=", 1)[1] for arg in command if arg.startswith("--execution=")
         )
         assert manager.store.claim(
             execution_id,
@@ -236,7 +234,9 @@ def test_spawn_error_after_worker_claim_does_not_reclassify_or_delete_input(
         )
         raise TimeoutError("ambiguous launcher response")
 
-    monkeypatch.setattr(execution_manager_module.subprocess, "Popen", claimed_then_error)
+    monkeypatch.setattr(
+        execution_manager_module.subprocess, "Popen", claimed_then_error
+    )
 
     started = manager.start(
         "true",
@@ -340,7 +340,10 @@ def test_execution_id_must_be_six_char_urlsafe(tmp_path: Path) -> None:
     started = manager.start("true", label="auto id")
     auto_id = str(started["execution_id"])
     assert len(auto_id) == 6
-    assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in auto_id)
+    assert all(
+        c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        for c in auto_id
+    )
 
     # Valid explicit 6-char ID
     explicit = manager.start("true", label="explicit id", execution_id="val_12")

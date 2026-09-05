@@ -87,7 +87,9 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
     assert all_views[0].elapsed_seconds == 0
 
     # Session-scoped projection only returns tasks published within that session
-    ctx1 = SimpleNamespace(session=SimpleNamespace(_connection=SimpleNamespace(state={})))
+    ctx1 = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
     app._record_session_task(ctx1, "e00001")
     app._record_session_task(ctx1, "e00003")
 
@@ -97,7 +99,9 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
     assert scoped_views[1].label == "task-3"
 
     # Other session with no published tasks gets empty projection
-    ctx2 = SimpleNamespace(session=SimpleNamespace(_connection=SimpleNamespace(state={})))
+    ctx2 = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
     empty_views = asyncio.run(app._tracked_tasks_snapshot(ctx2))
     assert empty_views == []
 

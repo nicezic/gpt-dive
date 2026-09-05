@@ -30,9 +30,7 @@ class RuntimeRecord(TypedDict):
     next_run_ordinal: int
 
 
-def runtime_record(
-    record: dict[str, Any], *, store: ExecutionStore
-) -> RuntimeRecord:
+def runtime_record(record: dict[str, Any], *, store: ExecutionStore) -> RuntimeRecord:
     """Project an Execution into the fields needed by child capabilities."""
     remaining = max(
         0.0,
@@ -115,6 +113,7 @@ def materialize_run_command_stream(
             handle.write(bytes(evidence[stream]))
     return path
 
+
 def _open_private_binary(path: Path) -> BinaryIO:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     return os.fdopen(descriptor, "wb")
@@ -125,8 +124,7 @@ def _sanitized_environment() -> dict[str, str]:
         key: value
         for key, value in os.environ.items()
         if not any(
-            fnmatch.fnmatchcase(key, pattern)
-            for pattern in DENIED_MODEL_ENV_PATTERNS
+            fnmatch.fnmatchcase(key, pattern) for pattern in DENIED_MODEL_ENV_PATTERNS
         )
     }
     guard_bin = Path(__file__).resolve().parent / "guard-bin"
@@ -214,13 +212,17 @@ def _read_shell_outputs(
         stdout_budget, stderr_budget = 0, _CONTEXT_CHARS
     stdout, stdout_context_truncated = _read_bounded_text(stdout_path, stdout_budget)
     stderr, stderr_context_truncated = _read_bounded_text(stderr_path, stderr_budget)
-    return stdout, stderr, any(
-        (
-            stdout_overflow,
-            stderr_overflow,
-            stdout_context_truncated,
-            stderr_context_truncated,
-        )
+    return (
+        stdout,
+        stderr,
+        any(
+            (
+                stdout_overflow,
+                stderr_overflow,
+                stdout_context_truncated,
+                stderr_context_truncated,
+            )
+        ),
     )
 
 
@@ -317,14 +319,14 @@ async def run_wsl_command(
             stderr_overflow,
             cancelled,
         ) = await _run_shell_process(
-                command,
-                cwd=run_cwd,
-                env=None,
-                timeout=timeout,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                log_label="WSL EXEC",
-            )
+            command,
+            cwd=run_cwd,
+            env=None,
+            timeout=timeout,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            log_label="WSL EXEC",
+        )
         stdout, stderr, truncated = _read_shell_outputs(
             stdout_path,
             stderr_path,
