@@ -29,6 +29,7 @@ EXPECTED_CAPABILITIES = {
     "repo_search",
     "council_emit",
     "run_command",
+    "gz64",
     "deadline_remaining",
 }
 
@@ -368,3 +369,24 @@ def test_repo_search_and_council_emit_use_explicit_capability_seams(
 
     assert search["path"] == str((tmp_path / "src").resolve())
     assert council["message"] == "round"
+
+
+def test_gz64_capability_round_trip(tmp_path: Path) -> None:
+    import base64
+    import gzip
+
+    registry = registry_for_test(tmp_path)
+    runtime = code_runtime
+    command = "echo 'gz64_verified'"
+    compressed = gzip.compress(command.encode("utf-8"))
+    payload = base64.b64encode(compressed).decode("utf-8")
+
+    result = asyncio.run(
+        runtime.run(
+            "res = await gz64(payload=PAYLOAD)\nres",
+            registry,
+            payload=payload,
+        )
+    )
+    assert result["exit_code"] == 0
+    assert result["stdout"].strip() == "gz64_verified"
