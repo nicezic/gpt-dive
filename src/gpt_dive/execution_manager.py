@@ -66,12 +66,18 @@ def _code_mode_error_result(
     *,
     code: str,
     message: str,
+    detail: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "kind": "error",
-        "execution_id": str(raw["execution_id"]),
+    err: dict[str, Any] = {
         "code": code,
         "message": message,
+    }
+    if detail:
+        err["detail"] = detail
+    return {
+        "status": "failed",
+        "execution_id": str(raw["execution_id"]),
+        "error": err,
     }
 
 
@@ -328,24 +334,26 @@ class ExecutionManager:
                         code="worker_protocol_error",
                         message="Code Mode Worker produced no valid result envelope.",
                     )
-                output = legacy["result"]
+                result = legacy["result"]
             else:
-                if "output" not in envelope:
+                if "result" not in envelope and "output" not in envelope:
                     return _code_mode_error_result(
                         payload,
                         code="worker_protocol_error",
                         message="Code Mode Worker produced no valid result envelope.",
                     )
-                output = envelope.get("output")
+                result = envelope.get("result", envelope.get("output"))
             return {
-                "kind": "completed",
+                "status": "completed",
                 "execution_id": str(payload["execution_id"]),
-                "output": output,
+                "result": result,
             }
 
         error = envelope.get("error")
+        detail = None
         if isinstance(error, dict):
             raw_code = str(error.get("code") or "")
+            detail = error.get("detail")
             if raw_code in _CODE_MODE_ERROR_MESSAGES:
                 code = raw_code
                 message = _CODE_MODE_ERROR_MESSAGES[raw_code]
@@ -355,7 +363,13 @@ class ExecutionManager:
         else:
             code = "worker_protocol_error"
             message = "Code Mode Worker exited without a valid error envelope."
-        return _code_mode_error_result(payload, code=code, message=message)
+
+        if not detail and payload.get("stderr"):
+            err_lines = [line.strip() for line in str(payload["stderr"]).splitlines() if line.strip()]
+            if err_lines:
+                detail = "\n".join(err_lines[-3:])
+
+        return _code_mode_error_result(payload, code=code, message=message, detail=detail)
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:

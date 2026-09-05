@@ -35,7 +35,7 @@ def test_wsl_exec_is_minimal_raw_shell(
     output_schema = tools["wsl_exec"].output_schema
     assert output_schema is not None
     assert output_schema["additionalProperties"] is True
-    assert output_schema["required"] == ["tracked_tasks"]
+    assert "tracked_tasks" not in output_schema.get("required", [])
     tracked = output_schema["$defs"]["TrackedTaskView"]
     assert set(tracked["properties"]) == {
         "execution_id",
@@ -77,7 +77,7 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert description is not None
     assert "always-durable" in description
     assert "bounded inline delivery" in description
-    assert "Task handle for the same continuing Execution" in description
+    assert "running status for the same continuing Execution" in description
     assert "class RunCommandResult(TypedDict)" in description
     assert "async def run_command(*, command: str) -> RunCommandResult:" in description
     schema = tool.input_schema
@@ -90,25 +90,40 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
 
     assert tool.output_schema is not None
     assert "result" not in tool.output_schema.get("properties", {})
-    assert tool.output_schema["discriminator"]["propertyName"] == "kind"
+    assert tool.output_schema["discriminator"]["propertyName"] == "status"
     mapping = tool.output_schema["discriminator"]["mapping"]
-    assert set(mapping) == {"completed", "task", "error"}
+    assert set(mapping) == {"completed", "running", "failed"}
     expected_fields = {
-        "completed": {"kind", "execution_id", "output", "tracked_tasks"},
-        "task": {"kind", "execution_id", "state", "tracked_tasks"},
-        "error": {
-            "kind",
+        "completed": {
+            "status",
             "execution_id",
-            "error_code",
-            "message",
+            "result",
             "tracked_tasks",
+            "tracked_tasks_guidance",
+        },
+        "running": {
+            "status",
+            "execution_id",
+            "state",
+            "elapsed_seconds",
+            "guidance",
+            "tracked_tasks",
+            "tracked_tasks_guidance",
+        },
+        "failed": {
+            "status",
+            "execution_id",
+            "error",
+            "guidance",
+            "tracked_tasks",
+            "tracked_tasks_guidance",
         },
     }
-    for kind, ref in mapping.items():
+    for status_name, ref in mapping.items():
         definition = tool.output_schema["$defs"][ref.rsplit("/", 1)[-1]]
         assert definition["additionalProperties"] is False
-        assert set(definition["properties"]) == expected_fields[kind]
-        assert "tracked_tasks" in definition["required"]
+        assert set(definition["properties"]) == expected_fields[status_name]
+        assert "tracked_tasks" not in definition.get("required", [])
     tracked = tool.output_schema["$defs"]["TrackedTaskView"]
     assert set(tracked["properties"]) == {
         "execution_id",
@@ -149,15 +164,22 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
     delivery = next(
         item for item in tool.output_schema["anyOf"] if "discriminator" in item
     )
-    assert delivery["discriminator"]["propertyName"] == "kind"
+    assert delivery["discriminator"]["propertyName"] == "status"
     assert set(delivery["discriminator"]["mapping"]) == {
         "completed",
-        "task",
-        "error",
+        "running",
+        "failed",
     }
-    task_shape = tool.output_schema["$defs"]["CodeModeTask"]
-    assert set(task_shape["properties"]) == {"kind", "execution_id", "state"}
-    assert "tracked_tasks" not in task_shape["properties"]
+    task_shape = tool.output_schema["$defs"]["CodeModeRunning"]
+    assert set(task_shape["properties"]) == {
+        "status",
+        "execution_id",
+        "state",
+        "elapsed_seconds",
+        "guidance",
+        "tracked_tasks",
+        "tracked_tasks_guidance",
+    }
     assert all(
         definition["additionalProperties"] is False
         for definition in schema["$defs"].values()
@@ -231,10 +253,10 @@ def test_model_visible_structured_content_has_no_outer_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
-        return app.CodeModeCompleted(execution_id="abc123", output={"answer": 42})
+        return app.CodeModeCompleted(execution_id="abc123", result={"answer": 42})
 
     async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
-        return app.CodeModeTask(execution_id="abc123", state="running")
+        return app.CodeModeRunning(execution_id="abc123", state="running")
 
     async def call(name: str, arguments: dict[str, Any]) -> CallToolResult:
         return await app.mcp._tool_manager.call_tool(
@@ -248,10 +270,9 @@ def test_model_visible_structured_content_has_no_outer_result(
     monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
     completed = asyncio.run(call("code_mode", {"label": "shape", "code": "1"}))
     assert completed.structured_content == {
-        "kind": "completed",
+        "status": "completed",
         "execution_id": "abc123",
-        "output": {"answer": 42},
-        "tracked_tasks": [],
+        "result": {"answer": 42},
     }
 
     monkeypatch.setattr(app, "task", fake_task)
@@ -259,9 +280,11 @@ def test_model_visible_structured_content_has_no_outer_result(
         call("task", {"request": {"action": "get", "execution_id": "abc123"}})
     )
     assert running.structured_content == {
-        "kind": "task",
+        "status": "running",
         "execution_id": "abc123",
         "state": "running",
+        "elapsed_seconds": 0,
+        "guidance": app._CODE_MODE_RUNNING_GUIDANCE,
     }
 
 
@@ -270,7 +293,7 @@ def test_code_mode_public_output_summarizes_run_command(
 ) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
         return app.CodeModeCompleted(
-            execution_id="abc123", output={"pytest": "2 passed"}
+            execution_id="abc123", result={"pytest": "2 passed"}
         )
 
     async def call() -> CallToolResult:
@@ -309,9 +332,9 @@ def test_code_mode_public_output_summarizes_run_command(
     result = asyncio.run(call())
 
     assert result.structured_content == {
-        "kind": "completed",
+        "status": "completed",
         "execution_id": "abc123",
-        "output": (
+        "result": (
             "id: abc123\n\n"
             "[0] 0, 2310 ms, 13 B\n"
             "[2] 2, 410 ms, 29 B, stderr ↓\n"
@@ -319,16 +342,15 @@ def test_code_mode_public_output_summarizes_run_command(
             "----\n"
             '{\n  "pytest": "2 passed"\n}'
         ),
-        "tracked_tasks": [],
     }
-    assert "hidden stdout" not in result.structured_content["output"]
+    assert "hidden stdout" not in result.structured_content["result"]
 
 
 def test_task_get_completed_uses_same_run_command_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
-        return app.CodeModeCompleted(execution_id="abc123", output="done")
+        return app.CodeModeCompleted(execution_id="abc123", result="done")
 
     async def call() -> CallToolResult:
         return await app.mcp._tool_manager.call_tool(
@@ -356,9 +378,9 @@ def test_task_get_completed_uses_same_run_command_output(
     result = asyncio.run(call())
 
     assert result.structured_content == {
-        "kind": "completed",
+        "status": "completed",
         "execution_id": "abc123",
-        "output": "id: abc123\n\n[0] 0, 95 ms, 0 B\n\n----\ndone",
+        "result": "id: abc123\n\n[0] 0, 95 ms, 0 B\n\n----\ndone",
     }
 
 
@@ -366,7 +388,7 @@ def test_code_mode_public_output_is_unchanged_without_run_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
-        return app.CodeModeCompleted(execution_id="abc123", output=42)
+        return app.CodeModeCompleted(execution_id="abc123", result=42)
 
     async def call() -> CallToolResult:
         return await app.mcp._tool_manager.call_tool(
@@ -385,10 +407,9 @@ def test_code_mode_public_output_is_unchanged_without_run_command(
     result = asyncio.run(call())
 
     assert result.structured_content == {
-        "kind": "completed",
+        "status": "completed",
         "execution_id": "abc123",
-        "output": 42,
-        "tracked_tasks": [],
+        "result": 42,
     }
 
 
@@ -494,12 +515,13 @@ def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(monkeypatc
                 "elapsed_seconds": 261,
             }
         ],
+        "tracked_tasks_guidance": app._TRACKED_TASKS_GUIDANCE,
     }
 
 
 def test_ordinary_result_always_projects_latest_snapshot(monkeypatch) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
-        return app.CodeModeCompleted(execution_id="abc123", output=42)
+        return app.CodeModeCompleted(execution_id="abc123", result=42)
 
     projected = [_projected_task()]
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
@@ -521,12 +543,12 @@ def test_ordinary_result_always_projects_latest_snapshot(monkeypatch) -> None:
     assert unchanged.structured_content["tracked_tasks"] == first.structured_content["tracked_tasks"]
     assert elapsed.structured_content["tracked_tasks"][0]["elapsed_seconds"] == 90
     assert terminal.structured_content["tracked_tasks"][0]["state"] == "completed"
-    assert dismissed.structured_content["tracked_tasks"] == []
+    assert "tracked_tasks" not in dismissed.structured_content
 
 
 def test_projection_failure_does_not_masquerade_as_empty_snapshot(monkeypatch) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
-        return app.CodeModeCompleted(execution_id="abc123", output=42)
+        return app.CodeModeCompleted(execution_id="abc123", result=42)
 
     def fail_tasks(*, limit=None):
         raise RuntimeError("task db unavailable")

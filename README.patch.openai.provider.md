@@ -59,6 +59,8 @@ Owns the ChatGPT Codex HTTP boundary:
 - request headers: bearer token, ChatGPT account ID, GPT Dive originator
 - a replayable 401 triggers one credential refresh and retry
 - generic `max_tokens`, `temperature`, and `top_p` settings are dropped through the official `openai_unsupported_model_settings` profile seam
+- model catalog: `GET /models?client_version=<value>`; parameter presence is required but no specific version is currently gated (`0.0.0|0.153.2|999.999.999` → same 8-model catalog); raw `{"models":[...]}` ≠ SDK `{"data":[...]}`
+- live 2026-09-05 (`originator=gpt-dive`): `gpt-6-astra`, `gpt-reserve`, `gpt-5.6-{sol,terra,luna}`, `gpt-5.5`, `gpt-5.4-mini`, `codex-auto-review`; Astra defaults to `low`, supports `low|medium|high|xhigh|max|ultra` (`ultra` auto-delegates), context `272k`, max `872k`
 
 ### `model.py`
 
@@ -115,7 +117,7 @@ GPT Dive does **not** carry the entire PR.
 
 ## Authentication operation
 
-Normal requests use the managed credential record in `~/.pydantic-ai/auth.json`. `OpenAICodexAuth` performs lazy load and request-time refresh; provider construction itself does not read credentials or start login work.
+Normal requests use the managed credential record in `~/.pydantic-ai/auth.json`. `OpenAICodexAuth` performs lazy load and request-time refresh; provider construction itself does not read credentials or start login work. Codex CLI login is a separate credential store and does not authenticate GPT Dive.
 
 When interactive re-authentication is required, use `OpenAICodexAuth.login_browser(...)` or `login_device(...)` from a narrowly scoped operator command and persist through the same managed store. Do not copy raw tokens into configuration, prompts, Wiki, logs, or test fixtures.
 

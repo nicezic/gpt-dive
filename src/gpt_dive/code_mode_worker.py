@@ -67,7 +67,7 @@ def main() -> None:
     try:
         output = asyncio.run(_run(request, record=record))
         try:
-            _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "output": output})
+            _emit({"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": output, "output": output})
         except (TypeError, ValueError) as exc:
             _emit(
                 {
@@ -76,6 +76,7 @@ def main() -> None:
                     "error": {
                         "code": "non_json_result",
                         "message": "Code Mode result is not strict JSON.",
+                        "detail": str(exc),
                     },
                 }
             )
@@ -84,6 +85,8 @@ def main() -> None:
         raise
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
+        lines = traceback.format_exception_only(type(exc), exc)
+        detail = "".join(lines).strip()
         _emit(
             {
                 "v": CODE_MODE_WORKER_PROTOCOL,
@@ -91,6 +94,7 @@ def main() -> None:
                 "error": {
                     "code": "execution_error",
                     "message": "Code Mode Execution failed.",
+                    "detail": detail,
                 },
             }
         )

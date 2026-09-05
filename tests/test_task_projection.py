@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
 import pytest
 
-from gpt_dive.app import render_tracked_tasks
+from gpt_dive import app
 from gpt_dive.execution_manager import ExecutionManager, ExecutionNotFoundError
 
 
@@ -38,7 +39,7 @@ def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
     started = manager.start(
         "printf TASK_OK",
         label="task result",
-        kind="conduit",
+        kind="test",
         publish=True,
     )
     execution_id = str(started["execution_id"])
@@ -57,27 +58,48 @@ def test_get_is_non_destructive_and_dismiss_only_removes_awareness(
         manager.task_with_result(execution_id)
 
 
-def test_tracked_tasks_is_bounded_and_uses_single_execution_id() -> None:
-    tasks = [
+def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    raw_tasks = [
         {
             "execution_id": f"e{index:05d}",
             "label": f"task-{index}",
             "state": "running",
             "reason": None,
-            "elapsed_seconds": index,
+            "accepted_at": "2026-09-06T00:00:00Z",
+            "finished_at": None,
+            "published_at": "2026-09-06T00:00:01Z",
+            "updated_at": "2026-09-06T00:00:02Z",
+            "elapsed_seconds": index * 10,
         }
-        for index in range(20)
+        for index in range(12)
     ]
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: raw_tasks[:limit])
 
-    rendered = render_tracked_tasks(tasks, limit=3, max_bytes=4096)
+    # Unscoped projection (no ctx) returns up to TRACKED_TASKS_LIMIT (8)
+    all_views = asyncio.run(app._tracked_tasks_snapshot())
+    assert len(all_views) == app.TRACKED_TASKS_LIMIT
+    assert all(isinstance(v, app.TrackedTaskView) for v in all_views)
+    assert all_views[0].execution_id == "e00000"
+    assert all_views[0].elapsed_seconds == 0
 
-    assert rendered.startswith("TrackedTasks\n")
-    assert rendered.splitlines()[1] == "task-0 · 🧵 running · 0:00 · e00000"
-    assert "task-0" in rendered and "task-2" in rendered
-    assert "task-3" not in rendered
-    assert "0:00" in rendered
-    assert "elapsed_seconds" not in rendered
-    assert "task_id" not in rendered
+    # Session-scoped projection only returns tasks published within that session
+    ctx1 = SimpleNamespace(session=SimpleNamespace(_connection=SimpleNamespace(state={})))
+    app._record_session_task(ctx1, "e00001")
+    app._record_session_task(ctx1, "e00003")
+
+    scoped_views = asyncio.run(app._tracked_tasks_snapshot(ctx1))
+    assert [v.execution_id for v in scoped_views] == ["e00001", "e00003"]
+    assert scoped_views[0].label == "task-1"
+    assert scoped_views[1].label == "task-3"
+
+    # Other session with no published tasks gets empty projection
+    ctx2 = SimpleNamespace(session=SimpleNamespace(_connection=SimpleNamespace(state={})))
+    empty_views = asyncio.run(app._tracked_tasks_snapshot(ctx2))
+    assert empty_views == []
 
 
 def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> None:

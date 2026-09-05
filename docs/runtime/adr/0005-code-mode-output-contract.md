@@ -1,7 +1,7 @@
 ---
 title: ADR - Code Mode Output Contract as a Local Reduction Boundary
 created: 2026-08-29
-updated: 2026-08-31
+updated: 2026-09-06
 type: decision
 status: accepted
 ---
@@ -60,20 +60,21 @@ Execution / Task
 요구사항은 다음과 같다.
 
 - model-visible metadata는 **엄청 간소화**한다. 정상 경로의 판단에 필요하지 않은 label, backend, pid, timestamp, elapsed 같은 정보는 싣지 않는다.
-- `execution_id`는 남긴다. 최종 `output`이 원하는 결과가 아니거나 이상할 때 retained result/raw artifact를 다시 조회할 수 있는 recovery/debug handle이기 때문이다.
-- `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. **모델이 실제로 받는 MCP structured output의 최상위도 outcome object 자체여야 하며**, SDK/host projection이 의미 없는 `{"result": ...}` 한 겹을 자동 추가하는 경우에도 이를 정상 contract로 승인하지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
+- `execution_id`는 남긴다. 최종 `result`가 원하는 결과가 아니거나 이상할 때 retained result/raw artifact를 다시 조회할 수 있는 recovery/debug handle이기 때문이다.
+- `result.result.result` 같은 JSON nesting과 의미가 겹치는 wrapper를 만들지 않는다. **모델이 실제로 받는 MCP structured output의 최상위도 output object 자체여야 하며**, SDK/host projection이 의미 없는 `{"result": ...}` 한 겹을 자동 추가하는 경우에도 이를 정상 contract로 승인하지 않는다. LLM이 실제 결과까지 도달하기 위해 불필요한 경로를 추론하게 하지 않는다.
 - 짧은 이름보다 **일관되고 명시적인 vocabulary**를 우선한다. `id` 대신 모든 runtime surface에서 `execution_id`를 사용한다.
-- 사람이 보기에는 다소 중복처럼 보여도 `kind`는 유지한다. 명시적 discriminator는 LLM이 결과 shape를 추론하지 않고 바로 분기하게 해 오류 가능성을 낮춘다.
+- Discriminator는 상태를 명확히 표현하는 **`status` (`"completed" | "running" | "failed"`)**를 사용한다. 과거의 `kind: "completed" | "task" | "error"`는 상태(형용사)와 도구/행위 명사(task)를 뒤섞어 모델 혼란을 유발했으므로, Greenfield 재설계를 통해 상태를 온전히 표현하는 `status`로 통일했다.
+- 성공 결과는 **`result`**, 실패 정보는 **`error: {code, message, detail}`**, 백그라운드 진행 및 오류 시의 행동 요령은 **`guidance`**로 명시한다.
 - machine contract에 별도 emoji delimiter/text framing protocol을 만들지 않는다. 눈에 잘 띄는 `🔵🟢🟣 ... 🟣🟢🔵` 같은 표식은 debug/presentation layer에서는 쓸 수 있지만, runtime parser가 알아야 하는 두 번째 protocol로 만들지 않는다.
-- 최종 `output`의 내부 형식은 Monty program이 목적에 맞게 string/list/dict 등으로 조립한다. Runtime은 그 값을 다시 해석하거나 장식하지 않는다.
+- 최종 `result`의 내부 형식은 Monty program이 목적에 맞게 string/list/dict 등으로 조립한다. Runtime은 그 값을 다시 해석하거나 장식하지 않는다.
 
 이를 한 문장으로 요약하면:
 
 ```text
-one discriminator
-+ one identifier vocabulary
-+ one output vocabulary
-+ minimum metadata
+one discriminator (status: completed | running | failed)
++ one identifier vocabulary (execution_id)
++ one result vocabulary (result vs error)
++ minimum metadata (omit empty tracked_tasks)
 + no duplicate semantic wrappers
 ```
 
@@ -317,9 +318,9 @@ Monty가 list를 조립하면 그대로 list다.
 
 ```json
 {
-  "kind": "completed",
+  "status": "completed",
   "execution_id": "abc123",
-  "output": [
+  "result": [
     "=== a ===",
     {"value": 123},
     "=== b ==="
@@ -327,41 +328,47 @@ Monty가 list를 조립하면 그대로 list다.
 }
 ```
 
-#### Task
+#### Running (구 Task)
 
 ```json
 {
-  "kind": "task",
+  "status": "running",
   "execution_id": "abc123",
-  "state": "running"
+  "state": "running",
+  "elapsed_seconds": 15,
+  "guidance": "Execution continues in background. Use task(action='get', execution_id=...) to inspect status or retrieve result."
 }
 ```
 
-`kind`가 lifecycle-aware outcome임을 명시하고, `state`는 현재 Execution 상태만 말한다. 정상 task outcome에 backend/pid/timestamp/elapsed 같은 진단 metadata를 싣지 않는다.
+`status: "running"`이 진행 중인 실행임을 명시하며, 모델이 background 실행을 인지하고 즉시 `task(action='get')`으로 후속 조치할 수 있도록 구체적 `guidance`를 제공한다.
 
-#### Error
+#### Failed (구 Error)
 
 ```json
 {
-  "kind": "error",
+  "status": "failed",
   "execution_id": "abc123",
-  "code": "runtime_error",
-  "message": "Monty execution failed."
+  "error": {
+    "code": "runtime_error",
+    "message": "Monty execution failed.",
+    "detail": "ZeroDivisionError: division by zero"
+  },
+  "guidance": "DO NOT invent fallbacks or assume tools are broken. Follow ~/wiki/ERROR_CASE.md..."
 }
 ```
 
-정상 error surface는 원인 분류와 사람이/모델이 이해할 message까지만 제공한다. 더 깊은 traceback, cleanup detail, retained raw evidence는 `execution_id`를 통해 필요할 때 조회한다.
+정상 error surface는 `error: {code, message, detail}` 객체로 일원화되어 원인 분류와 구체적 오류 증거(`detail`), 그리고 규정된 디버그 지침(`guidance`)을 제공한다. 더 깊은 raw evidence는 `execution_id`를 통해 필요할 때 조회한다.
 
-`label`은 completed/error primary outcome에서 제거한다. 호출 직전에 이미 알고 있는 정보를 반복하기 때문이다. 여러 Execution을 구분해야 하는 automatic `tracked_tasks`와 `task(list)` awareness surface에서는 label이 여전히 가치가 있으므로 유지한다.
+`label`은 completed/failed primary outcome에서 제거한다. 호출 직전에 이미 알고 있는 정보를 반복하기 때문이다. 여러 Execution을 구분해야 하는 automatic `tracked_tasks`와 `task(list)` awareness surface에서는 label이 여전히 가치가 있으므로 유지한다.
 
-이 public contract에서 **모델이 실제로 받는 structured output 자체가 outcome object 한 겹**이어야 한다. 따라서 다음 shape는 contract 위반이다.
+이 public contract에서 **모델이 실제로 받는 structured output 자체가 output object 한 겹**이어야 한다. 따라서 다음 shape는 contract 위반이다.
 
 ```json
 {
   "result": {
-    "kind": "completed",
+    "status": "completed",
     "execution_id": "abc123",
-    "output": 42
+    "result": 42
   }
 }
 ```

@@ -16,9 +16,17 @@ from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
-from pydantic import BaseModel, ConfigDict, Field, RootModel, TypeAdapter
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    TypeAdapter,
+    model_serializer,
+)
 
 from .code_capabilities import code_mode_capability_catalog
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
@@ -35,52 +43,6 @@ TRACKED_TASKS_LIMIT = 8
 TRACKED_TASKS_MAX_BYTES = 4096
 _RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
 _CODE_MODE_CAPABILITY_CATALOG = code_mode_capability_catalog()
-
-_TASK_STATE_MARKERS = {
-    "accepted": "◌",
-    "running": "🧵",
-    "completed": "✅",
-    "failed": "❌",
-    "cancelled": "⛔",
-    "lost": "⚠️",
-}
-
-
-def format_task_elapsed(seconds: int) -> str:
-    if seconds < 3600:
-        minutes, secs = divmod(seconds, 60)
-        return f"{minutes}:{secs:02d}"
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}"
-
-
-def render_tracked_tasks(
-    tasks: list[dict[str, Any]],
-    *,
-    limit: int = TRACKED_TASKS_LIMIT,
-    max_bytes: int = TRACKED_TASKS_MAX_BYTES,
-) -> str:
-    lines = ["TrackedTasks"]
-    for task in tasks[:limit]:
-        state = str(task["state"])
-        marker = _TASK_STATE_MARKERS.get(state, "•")
-        parts = [
-            str(task["label"]),
-            f"{marker} {state}",
-            format_task_elapsed(int(task["elapsed_seconds"])),
-            str(task["execution_id"]),
-        ]
-        reason = str(task.get("reason") or "").strip()
-        if reason:
-            parts.append(reason)
-        candidate = "\n".join([*lines, " · ".join(parts)])
-        if len(candidate.encode()) > max_bytes:
-            lines.append("…")
-            break
-        lines.append(" · ".join(parts))
-    return "\n".join(lines)
-
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
 # the base before tool registration makes both validation and advertised schemas strict.
@@ -401,16 +363,16 @@ def _processed_output_text(output: Any) -> str:
     return json.dumps(output, ensure_ascii=False, indent=2)
 
 
-def _render_code_mode_completed_output(execution_id: str, output: Any) -> Any:
+def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
     try:
         evidence_rows = executions.store.list_run_command_evidence(execution_id)
     except (KeyError, sqlite3.Error):
-        return output
+        return result
     if not evidence_rows or any(
         row.get("exit_code") is None or row.get("duration_ms") is None
         for row in evidence_rows
     ):
-        return output
+        return result
 
     lines = [f"id: {execution_id}", ""]
     for row in evidence_rows:
@@ -425,8 +387,11 @@ def _render_code_mode_completed_output(execution_id: str, output: Any) -> Any:
             lines.extend([line + ", stderr ↓", _bounded_stderr_preview(stderr)])
         else:
             lines.append(line)
-    lines.extend(["", "----", _processed_output_text(output)])
+    lines.extend(["", "----", _processed_output_text(result)])
     return "\n".join(lines)
+
+
+_render_code_mode_completed_output = _render_code_mode_completed_result
 
 
 async def _periodic_reminder_middleware(
@@ -628,9 +593,10 @@ async def _wait_for_execution(
         return await asyncio.to_thread(_code_mode_execution_result, execution_id)
     task = await _publish_accepted_task(executions, execution_id)
     return {
-        "kind": "task",
+        "status": "running",
         "execution_id": execution_id,
         "state": task["state"],
+        "elapsed_seconds": task.get("elapsed_seconds", 0),
     }
 
 
@@ -642,24 +608,16 @@ ExecutionState = Literal[
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-
-class CodeModeCompleted(_ClosedModel):
-    kind: Literal["completed"] = "completed"
-    execution_id: str
-    output: Any
-
-
-class CodeModeTask(_ClosedModel):
-    kind: Literal["task"] = "task"
-    execution_id: str
-    state: ExecutionState
-
-
-class CodeModeError(_ClosedModel):
-    kind: Literal["error"] = "error"
-    execution_id: str
-    error_code: str
-    message: str
+    @model_serializer(mode="wrap")
+    def _serialize_omit_none(self, handler: Any) -> Any:
+        dump = handler(self)
+        if isinstance(dump, dict):
+            return {
+                k: v
+                for k, v in dump.items()
+                if not (k in {"tracked_tasks", "tracked_tasks_guidance"} and v is None)
+            }
+        return dump
 
 
 class TrackedTaskView(_ClosedModel):
@@ -670,55 +628,190 @@ class TrackedTaskView(_ClosedModel):
     elapsed_seconds: int
 
 
-CodeModeOutcome = Annotated[
-    CodeModeCompleted | CodeModeTask | CodeModeError,
-    Field(discriminator="kind"),
+_TRACKED_TASKS_GUIDANCE = (
+    "Background tasks are active. "
+    "Call task(action='get', execution_id=...) to inspect progress or retrieve results."
+)
+
+
+class CodeModeCompleted(_ClosedModel):
+    status: Literal["completed"] = "completed"
+    execution_id: str
+    result: Any
+    tracked_tasks: list[TrackedTaskView] | None = None
+    tracked_tasks_guidance: str | None = None
+
+
+_CODE_MODE_RUNNING_GUIDANCE = (
+    "Execution continues in background. "
+    "Use task(action='get', execution_id=...) to inspect status or retrieve result."
+)
+
+
+class CodeModeRunning(_ClosedModel):
+    status: Literal["running"] = "running"
+    execution_id: str
+    state: ExecutionState = "running"
+    elapsed_seconds: int = 0
+    guidance: str = _CODE_MODE_RUNNING_GUIDANCE
+    tracked_tasks: list[TrackedTaskView] | None = None
+    tracked_tasks_guidance: str | None = None
+
+
+_CODE_MODE_ERROR_GUIDANCE = (
+    "DO NOT invent fallbacks or assume tools are broken. "
+    "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [BUG PREVIEW], "
+    "inspect error detail and live contract, and retry only a corrected call on the canonical path."
+)
+
+
+class CodeModeErrorDetails(_ClosedModel):
+    code: str
+    message: str
+    detail: str | None = None
+
+
+class CodeModeFailed(_ClosedModel):
+    status: Literal["failed"] = "failed"
+    execution_id: str
+    error: CodeModeErrorDetails
+    guidance: str = _CODE_MODE_ERROR_GUIDANCE
+    tracked_tasks: list[TrackedTaskView] | None = None
+    tracked_tasks_guidance: str | None = None
+
+
+CodeModeOutput = Annotated[
+    CodeModeCompleted | CodeModeRunning | CodeModeFailed,
+    Field(discriminator="status"),
 ]
 
-
-class CodeModeCompletedWithTrackedTasks(CodeModeCompleted):
-    tracked_tasks: list[TrackedTaskView]
-
-
-class CodeModeTaskWithTrackedTasks(CodeModeTask):
-    tracked_tasks: list[TrackedTaskView]
+# Backward compatibility aliases
+CodeModeTask = CodeModeRunning
+CodeModeError = CodeModeFailed
+CodeModeOutcome = CodeModeOutput
+CodeModeWorkOutcome = CodeModeOutput
 
 
-class CodeModeErrorWithTrackedTasks(CodeModeError):
-    tracked_tasks: list[TrackedTaskView]
-
-
-CodeModeWorkOutcome = Annotated[
-    CodeModeCompletedWithTrackedTasks
-    | CodeModeTaskWithTrackedTasks
-    | CodeModeErrorWithTrackedTasks,
-    Field(discriminator="kind"),
-]
-
-
-class _CodeModeWorkPublicOutcome(RootModel[CodeModeWorkOutcome]):
+class _CodeModePublicOutput(RootModel[CodeModeOutput]):
     pass
 
 
 class WslExecWorkOutput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    tracked_tasks: list[TrackedTaskView]
+    tracked_tasks: list[TrackedTaskView] | None = None
+    tracked_tasks_guidance: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_omit_none(self, handler: Any) -> Any:
+        dump = handler(self)
+        if isinstance(dump, dict):
+            return {
+                k: v
+                for k, v in dump.items()
+                if not (k in {"tracked_tasks", "tracked_tasks_guidance"} and v is None)
+            }
+        return dump
 
 
-_CODE_MODE_OUTCOME_ADAPTER = TypeAdapter(CodeModeOutcome)
-_CODE_MODE_WORK_OUTCOME_ADAPTER = TypeAdapter(CodeModeWorkOutcome)
+_CODE_MODE_OUTPUT_ADAPTER = TypeAdapter(CodeModeOutput)
+_CODE_MODE_OUTCOME_ADAPTER = _CODE_MODE_OUTPUT_ADAPTER
+_CODE_MODE_WORK_OUTCOME_ADAPTER = _CODE_MODE_OUTPUT_ADAPTER
 
 
-def _code_mode_outcome(value: dict[str, Any]) -> CodeModeOutcome:
-    if value.get("kind") == "error" and "code" in value:
-        value = {**value, "error_code": value["code"]}
-        value.pop("code")
-    return _CODE_MODE_OUTCOME_ADAPTER.validate_python(value)
+def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
+    payload = dict(value)
+    if "status" not in payload and "kind" in payload:
+        kind = payload.pop("kind")
+        if kind == "error":
+            payload["status"] = "failed"
+        elif kind == "task":
+            payload["status"] = "running"
+        elif kind == "completed":
+            payload["status"] = "completed"
+
+    if payload.get("status") == "failed":
+        if "error" not in payload:
+            err = {
+                "code": payload.pop("error_code", payload.pop("code", "execution_error")),
+                "message": payload.pop("message", "Code Mode Execution failed."),
+            }
+            if "detail" in payload:
+                err["detail"] = payload.pop("detail")
+            payload["error"] = err
+        if "guidance" not in payload:
+            payload["guidance"] = _CODE_MODE_ERROR_GUIDANCE
+
+    if payload.get("status") == "completed":
+        if "result" not in payload and "output" in payload:
+            payload["result"] = payload.pop("output")
+
+    if payload.get("status") == "running":
+        if "guidance" not in payload:
+            payload["guidance"] = _CODE_MODE_RUNNING_GUIDANCE
+
+    return _CODE_MODE_OUTPUT_ADAPTER.validate_python(payload)
 
 
-async def _tracked_tasks_snapshot() -> list[TrackedTaskView]:
+_code_mode_outcome = _code_mode_output
+
+
+_SESSION_TASKS_STATE_KEY = "published_task_ids"
+
+
+def _session_state(
+    ctx: Context | ServerRequestContext[Any, Any] | None,
+) -> dict[str, Any] | None:
+    if ctx is None:
+        return None
+    session = getattr(ctx, "session", None)
+    if session is None and hasattr(ctx, "request_context"):
+        session = getattr(ctx.request_context, "session", None)
+    if session is None:
+        return None
+    connection = getattr(session, "_connection", None)
+    state = getattr(connection, "state", None)
+    if isinstance(state, dict):
+        return state
+    return None
+
+
+def _session_published_task_ids(
+    ctx: Context | ServerRequestContext[Any, Any] | None,
+) -> set[str] | None:
+    state = _session_state(ctx)
+    if state is None:
+        return None
+    ids = state.get(_SESSION_TASKS_STATE_KEY)
+    if not isinstance(ids, set):
+        ids = set()
+        state[_SESSION_TASKS_STATE_KEY] = ids
+    return ids
+
+
+def _record_session_task(
+    ctx: Context | ServerRequestContext[Any, Any] | None, execution_id: str
+) -> None:
+    task_ids = _session_published_task_ids(ctx)
+    if task_ids is not None:
+        task_ids.add(execution_id)
+
+
+def _discard_session_task(
+    ctx: Context | ServerRequestContext[Any, Any] | None, execution_id: str
+) -> None:
+    task_ids = _session_published_task_ids(ctx)
+    if task_ids is not None:
+        task_ids.discard(execution_id)
+
+
+async def _tracked_tasks_snapshot(
+    ctx: Context | ServerRequestContext[Any, Any] | None = None,
+) -> list[TrackedTaskView]:
     rows = await asyncio.to_thread(_task_list, limit=TRACKED_TASKS_LIMIT)
+    session_ids = _session_published_task_ids(ctx)
+    if session_ids is not None:
+        rows = [row for row in rows if str(row.get("execution_id")) in session_ids]
     return [
         TrackedTaskView.model_validate(
             {
@@ -734,10 +827,15 @@ async def _tracked_tasks_snapshot() -> list[TrackedTaskView]:
 
 
 def _code_mode_work_outcome(
-    primary: CodeModeOutcome, tracked_tasks: list[TrackedTaskView]
-) -> CodeModeWorkOutcome:
-    return _CODE_MODE_WORK_OUTCOME_ADAPTER.validate_python(
-        {**primary.model_dump(), "tracked_tasks": tracked_tasks}
+    primary: CodeModeOutput, tracked_tasks: list[TrackedTaskView]
+) -> CodeModeOutput:
+    if not tracked_tasks:
+        return primary
+    return primary.model_copy(
+        update={
+            "tracked_tasks": tracked_tasks,
+            "tracked_tasks_guidance": _TRACKED_TASKS_GUIDANCE,
+        }
     )
 
 
@@ -746,11 +844,12 @@ def _code_mode_error(
     *,
     code: str,
     message: str,
-) -> CodeModeError:
-    return CodeModeError(
+    detail: str | None = None,
+) -> CodeModeFailed:
+    return CodeModeFailed(
         execution_id=execution_id,
-        error_code=code,
-        message=message,
+        error=CodeModeErrorDetails(code=code, message=message, detail=detail),
+        guidance=_CODE_MODE_ERROR_GUIDANCE,
     )
 
 
@@ -759,7 +858,7 @@ async def _code_mode_launch_error(
     exc: Exception,
     *,
     response_deadline: float,
-) -> CodeModeError:
+) -> CodeModeFailed:
     remaining = response_deadline - time.monotonic()
     if remaining <= 0:
         raise exc from None
@@ -778,6 +877,7 @@ async def _code_mode_launch_error(
         execution_id,
         code="launch_interrupted",
         message="Code Mode Worker could not be launched.",
+        detail=str(exc),
     )
 
 
@@ -787,9 +887,11 @@ async def code_mode(
     code: str,
     payload: str | None = None,
     cwd: str | None = None,
-    mode: Literal["auto", "task"] = "auto",
-) -> CodeModeOutcome:
+    delivery: Literal["auto", "task"] | None = None,
+    mode: Literal["auto", "task"] | None = None,
+) -> CodeModeOutput:
     """Launch one always-durable Code Mode Execution."""
+    chosen_delivery = delivery or mode or "auto"
     clean_label = label.strip()
     if not clean_label:
         raise ValueError("label must not be empty")
@@ -810,11 +912,11 @@ async def code_mode(
             code=code,
             cwd=cwd,
             payload=payload,
-            publish=mode == "task",
+            publish=chosen_delivery == "task",
         )
     )
 
-    if mode == "task":
+    if chosen_delivery == "task":
         try:
             task = await _wait_for_acceptance(
                 executions,
@@ -833,9 +935,10 @@ async def code_mode(
                 response_deadline=response_deadline,
             )
         _spawn_followup(_observe_launch(launch_task))
-        return CodeModeTask(
+        return CodeModeRunning(
             execution_id=execution_id,
             state=task["state"],
+            elapsed_seconds=task.get("elapsed_seconds", 0),
         )
 
     try:
@@ -924,9 +1027,10 @@ async def code_mode(
                     message="Task publication failed.",
                 )
             _spawn_followup(_observe_launch(launch_task))
-            return CodeModeTask(
+            return CodeModeRunning(
                 execution_id=execution_id,
                 state=task["state"],
+                elapsed_seconds=task.get("elapsed_seconds", 0),
             )
     except Exception as exc:
         return await _code_mode_launch_error(
@@ -955,7 +1059,7 @@ async def code_mode(
                 "finish before the response deadline."
             ),
         )
-    return _code_mode_outcome(raw)
+    return _code_mode_output(raw)
 
 
 async def wsl_exec(command: str, cwd: str | None = None) -> dict[str, Any]:
@@ -986,12 +1090,15 @@ async def _mcp_wsl_exec(
         str | None,
         Field(description="Optional WSL2 working directory."),
     ] = None,
+    ctx: Context | None = None,
 ) -> WslExecWorkOutput:
     primary = await wsl_exec(command, cwd=cwd)
-    tracked_tasks = await _tracked_tasks_snapshot()
-    return WslExecWorkOutput.model_validate(
-        {**primary, "tracked_tasks": tracked_tasks}
-    )
+    tracked_tasks = await _tracked_tasks_snapshot(ctx=ctx)
+    res_dict = dict(primary)
+    if tracked_tasks:
+        res_dict["tracked_tasks"] = tracked_tasks
+        res_dict["tracked_tasks_guidance"] = _TRACKED_TASKS_GUIDANCE
+    return WslExecWorkOutput.model_validate(res_dict)
 
 
 @mcp.tool(
@@ -1000,7 +1107,7 @@ async def _mcp_wsl_exec(
     description=(
         "Launch one always-durable Pydantic Monty Execution. label and code are required. "
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
-        "a Task handle for the same continuing Execution; delivery='task' publishes that Task "
+        "a running status for the same continuing Execution; delivery='task' publishes that Task "
         "immediately. Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
         "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "
@@ -1051,26 +1158,35 @@ async def _mcp_code_mode(
             )
         ),
     ] = "auto",
-) -> _CodeModeWorkPublicOutcome:
+    ctx: Context | None = None,
+) -> _CodeModePublicOutput:
     primary = await code_mode(
         label=label,
         code=code,
         cwd=cwd,
         payload=payload,
-        mode=delivery,
+        delivery=delivery,
     )
+    if isinstance(primary, CodeModeRunning):
+        _record_session_task(ctx, primary.execution_id)
+
     if isinstance(primary, CodeModeCompleted):
         primary = primary.model_copy(
             update={
-                "output": _render_code_mode_completed_output(
-                    primary.execution_id, primary.output
+                "result": _render_code_mode_completed_result(
+                    primary.execution_id, primary.result
                 )
             }
         )
-    tracked_tasks = await _tracked_tasks_snapshot()
-    return _CodeModeWorkPublicOutcome(
-        root=_code_mode_work_outcome(primary, tracked_tasks)
-    )
+    tracked_tasks = await _tracked_tasks_snapshot(ctx=ctx)
+    if tracked_tasks:
+        primary = primary.model_copy(
+            update={
+                "tracked_tasks": tracked_tasks,
+                "tracked_tasks_guidance": _TRACKED_TASKS_GUIDANCE,
+            }
+        )
+    return _CodeModePublicOutput(root=primary)
 
 
 class TaskListRequest(_ClosedModel):
@@ -1146,16 +1262,17 @@ async def task(request: TaskRequest) -> TaskOutcome:
     if isinstance(request, TaskGetRequest):
         result = await asyncio.to_thread(_task_get, request.execution_id)
         if bool(result["ready"]):
-            return _code_mode_outcome(result["result"])
+            return _code_mode_output(result["result"])
         if bool(result.get("unavailable", False)):
             terminal = await asyncio.to_thread(
                 _code_mode_execution_result, request.execution_id
             )
-            return _code_mode_outcome(terminal)
+            return _code_mode_output(terminal)
         task_view = result["task"]
-        return CodeModeTask(
+        return CodeModeRunning(
             execution_id=str(task_view["execution_id"]),
             state=task_view["state"],
+            elapsed_seconds=task_view.get("elapsed_seconds", 0),
         )
     if isinstance(request, TaskCancelRequest):
         result = await asyncio.to_thread(_task_cancel, request.execution_id)
@@ -1173,13 +1290,19 @@ async def task(request: TaskRequest) -> TaskOutcome:
         "running work, and dismiss removes terminal awareness without deleting retention."
     ),
 )
-async def _mcp_task(request: TaskRequest) -> _TaskPublicOutcome:
+async def _mcp_task(
+    request: TaskRequest, ctx: Context | None = None
+) -> _TaskPublicOutcome:
     outcome = await task(request)
+    if isinstance(request, TaskDismissRequest):
+        if isinstance(outcome, TaskDismissOutput) and outcome.dismissed:
+            _discard_session_task(ctx, request.execution_id)
+
     if isinstance(outcome, CodeModeCompleted):
         outcome = outcome.model_copy(
             update={
-                "output": _render_code_mode_completed_output(
-                    outcome.execution_id, outcome.output
+                "result": _render_code_mode_completed_result(
+                    outcome.execution_id, outcome.result
                 )
             }
         )

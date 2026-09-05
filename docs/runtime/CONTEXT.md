@@ -76,6 +76,16 @@ _피할 표현_: 작업 자체를 가리키는 foreground execution.
 
 _피할 표현_: Job list; Execution list; Web-facing projection을 Task store 또는 registry라고 부르는 것.
 
+### CodeModeOutput
+
+**CodeModeOutput**은 Code Mode 실행 및 Task 조회(`task(get)`)가 반환하는 단일화된 공개 출력 계약이다. Discriminator는 실행 상태를 가리키는 **`status`**다.
+
+- `status="completed"`: 실행 완료. `result`에 최종 프로그램 결과 전달.
+- `status="running"`: 백그라운드 진행 중. `state="running"`, `elapsed_seconds`, 그리고 `task(get)`을 안내하는 `guidance` 제공.
+- `status="failed"`: 실행 실패. `error: {code, message, detail}`과 `guidance` 제공.
+
+현재 세션에 active한 백그라운드 Task가 있을 때만 `tracked_tasks` 및 `tracked_tasks_guidance`가 포함되며, 없으면 필드 자체가 생략된다.
+
 ### Lost
 
 **Lost**는 실행이 시작된 뒤 Runtime이 backing Worker나 retained result를 더는 진실하게 관찰할 수 없다는 terminal Execution state다. Lost 작업은 재구성·추측·replay·retry하지 않는다.

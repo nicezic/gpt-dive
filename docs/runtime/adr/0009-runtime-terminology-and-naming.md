@@ -1,7 +1,7 @@
 ---
 title: ADR - Runtime Terminology and Naming
 created: 2026-08-30
-updated: 2026-09-01
+updated: 2026-09-06
 type: decision
 status: accepted
 ---
@@ -15,12 +15,11 @@ status: accepted
 | 현재 | 결정 | 이유 |
 |---|---|---|
 | `mode` | **`delivery`** | `auto/task`는 Execution 종류가 아니라 결과 전달/Task publication 선택이다. |
-| `kind` | **유지** | 실제 response discriminator다. Codex도 `kind`와 execution `outcome`을 서로 다른 개념으로 사용한다. |
-| error `code` | **`error_code`** | Monty source `code`와 충돌을 없애고 structured error 의미를 명시한다. |
+| `kind` | **`status`로 전환** | `completed`(상태)/`error`(상태)와 `task`(도구/명사)가 뒤섞인 카테고리 오류를 해결하고 실행 상태로 일원화 (`completed` / `running` / `failed`). |
+| `output` | **`result`** | Monty의 최종 평가 표현식이자 성공 결과를 의미하는 canonical result vocabulary. |
+| error `code` | **`error` 객체로 일원화** | `error: {code, message, detail}`로 계층화하여 top-level namespace 충돌을 방지하고 실패 원인과 디버그 증거를 함께 제공. |
 | Monty print/progress | **`console`** | subprocess `stdout`/`stderr`와 분리하는 canonical term으로 쓴다. 새 output field를 뜻하지 않는다. |
 | future recovery capability | **`run_command_evidence`** | ADR 0008의 범위는 Execution 전체가 아니라 각 `run_command`의 bounded stdout/stderr다. |
-
-`result`, `status`, `output` 등은 실제 public ambiguity가 확인된 경우에만 개별 변경한다. repo 전체 rename은 하지 않는다.
 
 ## Public contract
 
@@ -30,19 +29,19 @@ code_mode(..., delivery="auto" | "task")
 
 ```text
 delivery="auto"
-├─ inline wait 안에 완료 → result 직접 전달
-└─ 아직 실행 중          → 같은 Execution을 Task로 publish
+├─ inline wait 안에 완료 → status="completed", result 직접 전달
+└─ 아직 실행 중          → status="running", guidance 제공 및 세션 Task 등록
 
 delivery="task"
-└─ 같은 Execution을 즉시 Task로 publish
+└─ 즉시 status="running" 및 세션 Task 등록
 ```
 
-Outcome vocabulary는 다음처럼 유지한다.
+Output vocabulary는 다음처럼 통일한다.
 
 ```text
-completed = { kind: "completed", execution_id, output }
-task      = { kind: "task",      execution_id, state }
-error     = { kind: "error",     execution_id, error_code, message }
+completed = { status: "completed", execution_id, result }
+running   = { status: "running",   execution_id, state, elapsed_seconds, guidance }
+failed    = { status: "failed",    execution_id, error: { code, message, detail }, guidance }
 ```
 
 Output 용어 경계:
@@ -50,7 +49,7 @@ Output 용어 경계:
 ```text
 console        → Monty print/progress
 stdout/stderr  → run_command subprocess streams
-output         → final durable program result
+result         → final durable program result
 ```
 
 `run_command_evidence`의 exact schema는 ADR 0008 구현 시 정한다. 이름 때문에 arbitrary capability result나 complete Execution transcript까지 포함시키지 않는다.

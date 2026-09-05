@@ -71,16 +71,16 @@ def create_terminal_code_mode_record(
 
 async def wait_task_ready(
     execution_id: str, *, timeout: float = 6.0
-) -> app.CodeModeOutcome:
+) -> app.CodeModeOutput:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         outcome = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        if isinstance(outcome, app.CodeModeTask):
+        if isinstance(outcome, app.CodeModeRunning):
             await asyncio.sleep(0.01)
             continue
-        assert isinstance(outcome, (app.CodeModeCompleted, app.CodeModeError))
+        assert isinstance(outcome, (app.CodeModeCompleted, app.CodeModeFailed))
         return outcome
     raise AssertionError("Code Mode Task did not finish")
 
@@ -88,9 +88,39 @@ async def wait_task_ready(
 @pytest.mark.parametrize(
     ("outcome_type", "fields"),
     [
-        (app.CodeModeCompleted, {"kind", "execution_id", "output"}),
-        (app.CodeModeTask, {"kind", "execution_id", "state"}),
-        (app.CodeModeError, {"kind", "execution_id", "error_code", "message"}),
+        (
+            app.CodeModeCompleted,
+            {
+                "status",
+                "execution_id",
+                "result",
+                "tracked_tasks",
+                "tracked_tasks_guidance",
+            },
+        ),
+        (
+            app.CodeModeRunning,
+            {
+                "status",
+                "execution_id",
+                "state",
+                "elapsed_seconds",
+                "guidance",
+                "tracked_tasks",
+                "tracked_tasks_guidance",
+            },
+        ),
+        (
+            app.CodeModeFailed,
+            {
+                "status",
+                "execution_id",
+                "error",
+                "guidance",
+                "tracked_tasks",
+                "tracked_tasks_guidance",
+            },
+        ),
     ],
 )
 def test_public_outcome_models_lock_llm_contract_fields(
@@ -117,9 +147,9 @@ def test_inline_completion_returns_typed_output_without_publication_or_print_rep
 
     assert isinstance(outcome, app.CodeModeCompleted)
     assert outcome.model_dump() == {
-        "kind": "completed",
+        "status": "completed",
         "execution_id": outcome.execution_id,
-        "output": expected,
+        "result": expected,
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "completed"
@@ -130,6 +160,7 @@ def test_inline_completion_returns_typed_output_without_publication_or_print_rep
     assert envelope == {
         "v": CODE_MODE_WORKER_PROTOCOL,
         "ok": True,
+        "result": expected,
         "output": expected,
     }
 
@@ -164,12 +195,16 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
 
     outcome = app._code_mode_outcome(manager.result(execution_id))
 
-    assert isinstance(outcome, app.CodeModeError)
+    assert isinstance(outcome, app.CodeModeFailed)
     assert outcome.model_dump() == {
-        "kind": "error",
+        "status": "failed",
         "execution_id": execution_id,
-        "error_code": code,
-        "message": message,
+        "error": {
+            "code": code,
+            "message": message,
+            "detail": None,
+        },
+        "guidance": app._CODE_MODE_ERROR_GUIDANCE,
     }
 
 
@@ -186,12 +221,14 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
             code="await run_command('sleep 0.12; printf SLOW')",
             cwd=str(tmp_path),
         )
-        assert isinstance(outcome, app.CodeModeTask)
+        assert isinstance(outcome, app.CodeModeRunning)
         execution_id = outcome.execution_id
         assert outcome.model_dump() == {
-            "kind": "task",
+            "status": "running",
             "execution_id": execution_id,
             "state": outcome.state,
+            "elapsed_seconds": 0,
+            "guidance": app._CODE_MODE_RUNNING_GUIDANCE,
         }
         assert manager.store.get_task(execution_id)["execution_id"] == execution_id
 
@@ -203,8 +240,8 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
         assert isinstance(second, app.CodeModeCompleted)
         assert first.model_dump() == second.model_dump()
         assert first.execution_id == execution_id
-        assert first.output["stdout"] == "SLOW"
-        assert set(first.model_dump()) == {"kind", "execution_id", "output"}
+        assert first.result["stdout"] == "SLOW"
+        assert set(first.model_dump()) == {"status", "execution_id", "result"}
 
         dismissed = await app.task(
             app.TaskDismissRequest(action="dismiss", execution_id=execution_id)
@@ -242,13 +279,17 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
         second = await app.task(
             app.TaskGetRequest(action="get", execution_id=execution_id)
         )
-        assert isinstance(first, app.CodeModeError)
-        assert isinstance(second, app.CodeModeError)
+        assert isinstance(first, app.CodeModeFailed)
+        assert isinstance(second, app.CodeModeFailed)
         assert first.model_dump() == {
-            "kind": "error",
+            "status": "failed",
             "execution_id": execution_id,
-            "error_code": "lost",
-            "message": "Code Mode Execution outcome is no longer observable.",
+            "error": {
+                "code": "lost",
+                "message": "Code Mode Execution outcome is no longer observable.",
+                "detail": None,
+            },
+            "guidance": app._CODE_MODE_ERROR_GUIDANCE,
         }
         assert second.model_dump() == first.model_dump()
 
@@ -309,7 +350,7 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
         )
         assert time.monotonic() - started < 0.12
 
-        assert isinstance(outcome, app.CodeModeTask)
+        assert isinstance(outcome, app.CodeModeRunning)
         record = manager.store.get(outcome.execution_id)
         assert record["state"] == "accepted"
         assert record["published_at"] is not None
@@ -348,15 +389,19 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         )
         assert time.monotonic() - started < 0.16
 
-        assert isinstance(outcome, app.CodeModeError)
+        assert isinstance(outcome, app.CodeModeFailed)
         assert outcome.model_dump() == {
-            "kind": "error",
+            "status": "failed",
             "execution_id": outcome.execution_id,
-            "error_code": "response_deadline_exceeded",
-            "message": (
-                "Code Mode Execution was accepted, but response shaping did not "
-                "finish before the response deadline."
-            ),
+            "error": {
+                "code": "response_deadline_exceeded",
+                "message": (
+                    "Code Mode Execution was accepted, but response shaping did not "
+                    "finish before the response deadline."
+                ),
+                "detail": None,
+            },
+            "guidance": app._CODE_MODE_ERROR_GUIDANCE,
         }
         assert manager.store.get(outcome.execution_id)["state"] == "accepted"
         deadline = time.monotonic() + 1
@@ -385,12 +430,16 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
         app.code_mode(label="launch timeout", code="1 + 2", cwd=str(tmp_path))
     )
 
-    assert isinstance(outcome, app.CodeModeError)
+    assert isinstance(outcome, app.CodeModeFailed)
     assert outcome.model_dump() == {
-        "kind": "error",
+        "status": "failed",
         "execution_id": outcome.execution_id,
-        "error_code": "launch_interrupted",
-        "message": "Code Mode Worker could not be launched.",
+        "error": {
+            "code": "launch_interrupted",
+            "message": "Code Mode Worker could not be launched.",
+            "detail": "launcher response timed out",
+        },
+        "guidance": app._CODE_MODE_ERROR_GUIDANCE,
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"
@@ -398,7 +447,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
     assert "launcher response timed out" in Path(str(record["stderr_path"])).read_text()
 
 
-def test_immediate_task_mode_uses_execution_id_as_handle(
+def test_immediate_task_delivery_uses_execution_id_as_handle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
@@ -416,14 +465,16 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
             label="immediate awareness",
             code="1 + 2",
             cwd=str(tmp_path),
-            mode="task",
+            delivery="task",
         )
         assert time.monotonic() - started < 0.1
-        assert isinstance(outcome, app.CodeModeTask)
+        assert isinstance(outcome, app.CodeModeRunning)
         assert outcome.model_dump() == {
-            "kind": "task",
+            "status": "running",
             "execution_id": outcome.execution_id,
             "state": outcome.state,
+            "elapsed_seconds": 0,
+            "guidance": app._CODE_MODE_RUNNING_GUIDANCE,
         }
         assert manager.store.get_task(outcome.execution_id)["execution_id"] == (
             outcome.execution_id
@@ -431,8 +482,46 @@ def test_immediate_task_mode_uses_execution_id_as_handle(
         collected = await app.task(
             app.TaskGetRequest(action="get", execution_id=outcome.execution_id)
         )
-        assert isinstance(collected, app.CodeModeTask)
+        assert isinstance(collected, app.CodeModeRunning)
         assert collected.model_dump() == outcome.model_dump()
         release_launch.set()
 
     asyncio.run(scenario())
+
+
+def test_code_mode_output_discriminator_resolves_union_types() -> None:
+    from pydantic import TypeAdapter
+
+    adapter = TypeAdapter(app.CodeModeOutput)
+
+    completed = adapter.validate_python(
+        {"status": "completed", "execution_id": "c1c2c3", "result": {"ans": 1}}
+    )
+    assert isinstance(completed, app.CodeModeCompleted)
+    assert completed.status == "completed"
+    assert completed.result == {"ans": 1}
+
+    running = adapter.validate_python(
+        {
+            "status": "running",
+            "execution_id": "r1r2r3",
+            "state": "running",
+            "elapsed_seconds": 5,
+            "guidance": "wait",
+        }
+    )
+    assert isinstance(running, app.CodeModeRunning)
+    assert running.status == "running"
+    assert running.state == "running"
+
+    failed = adapter.validate_python(
+        {
+            "status": "failed",
+            "execution_id": "f1f2f3",
+            "error": {"code": "boom", "message": "fail"},
+            "guidance": "fix",
+        }
+    )
+    assert isinstance(failed, app.CodeModeFailed)
+    assert failed.status == "failed"
+    assert failed.error.code == "boom"
