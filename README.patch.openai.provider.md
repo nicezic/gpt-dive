@@ -133,6 +133,65 @@ print(status)
 PY
 ```
 
+## Minimal raw Responses call
+
+Use the provider directly when the goal is to test the Codex subscription transport itself without a Pydantic Agent, Code Mode tools, repo context, skills, or the Codex CLI harness.
+
+```text
+user input
+   ↓
+OpenAICodexProvider
+   ↓
+AsyncOpenAI.responses.create(...)
+   ↓
+https://chatgpt.com/backend-api/codex/responses
+```
+
+Live-verified on 2026-09-06 with `gpt-5.6-luna`: `ping` returned `pong`.
+
+```bash
+uv run --python 3.14 python - <<'PY'
+import asyncio
+from gpt_dive.openai_codex import OpenAICodexProvider
+
+async def main():
+    provider = OpenAICodexProvider()
+    client = provider.client
+    stream = await client.responses.create(
+        model="gpt-5.6-luna",
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "ping",
+                    }
+                ],
+            }
+        ],
+        store=False,
+        stream=True,
+    )
+
+    chunks = []
+    async for event in stream:
+        if event.type == "response.output_text.delta":
+            chunks.append(event.delta)
+
+    print("".join(chunks))
+
+asyncio.run(main())
+PY
+```
+
+Current backend constraints observed in the same live check:
+
+- `input="ping"` is rejected with HTTP 400 (`Input must be a list`); use the explicit Responses input-item list shown above.
+- Keep `store=False` and `stream=True`; the local Codex compatibility layer relies on the same stateless streaming boundary.
+- This is a transport smoke test, not the normal agent path. It intentionally supplies no tools, repo context, skills, developer instructions, or Codex CLI harness.
+- Authentication still comes from `OpenAICodexProvider` / `OpenAICodexAuth`; never copy token values into the script.
+
 ## Upgrade procedure
 
 For each official Pydantic AI update:
