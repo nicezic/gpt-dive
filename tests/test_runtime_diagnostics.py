@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from types import SimpleNamespace
 
 import pytest
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import CallToolRequestParams, CallToolResult
 
+import gpt_dive.runtime_diagnostics as runtime_diagnostics
 from gpt_dive.runtime_diagnostics import request_lifecycle_middleware, run_mcp_server
 
 
@@ -13,6 +18,71 @@ def test_request_lifecycle_middleware_is_registered() -> None:
     from gpt_dive.app import mcp
 
     assert request_lifecycle_middleware in mcp.middleware
+    assert runtime_diagnostics.normalize_tool_error_middleware in mcp.middleware
+
+
+def test_tool_error_normalizer_rewrites_sdk_generic_unexpected_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = MCPServer(name="normalizer-test")
+
+    @server.tool(name="boom")
+    async def boom() -> str:
+        raise RuntimeError("server-only secret")
+
+    ctx = SimpleNamespace(
+        method="tools/call", request_id="req-9", params={"name": "boom"}
+    )
+    params = CallToolRequestParams(name="boom", arguments={})
+
+    async def call_next(_ctx: object) -> CallToolResult:
+        return await server._handle_call_tool(_ctx, params)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.INFO, logger="gpt_dive.runtime"):
+        result = asyncio.run(
+            runtime_diagnostics.normalize_tool_error_middleware(ctx, call_next)
+        )
+
+    assert result.is_error is True
+    payload = json.loads(result.content[0].text)
+    assert payload == {
+        "status": "failed",
+        "error": {
+            "boundary": "mcp_server",
+            "code": "MCP.SERVER.UNHANDLED",
+            "message": "The MCP server observed an unexpected tool failure.",
+        },
+        "request_id": "req-9",
+        "tool": "boom",
+        "recovery": "inspect_boundary",
+    }
+    assert "server-only secret" not in result.content[0].text
+    assert "code=MCP.SERVER.UNHANDLED" in caplog.text
+    assert "request=req-9" in caplog.text
+    assert "tool=boom" in caplog.text
+
+
+def test_tool_error_normalizer_preserves_sdk_anticipated_error_detail() -> None:
+    server = MCPServer(name="normalizer-test")
+
+    @server.tool(name="expected")
+    async def expected() -> str:
+        raise ToolError("label is required")
+
+    ctx = SimpleNamespace(
+        method="tools/call", request_id="req-10", params={"name": "expected"}
+    )
+    params = CallToolRequestParams(name="expected", arguments={})
+
+    async def call_next(_ctx: object) -> CallToolResult:
+        return await server._handle_call_tool(_ctx, params)  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        runtime_diagnostics.normalize_tool_error_middleware(ctx, call_next)
+    )
+
+    assert result.is_error is True
+    assert result.content[0].text == "Error executing tool expected: label is required"
 
 
 def test_request_lifecycle_logs_nested_exception_group(

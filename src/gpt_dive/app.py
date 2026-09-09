@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
 from pydantic import (
@@ -25,6 +26,7 @@ from pydantic import (
     Field,
     RootModel,
     TypeAdapter,
+    field_validator,
     model_serializer,
 )
 
@@ -33,7 +35,10 @@ from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
 from .execution_manager import ExecutionManager
 from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
-from .runtime_diagnostics import request_lifecycle_middleware
+from .runtime_diagnostics import (
+    normalize_tool_error_middleware,
+    request_lifecycle_middleware,
+)
 
 _INLINE_WAIT_SECONDS = 100.0
 _INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
@@ -42,6 +47,7 @@ _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 TRACKED_TASKS_LIMIT = 8
 TRACKED_TASKS_MAX_BYTES = 4096
 _RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
+_ERROR_DETAIL_MAX_CHARS = 4096
 _CODE_MODE_CAPABILITY_CATALOG = code_mode_capability_catalog()
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
@@ -56,8 +62,9 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "Direct ChatGPT Web -> WSL2 runtime. wsl_exec is the minimal raw-shell escape hatch. "
-        "code_mode launches durable Executions and task manages their lifecycle. Never guess "
+        "Direct ChatGPT Web -> WSL2 runtime. wsl_exec has a default-deny caller assertion guard; "
+        "it does not prove user-origin authorization. code_mode launches durable Executions and task "
+        "manages their lifecycle. Never guess "
         "capability names, arguments, or return shapes: inspect the live contract first."
     ),
     instructions=(
@@ -72,8 +79,12 @@ mcp = MCPServer(
         "inside Code Mode. Never invent capability names, parameter names, optional arguments, or "
         "return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
         "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the "
-        "live contract plus local state before retrying. Use Web Search only when the missing evidence "
-        "is external and current. Use delivery='task' for immediate Task awareness; otherwise code_mode "
+        "live contract plus local state before retrying. When an error carries a machine code or "
+        "boundary, preserve its machine code and boundary verbatim. MCP.SERVER.UNHANDLED means the "
+        "MCP server observed an unexpected tool failure; a top-level transport/502 with no "
+        "CodeModeFailed payload is outside the Code Mode application error contract. Use Web Search "
+        "only when the missing evidence is external and current. Use delivery='task' for immediate "
+        "Task awareness; otherwise code_mode "
         "waits briefly and publishes the same continuing Execution only when inline delivery ends "
         "first. Transport loss never cancels work. Every successful ordinary work result includes "
         "tracked_tasks as compact passive awareness with elapsed_seconds, so background completion "
@@ -426,6 +437,7 @@ async def _periodic_reminder_middleware(
 
 
 mcp.middleware.append(request_lifecycle_middleware)
+mcp.middleware.append(normalize_tool_error_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
 
 
@@ -653,9 +665,12 @@ class CodeModeRunning(_ClosedModel):
 
 
 _CODE_MODE_ERROR_GUIDANCE = (
-    "DO NOT invent fallbacks or assume tools are broken. "
+    "Treat error.code as the stable category, error.message as the summary, and "
+    "error.detail as the concrete cause. DO NOT invent fallbacks or assume tools are broken. "
     "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [FIX PREVIEW], "
-    "inspect error detail and live contract, and retry only a corrected call on the canonical path."
+    "inspect error detail and live contract, and retry only a corrected call on the canonical path. "
+    "A top-level tool or transport failure with no CodeModeFailed payload is outside this "
+    "application error contract; do not label it a Code Mode failure without tunnel evidence."
 )
 
 
@@ -663,6 +678,13 @@ class CodeModeErrorDetails(_ClosedModel):
     code: str
     message: str
     detail: str | None = None
+
+    @field_validator("detail")
+    @classmethod
+    def _bound_detail(cls, value: str | None) -> str | None:
+        if value is not None and len(value) > _ERROR_DETAIL_MAX_CHARS:
+            return value[: _ERROR_DETAIL_MAX_CHARS - 3] + "..."
+        return value
 
 
 class CodeModeFailed(_ClosedModel):
@@ -837,6 +859,12 @@ def _code_mode_work_outcome(
     )
 
 
+def _exception_detail(exc: BaseException) -> str:
+    name = type(exc).__name__
+    text = str(exc).strip()
+    return f"{name}: {text}" if text else name
+
+
 def _code_mode_error(
     execution_id: str,
     *,
@@ -857,25 +885,48 @@ async def _code_mode_launch_error(
     *,
     response_deadline: float,
 ) -> CodeModeFailed:
+    detail = _exception_detail(exc)
     remaining = response_deadline - time.monotonic()
     if remaining <= 0:
-        raise exc from None
+        return _code_mode_error(
+            execution_id,
+            code="response_deadline_exceeded",
+            message=(
+                "Code Mode launch failed, and error shaping exceeded the response "
+                "deadline."
+            ),
+            detail=detail,
+        )
     try:
         await asyncio.wait_for(
             asyncio.to_thread(executions.store.get, execution_id),
             timeout=remaining,
         )
     except KeyError:
-        raise exc from None
-    except TimeoutError:
-        raise TimeoutError(
-            "Code Mode response deadline expired while shaping launch error"
-        ) from None
+        return _code_mode_error(
+            execution_id,
+            code="launch_unobserved",
+            message=(
+                "Code Mode Worker launch failed before an Execution record became "
+                "observable."
+            ),
+            detail=detail,
+        )
+    except TimeoutError as shaping_exc:
+        return _code_mode_error(
+            execution_id,
+            code="response_deadline_exceeded",
+            message=(
+                "Code Mode launch failed, and error shaping exceeded the response "
+                "deadline."
+            ),
+            detail=f"{detail}; error_shaping={_exception_detail(shaping_exc)}",
+        )
     return _code_mode_error(
         execution_id,
         code="launch_interrupted",
         message="Code Mode Worker could not be launched.",
-        detail=str(exc),
+        detail=detail,
     )
 
 
@@ -989,9 +1040,15 @@ async def code_mode(
                 _spawn_followup(
                     _publish_during_launch(executions, launch_task, execution_id)
                 )
-                raise TimeoutError(
-                    "Code Mode response deadline expired before acceptance"
-                ) from exc
+                return _code_mode_error(
+                    execution_id,
+                    code="response_deadline_exceeded",
+                    message=(
+                        "Code Mode Execution was not accepted before the response "
+                        "deadline."
+                    ),
+                    detail=_exception_detail(exc),
+                )
             except Exception as exc:
                 return await _code_mode_launch_error(
                     execution_id,
@@ -1020,7 +1077,7 @@ async def code_mode(
                         "did not finish before the response deadline."
                     ),
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "TASK PUBLICATION FAILED execution_id=%s", execution_id
                 )
@@ -1031,6 +1088,7 @@ async def code_mode(
                     execution_id,
                     code="task_publication_failed",
                     message="Task publication failed.",
+                    detail=_exception_detail(exc),
                 )
             _spawn_followup(_observe_launch(launch_task))
             return CodeModeRunning(
@@ -1065,7 +1123,31 @@ async def code_mode(
                 "finish before the response deadline."
             ),
         )
-    return _code_mode_output(raw)
+    except Exception as exc:
+        logger.exception(
+            "CODE MODE RESULT RETRIEVAL FAILED execution_id=%s", execution_id
+        )
+        return _code_mode_error(
+            execution_id,
+            code="result_retrieval_failed",
+            message="Code Mode Execution result could not be retrieved.",
+            detail=_exception_detail(exc),
+        )
+    try:
+        return _code_mode_output(raw)
+    except Exception as exc:
+        logger.exception(
+            "CODE MODE RESPONSE SHAPING FAILED execution_id=%s", execution_id
+        )
+        return _code_mode_error(
+            execution_id,
+            code="response_protocol_error",
+            message=(
+                "Code Mode Execution result could not be shaped into the public "
+                "response."
+            ),
+            detail=_exception_detail(exc),
+        )
 
 
 async def wsl_exec(command: str, cwd: str | None = None) -> dict[str, Any]:
@@ -1080,8 +1162,10 @@ async def wsl_exec(command: str, cwd: str | None = None) -> dict[str, Any]:
     name="wsl_exec",
     title="Raw WSL Shell",
     description=(
-        "Run one raw shell command directly in local WSL2 outside Code Mode; "
-        "bounded to 600 seconds."
+        "ABSOLUTELY FORBIDDEN without explicit user permission. user_authorized is only a caller "
+        "assertion, not proof of user-origin authorization; omitted/false is rejected with "
+        "POLICY.USER_AUTH_REQUIRED. Run one raw shell command directly in local WSL2 outside Code "
+        "Mode; never use it as fallback or recovery for a Code Mode failure. Bounded to 600 seconds."
     ),
 )
 async def _mcp_wsl_exec(
@@ -1096,8 +1180,35 @@ async def _mcp_wsl_exec(
         str | None,
         Field(description="Optional WSL2 working directory."),
     ] = None,
+    user_authorized: Annotated[
+        bool,
+        Field(
+            description=(
+                "Caller assertion only: set true only after the user explicitly authorized "
+                "wsl_exec in the current conversation. This field does not prove user-origin; "
+                "never infer or self-grant permission."
+            )
+        ),
+    ] = False,
     ctx: Context | None = None,
 ) -> WslExecWorkOutput:
+    if not user_authorized:
+        raise ToolError(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": {
+                        "boundary": "policy",
+                        "code": "POLICY.USER_AUTH_REQUIRED",
+                        "message": "wsl_exec requires explicit user authorization.",
+                    },
+                    "surface": "wsl_exec",
+                    "recovery": "ask_user",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
     primary = await wsl_exec(command, cwd=cwd)
     tracked_tasks = await _tracked_tasks_snapshot(ctx=ctx)
     res_dict = dict(primary)
@@ -1114,8 +1225,10 @@ async def _mcp_wsl_exec(
         "Launch one always-durable Pydantic Monty Execution. label and code are required. "
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
         "a running status for the same continuing Execution; delivery='task' publishes that Task "
-        "immediately. Returns status ('completed' | 'running' | 'failed') and result. Ongoing "
-        "background work appears in tracked_tasks as passive HUD without need for polling. "
+        "immediately. Returns status ('completed' | 'running' | 'failed') and result. On "
+        "status='failed', preserve and report error.code, error.message, and error.detail; "
+        "execution_id is the diagnostic correlation handle. Ongoing background work appears "
+        "in tracked_tasks as passive HUD without need for polling. "
         "Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
         "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "

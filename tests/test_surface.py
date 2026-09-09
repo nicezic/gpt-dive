@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent
 
 import gpt_dive
@@ -30,7 +32,8 @@ def test_wsl_exec_is_minimal_raw_shell(
     schema = tools["wsl_exec"].input_schema
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["command"]
-    assert set(schema["properties"]) == {"command", "cwd"}
+    assert set(schema["properties"]) == {"command", "cwd", "user_authorized"}
+    assert schema["properties"]["user_authorized"]["default"] is False
 
     output_schema = tools["wsl_exec"].output_schema
     assert output_schema is not None
@@ -63,10 +66,48 @@ def test_wsl_exec_is_minimal_raw_shell(
     assert not child.exists() or child.joinpath("stat").read_text().split()[2] == "Z"
 
 
-def test_server_description_exposes_minimal_raw_wsl_escape_hatch() -> None:
+def test_wsl_exec_public_surface_requires_explicit_user_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    async def fake_wsl_exec(command: str, cwd: str | None = None) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return {
+            "exit_code": 0,
+            "stdout": "SHOULD NOT RUN",
+            "stderr": "",
+            "duration_ms": 1,
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(app, "wsl_exec", fake_wsl_exec)
+
+    with pytest.raises(ToolError) as caught:
+        asyncio.run(app.mcp.call_tool("wsl_exec", {"command": "true"}))
+
+    assert called is False
+    prefix = "Error executing tool wsl_exec: "
+    assert str(caught.value).startswith(prefix)
+    assert json.loads(str(caught.value)[len(prefix) :]) == {
+        "status": "failed",
+        "error": {
+            "boundary": "policy",
+            "code": "POLICY.USER_AUTH_REQUIRED",
+            "message": "wsl_exec requires explicit user authorization.",
+        },
+        "surface": "wsl_exec",
+        "recovery": "ask_user",
+    }
+
+
+def test_server_description_exposes_wsl_assertion_guard() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
-    assert "wsl_exec is the minimal raw-shell escape hatch" in description
+    assert "wsl_exec has a default-deny caller assertion guard" in description
+    assert "does not prove user-origin authorization" in description
+    assert "minimal raw-shell escape hatch" not in description
     assert description.count("wsl_exec") == 1
 
 
@@ -199,6 +240,18 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
     }
     task_list = tool.output_schema["$defs"]["TaskListOutput"]
     assert task_list["properties"]["tasks"]["items"]["$ref"].endswith("/TaskView")
+
+
+def test_code_mode_description_exposes_failed_error_contract() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
+    description = tools["code_mode"].description
+    assert description is not None
+
+    assert "status='failed'" in description
+    assert "error.code" in description
+    assert "error.message" in description
+    assert "error.detail" in description
+    assert "execution_id" in description
 
 
 def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
@@ -440,6 +493,9 @@ def test_server_instructions_keep_raw_wsl_out_of_structured_guidance() -> None:
         in instructions
     )
     assert "Never invent capability names" in instructions
+    assert "preserve its machine code and boundary verbatim" in instructions
+    assert "MCP.SERVER.UNHANDLED" in instructions
+    assert "top-level transport/502" in instructions
     assert "ordinary work result includes tracked_tasks" in instructions
     assert "compact passive awareness with elapsed_seconds" in instructions
     assert "task(list) is explicit detailed inspection, not polling" in instructions
@@ -502,7 +558,9 @@ def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(
         app, "_task_list", lambda *, limit=None: [_projected_task(elapsed_seconds=261)]
     )
 
-    result = asyncio.run(_call_tool("wsl_exec", {"command": "true"}))
+    result = asyncio.run(
+        _call_tool("wsl_exec", {"command": "true", "user_authorized": True})
+    )
 
     assert result.structured_content == {
         "exit_code": 0,

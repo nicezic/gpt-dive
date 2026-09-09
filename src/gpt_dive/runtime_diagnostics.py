@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import traceback
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+
+from mcp_types import CallToolResult, TextContent
 
 logger = logging.getLogger("gpt_dive.runtime")
 
@@ -56,6 +59,51 @@ def _exception_text(exc: BaseException) -> str:
 
 def _log_exception(prefix: str, exc: BaseException) -> None:
     logger.error("%s\n%s", prefix, _exception_text(exc))
+
+
+async def normalize_tool_error_middleware(ctx: Any, call_next: Any) -> Any:
+    """Give generic unexpected tool failures stable model-visible provenance."""
+    result = await call_next(ctx)
+    if getattr(ctx, "method", None) != "tools/call" or not isinstance(
+        result, CallToolResult
+    ):
+        return result
+    if not result.is_error or not result.content:
+        return result
+
+    tool = _tool_name(ctx)
+    first = result.content[0]
+    if (
+        not isinstance(first, TextContent)
+        or first.text != f"Error executing tool {tool}"
+    ):
+        return result
+
+    request_id = _request_id(ctx)
+    payload = {
+        "status": "failed",
+        "error": {
+            "boundary": "mcp_server",
+            "code": "MCP.SERVER.UNHANDLED",
+            "message": "The MCP server observed an unexpected tool failure.",
+        },
+        "request_id": request_id,
+        "tool": tool,
+        "recovery": "inspect_boundary",
+    }
+    logger.warning(
+        "MCP TOOL ERROR boundary=mcp_server code=MCP.SERVER.UNHANDLED request=%s tool=%s",
+        request_id,
+        tool,
+    )
+    content = [
+        TextContent(
+            type="text",
+            text=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        ),
+        *result.content[1:],
+    ]
+    return result.model_copy(update={"content": content})
 
 
 async def request_lifecycle_middleware(ctx: Any, call_next: Any) -> Any:

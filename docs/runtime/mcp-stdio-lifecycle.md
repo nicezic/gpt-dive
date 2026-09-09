@@ -21,6 +21,44 @@ GPT Dive process
 - `ExceptionGroup: unhandled errors in a TaskGroup` is a wrapper, not the root cause. Inspect its inner exception/lifecycle evidence before diagnosing.
 - Upstream references: MCP Python SDK `docs/run/index.md` and `docs/troubleshooting.md`.
 
+## Synthesized 502 semantics
+
+`tunnel-client` uses HTTP `502 Bad Gateway` as a **synthetic outer status** when downstream MCP response forwarding fails before it can deliver a normal response. This does **not** mean GPT Dive returned HTTP 502.
+
+The tunnel failure JSON-RPC data carries the useful provenance:
+
+```text
+tunnel_failure.version
+tunnel_failure.source
+tunnel_failure.transport_error_kind
+tunnel_failure.upstream_response_received
+tunnel_failure.upstream_status   # only when a real target HTTP response existed
+```
+
+Interpretation:
+
+- `source=target_http` + `upstream_response_received=true` → an actual target HTTP status exists; inspect `upstream_status`.
+- `source=transport_closed|timeout|dns|tls|connect|protocol` → the tunnel classified a transport/protocol boundary failure.
+- `source=client_internal` + `upstream_response_received=false` → no target response was observed and the precise downstream cause is not established by the 502 alone.
+- If GPT Dive has no matching `MCP REQUEST START`, do not attribute the failure to `code_mode` or a capability.
+
+The JSON-RPC message may be only `Bad Gateway`; prefer the structured `tunnel_failure` data and local lifecycle logs when available.
+
+## Server-owned model-visible failures
+
+GPT Dive normalizes the failure classes it actually owns; it does not pretend to own tunnel failures:
+
+```text
+POLICY.USER_AUTH_REQUIRED   → boundary=policy; default-deny caller assertion guard, not proof of user-origin
+CodeModeFailed              → boundary=application; use error.code/message/detail
+MCP.SERVER.UNHANDLED        → boundary=mcp_server; unexpected tool failure observed by MCP server
+synthetic 502/tunnel_failure → boundary=tunnel/transport; use tunnel provenance
+```
+
+MCP 2.0 normally reduces an unexpected tool crash to `Error executing tool <name>`. GPT Dive rewrites that exact generic result to compact JSON carrying `code=MCP.SERVER.UNHANDLED`, `boundary=mcp_server`, `request_id`, `tool`, and `recovery=inspect_boundary`. The original exception remains in server diagnostics; the normalizer does not invent or expose a cause it cannot prove. Anticipated detailed tool errors are left unchanged.
+
+This middleware only runs when GPT Dive receives the request and can return an MCP tool result. A synthetic tunnel `502` created before a deliverable GPT Dive response is therefore **not** `MCP.SERVER.UNHANDLED` and cannot be normalized by GPT Dive.
+
 ## Known incident: 2026-08-19
 
 ChatGPT Web intermittently surfaced only:

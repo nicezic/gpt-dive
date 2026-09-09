@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from mcp_types import CallToolResult
 
 import gpt_dive.execution_manager as execution_manager
 from gpt_dive import app
@@ -208,6 +209,43 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
     }
 
 
+def test_task_get_bounds_worker_error_detail_on_public_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    execution_id = "long01"
+    create_terminal_code_mode_record(
+        manager,
+        execution_id=execution_id,
+        cwd=tmp_path,
+        label="long worker failure",
+        envelope={
+            "v": CODE_MODE_WORKER_PROTOCOL,
+            "ok": False,
+            "error": {
+                "code": "execution_error",
+                "detail": "RuntimeError: " + "x" * 5000,
+            },
+        },
+        exit_code=1,
+    )
+    manager.publish(execution_id)
+
+    result = asyncio.run(
+        app.mcp.call_tool(
+            "task",
+            {"request": {"action": "get", "execution_id": execution_id}},
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    detail = result.structured_content["error"]["detail"]
+    assert len(detail) == 4096
+    assert detail.startswith("RuntimeError: ")
+    assert detail.endswith("...")
+
+
 def test_inline_wait_expiry_publishes_same_continuing_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,6 +397,42 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
     asyncio.run(scenario())
 
 
+def test_pre_acceptance_response_timeout_returns_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+    release_launch = threading.Event()
+
+    def stalled_start(**_kwargs: object) -> None:
+        release_launch.wait(timeout=0.2)
+
+    async def stalled_acceptance(
+        *_args: object, **_kwargs: object
+    ) -> dict[str, object]:
+        raise TimeoutError("acceptance stalled")
+
+    monkeypatch.setattr(app, "_start_code_mode_execution", stalled_start)
+    monkeypatch.setattr(app, "_wait_for_acceptance", stalled_acceptance)
+    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.03)
+
+    try:
+        outcome = asyncio.run(
+            app.code_mode(
+                label="pre-acceptance timeout", code="1 + 2", cwd=str(tmp_path)
+            )
+        )
+    finally:
+        release_launch.set()
+
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "response_deadline_exceeded"
+    assert outcome.error.message == (
+        "Code Mode Execution was not accepted before the response deadline."
+    )
+    assert outcome.error.detail == "TimeoutError: acceptance stalled"
+
+
 def test_post_acceptance_response_timeout_returns_structured_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -437,7 +511,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
         "error": {
             "code": "launch_interrupted",
             "message": "Code Mode Worker could not be launched.",
-            "detail": "launcher response timed out",
+            "detail": "TimeoutError: launcher response timed out",
         },
         "guidance": app._CODE_MODE_ERROR_GUIDANCE,
     }
@@ -445,6 +519,97 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
     assert record["state"] == "failed"
     assert record["reason"] == "launch_interrupted"
     assert "launcher response timed out" in Path(str(record["stderr_path"])).read_text()
+
+
+def test_result_retrieval_failure_returns_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    async def fail_result_retrieval(
+        _execution_id: str, *, wait_deadline: float
+    ) -> dict[str, object]:
+        assert wait_deadline > 0
+        raise RuntimeError("result store unavailable " + "x" * 5000)
+
+    monkeypatch.setattr(app, "_wait_for_execution", fail_result_retrieval)
+
+    outcome = asyncio.run(
+        app.code_mode(label="result retrieval failure", code="1 + 2", cwd=str(tmp_path))
+    )
+
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "result_retrieval_failed"
+    assert outcome.error.message == "Code Mode Execution result could not be retrieved."
+    assert outcome.error.detail is not None
+    assert len(outcome.error.detail) == 4096
+    assert outcome.error.detail.startswith("RuntimeError: result store unavailable ")
+    assert outcome.error.detail.endswith("...")
+
+
+def test_response_protocol_failure_returns_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+
+    async def malformed_result(
+        execution_id: str, *, wait_deadline: float
+    ) -> dict[str, object]:
+        assert wait_deadline > 0
+        return {"status": "completed", "execution_id": execution_id}
+
+    monkeypatch.setattr(app, "_wait_for_execution", malformed_result)
+
+    outcome = asyncio.run(
+        app.code_mode(
+            label="response protocol failure", code="1 + 2", cwd=str(tmp_path)
+        )
+    )
+
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "response_protocol_error"
+    assert outcome.error.message == (
+        "Code Mode Execution result could not be shaped into the public response."
+    )
+    assert outcome.error.detail is not None
+    assert "ValidationError" in outcome.error.detail
+
+
+def test_launch_failure_without_execution_record_returns_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_before_store(**_kwargs: object) -> None:
+        raise RuntimeError("launcher never reached store")
+
+    monkeypatch.setattr(app, "_start_code_mode_execution", fail_before_store)
+
+    outcome = asyncio.run(app.code_mode(label="pre-store failure", code="1 + 2"))
+
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "launch_unobserved"
+    assert outcome.error.message == (
+        "Code Mode Worker launch failed before an Execution record became observable."
+    )
+    assert outcome.error.detail == "RuntimeError: launcher never reached store"
+
+
+def test_launch_error_shaping_deadline_returns_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_before_store(**_kwargs: object) -> None:
+        raise RuntimeError("launcher failed at deadline")
+
+    monkeypatch.setattr(app, "_start_code_mode_execution", fail_before_store)
+    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.0)
+
+    outcome = asyncio.run(app.code_mode(label="deadline failure", code="1 + 2"))
+
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "response_deadline_exceeded"
+    assert outcome.error.message == (
+        "Code Mode launch failed, and error shaping exceeded the response deadline."
+    )
+    assert outcome.error.detail == "RuntimeError: launcher failed at deadline"
 
 
 def test_immediate_task_delivery_uses_execution_id_as_handle(
