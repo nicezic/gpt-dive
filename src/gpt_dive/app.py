@@ -1244,7 +1244,7 @@ async def _mcp_code_mode(
         Field(
             min_length=1,
             max_length=80,
-            description="Required short Execution label used by Preview and Task awareness.",
+            description="Required short Execution label used by Execution and Task awareness.",
         ),
     ],
     code: Annotated[

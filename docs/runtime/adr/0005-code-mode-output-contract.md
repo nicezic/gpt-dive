@@ -445,12 +445,6 @@ final expression → compact result
 
 결과가 이상해 보일 때는 `execution_id`를 recovery handle로 사용한다. Evidence의 저장·discovery·selected-read 방식은 ADR 0008이 소유한다.
 
-### Temporary debug preview
-
-Output contract를 구현·검증하는 동안 MCP preview는 실제 Monty code와 실제 received output을 보여주는 debug-oriented 형식을 유지한다. 동일 정보를 CALL/INPUT 같은 두 표현으로 중복하지 않는다.
-
-이 운영 규칙의 authority는 `~/wiki/workflow/code-mode-reminder.md`다.
-
 ### ADR 0009 — Runtime terminology / naming boundary
 
 `/grill-with-docs` 수준의 runtime 전체 용어 정리는 이번 ADR 구현 scope에서 제외한다. 현재 output contract를 고치는 작업과 동시에 전역 terminology까지 건드리면 변경 범위와 검증 부담이 지나치게 커진다.
