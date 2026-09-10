@@ -26,7 +26,6 @@ EXPECTED_CAPABILITIES = {
     "agy_worker",
     "subagent_call",
     "peer_review",
-    "repo_search",
     "council_emit",
     "run_command",
     "gz64",
@@ -124,31 +123,6 @@ def test_registry_dispatches_pydantic_normalized_arguments() -> None:
 
     assert result == 7
     assert seen == [7]
-
-
-def test_registry_renders_repo_search_discriminated_result(tmp_path: Path) -> None:
-    catalog = registry_for_test(tmp_path).model_catalog()
-
-    assert "class RepoSearchItem(TypedDict)" in catalog
-    assert "class RepoSearchSuccess(TypedDict)" in catalog
-    assert "class RepoSearchFailure(TypedDict)" in catalog
-    assert "ok: Literal[True]" in catalog
-    assert "ok: Literal[False]" in catalog
-    assert "results: list[RepoSearchItem]" in catalog
-    assert "error: str" in catalog
-    assert "RepoSearchSuccess | RepoSearchFailure" in catalog
-
-
-def test_repo_search_rejects_invalid_host_result_before_monty_consumes_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def invalid_search(**_kwargs: object) -> dict[str, object]:
-        return {"ok": True}
-
-    monkeypatch.setattr(capabilities_module, "search_repo", invalid_search)
-
-    with pytest.raises(MontyRuntimeError):
-        run_code(tmp_path, "await repo_search(query='needle')")
 
 
 def test_runtime_returns_expression_and_payload_results(tmp_path: Path) -> None:
@@ -332,20 +306,9 @@ def test_broad_recursive_search_is_rejected(tmp_path: Path) -> None:
         run_code(tmp_path, "await search_files('needle', path='/')")
 
 
-def test_repo_search_and_council_emit_use_explicit_capability_seams(
+def test_council_emit_uses_explicit_capability_seam(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fake_search(**kwargs: object) -> dict[str, object]:
-        return {
-            "ok": True,
-            "engine": "probe",
-            "query": kwargs["query"],
-            "path": kwargs["path"],
-            "count": 0,
-            "total_tokens": 0,
-            "results": [],
-        }
-
     def fake_emit(
         council_dir: str, message: str, expected_head: str | None
     ) -> dict[str, object]:
@@ -355,19 +318,13 @@ def test_repo_search_and_council_emit_use_explicit_capability_seams(
             "expected_head": expected_head,
         }
 
-    monkeypatch.setattr(capabilities_module, "search_repo", fake_search)
     monkeypatch.setattr(capabilities_module, "emit_sol_response", fake_emit)
 
-    search = run_code(
-        tmp_path,
-        "await repo_search(query='needle', path='src')",
-    )
     council = run_code(
         tmp_path,
         "await council_emit(council_dir='.', message='round')",
     )
 
-    assert search["path"] == str((tmp_path / "src").resolve())
     assert council["message"] == "round"
 
 

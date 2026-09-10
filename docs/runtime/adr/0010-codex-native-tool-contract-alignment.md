@@ -71,9 +71,8 @@ Known return shape가 있는 capability는 typed schema를 가진다. Host bound
 우선 migration 대상은:
 
 1. `run_command`
-2. `repo_search`
-3. agent/model capabilities
-4. `council_emit`
+2. agent/model capabilities
+3. `council_emit`
 
 Unknown/freeform output이 실제 contract인 경우만 open shape로 남긴다.
 
@@ -126,7 +125,7 @@ single capability definition
 
 ## Rollout
 
-전체 migration을 한 번에 하지 않는다. 첫 검증 단위는 **`run_command` + `repo_search`**다.
+전체 migration을 한 번에 하지 않는다. 첫 검증 단위는 **`run_command`**다.
 
 확인할 것은 다음뿐이다.
 

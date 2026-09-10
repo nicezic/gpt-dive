@@ -98,16 +98,9 @@ Code Mode resolves relative filesystem paths from the effective `cwd` and allows
 
 Maintenance SSOT: root-level `README.patch.openai.provider.md`. It intentionally stays prominent at repository root so Pydantic upgrades do not miss the compatibility/retirement check.
 
-### 8. Repository retrieval behind Code Mode
+### 8. Repository retrieval through shell tools
 
-**Change**
-- Added `repo_search`, backed by Probe BM25 ranking plus AST-aware blocks, as a bounded repository exploration capability.
-
-**Why**
-- Locate a small relevant evidence set before opening files, reducing blind recursive reads and model-context growth.
-- Keep search-engine implementation replaceable behind an engine-neutral capability name.
-
-Implementation: `src/gpt_dive/repo_search.py`.
+Repository concept search uses the installed Probe CLI directly through `run_command`; exact search can use `search_files`, `find_files`, or `rg`. Retrieval policy stays in the search workflow.
 
 ## Current ownership boundaries
 

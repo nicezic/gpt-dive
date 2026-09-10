@@ -677,7 +677,7 @@ A more pathological example:
 a = await read_file(...)
 print(a)
 
-b = await repo_search(...)
+b = await run_command(command="probe search boundary . --format json")
 print(b)
 
 c = await run_command(...)
@@ -1128,11 +1128,8 @@ Accepted temporary format:
 followed by the actual Monty program:
 
 ```python
-await repo_search(
-    query=PAYLOAD,
-    path=CWD,
-    max_results=8,
-    max_tokens=5000,
+await run_command(
+    command='probe search "output capture boundary" . --format json --max-results 8 --max-tokens 5000'
 )
 ```
 
@@ -1202,11 +1199,8 @@ Before each `@dive` call, show a compact preview:
 ```
 
 ```python
-await repo_search(
-    query=PAYLOAD,
-    path=CWD,
-    max_results=8,
-    max_tokens=5000,
+await run_command(
+    command='probe search "output capture boundary" . --format json --max-results 8 --max-tokens 5000'
 )
 ```
 

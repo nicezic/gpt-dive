@@ -265,8 +265,7 @@ Agent / model
 ├─ agy_worker
 ├─ subagent_call
 └─ peer_review
-Retrieval / Council
-├─ repo_search
+Council
 └─ council_emit
 Runtime
 ├─ run_command

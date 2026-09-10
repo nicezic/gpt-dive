@@ -28,7 +28,6 @@ from .command_runtime import (
 from .council import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .model_call import invoke_model_call
-from .repo_search import RepoSearchResult, search_repo
 from .subagent_runtime import invoke_subagent
 
 code_runtime = MontyCodeRuntime()
@@ -270,33 +269,6 @@ def build_code_registry(
         """Return the current read-only Execution work budget in seconds."""
         return remaining_seconds(record)
 
-    async def repo_search(
-        *,
-        query: str,
-        path: str | None = None,
-        max_results: int = 8,
-        max_tokens: int = 6000,
-        allow_tests: bool = False,
-    ) -> RepoSearchResult:
-        """Search local code/docs with Probe using BM25 ranking and AST-aware blocks.
-
-        Prefer this for exploring unfamiliar repositories and locating relevant code by concept.
-        Relative path values resolve from the Code Mode cwd; absolute/~/ paths remain explicit.
-        Use precise technical keywords when possible.
-        """
-        search_path = Path(path).expanduser() if path is not None else effective_cwd
-        if not search_path.is_absolute():
-            search_path = effective_cwd / search_path
-        search_path = search_path.resolve()
-        reject_broad_search_root(search_path, operation="repo_search")
-        return await search_repo(
-            query=query,
-            path=str(search_path),
-            max_results=max_results,
-            max_tokens=max_tokens,
-            allow_tests=allow_tests,
-        )
-
     async def council_emit(
         *,
         council_dir: str,
@@ -319,7 +291,6 @@ def build_code_registry(
     registry.register("agy_worker", agy_worker)
     registry.register("subagent_call", subagent_call)
     registry.register("peer_review", peer_review)
-    registry.register("repo_search", repo_search)
     registry.register("council_emit", council_emit)
     registry.register("run_command", run_command)
     registry.register("gz64", gz64)

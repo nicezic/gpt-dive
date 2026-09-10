@@ -29,7 +29,7 @@ public Code Mode vocabulary
 └─ error.error_code
 ```
 
-첫 rollout은 `run_command`와 `repo_search`의 typed return contract를 완성하면서 registry의 single-authority 구조와 pre-call catalog를 검증한다. 나머지 capability는 기존 호출 semantics를 유지하며, return schema가 아직 열린 경우 `Any`로 정직하게 표현한다.
+첫 rollout은 `run_command`의 typed return contract를 완성하면서 registry의 single-authority 구조와 pre-call catalog를 검증한다. 나머지 capability는 기존 호출 semantics를 유지하며, return schema가 아직 열린 경우 `Any`로 정직하게 표현한다.
 
 ## User Stories
 
@@ -72,7 +72,7 @@ lue fallback tests. Test only the clean public migration, single-authority gener
 - Public error outcomes advertise and return `error_code`; `kind` remains the discriminator.
 - Durable worker/store error protocol does not require migration.
 - Outer `code_mode` description contains generated Python declarations before code execution.
-- `run_command` and `repo_search` expose typed return declarations generated from the same schema authority used for host validation.
+- `run_command` exposes a typed return declaration generated from the same schema authority used for host validation.
 - `CAPABILITIES`, Monty stubs, and pre-call catalog cannot drift by maintaining separate signature definitions.
 - Focused public-surface and Code Mode runtime tests pass.
 - Full relevant test suite, Ruff, Pyright, and `git diff --check` pass.
@@ -122,16 +122,3 @@ lue fallback tests. Test only the clean public migration, single-authority gener
 - [x] Registry reflection, Monty stubs, and pre-call catalog derive from one capability definition rather than parallel signature tables.
 - [x] `run_command` has a closed typed return schema and invalid host result shapes fail before entering Monty.
 - [x] Existing `result["stdout"]` local reduction remains unchanged.
-
-## 03 — Type repo_search and close the rollout
-
-**What to build:** Apply the same typed result contract to `repo_search`, reconcile affected guidance/docs with the accepted vocabulary, and verify the first ADR 0010 rollout as a whole.
-
-**Blocked by:** 02 — Generate the pre-call capability contract.
-
-**Status:** completed
-
-- [x] `repo_search` exposes and validates its real success/failure result schema without inventing fallback fields.
-- [x] Existing search behavior and path policy remain regression-green.
-- [x] Focused tests, full relevant pytest, Ruff, Pyright, and `git diff --check` pass.
-- [x] No stale model-facing `mode`/error `code` guidance remains in the changed contract surface.

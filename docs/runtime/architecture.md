@@ -113,9 +113,9 @@ Agent and model 3
 └─ peer_review
 
 Other 4
-├─ repo_search
 ├─ council_emit
 ├─ run_command
+├─ gz64
 └─ deadline_remaining
 ```
 

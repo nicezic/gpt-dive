@@ -12,8 +12,7 @@ The immediate problem is that `code_mode` is already the primary programmable WS
 ## Current State
 
 - `code_mode` builds a per-run `CallableRegistry` from `_build_code_registry(default_cwd)`.
-- Existing capabilities include `local_exec`, `subagent_call`, `bare`, `repo_search`, `council_emit`, and `gz64`.
-- `repo_search` is already a Probe-backed local search capability using default BM25 ranking over AST-aware code blocks. Its current name and description are sufficient; this plan does not change it.
+- Existing capabilities include `local_exec`, `subagent_call`, `bare`, `council_emit`, and `gz64`.
 - Pydantic AI Harness `FileSystem` builds a `FileSystemToolset` whose bound async methods can be called directly without an Agent and can be registered in the Monty callable registry with their native signatures/docstrings.
 - Harness FileSystem already provides root/symlink containment, allow/deny/protected patterns, binary detection, bounded reads/searches, and `expected_hash` optimistic-concurrency checks for writes/edits.
 - Harness `Shell` provides synchronous and managed-background command tools. It will initially coexist with `local_exec` so actual Code Mode ergonomics and behavior can be compared before either surface is removed.
@@ -48,7 +47,6 @@ Keep existing `local_exec` unchanged during this experiment. The new Shell surfa
 
 ## Explicit Non-goals
 
-- No rename or behavioral change to `repo_search`.
 - No GBrain integration into the Code Mode registry. GBrain remains a separate indexed Pydantic retrieval layer.
 - No RepoContext capability in this change. Existing bootstrap/Wiki orientation is sufficient for now.
 - No Planning, Skills, Memory, ConversationSearch, StepPersistence, or other Harness capabilities.
@@ -68,7 +66,7 @@ Keep existing `local_exec` unchanged during this experiment. The new Shell surfa
 ### 2. Scope FileSystem to Code Mode cwd
 
 - **Decision:** FileSystem root is the effective Code Mode `cwd`.
-- **Reason:** `local_exec`, `subagent_call`, and `repo_search` already inherit the Code Mode cwd. File tools should live in the same workspace model, and Harness containment then provides a meaningful repository boundary.
+- **Reason:** `local_exec` and `subagent_call` already inherit the Code Mode cwd. File tools should live in the same workspace model, and Harness containment then provides a meaningful repository boundary.
 - **Rejected alternatives:** Rooting file tools at `/` or giving every file call an independent absolute-root parameter.
 - **Consequences / tradeoffs:** Access outside the chosen workspace requires a Code Mode call with a different `cwd`, which is intentional.
 
@@ -78,13 +76,6 @@ Keep existing `local_exec` unchanged during this experiment. The new Shell surfa
 - **Reason:** The Harness Shell surface includes command policy, output handling, environment controls, managed background processes, and cleanup behavior that are worth evaluating as a possible replacement or complement to GPT Dive's custom execution primitive.
 - **Rejected alternatives:** Add only `run_command`, or replace `local_exec` immediately without real-use evidence.
 - **Consequences / tradeoffs:** The registry temporarily has overlapping execution APIs. This is deliberate experimentation, not the desired permanent duplication.
-
-### 4. Leave repo_search alone
-
-- **Decision:** Keep `repo_search` and its existing description unchanged.
-- **Reason:** Its description already states that it uses Probe with BM25 ranking and AST-aware blocks, which is enough for discovery through `CAPABILITIES`.
-- **Rejected alternatives:** Rename it to `bm25_ast` or advertise Probe in bootstrap.
-- **Consequences / tradeoffs:** The name remains engine-neutral enough for a future Probe reranker change while the live description carries the current implementation detail.
 
 ## Implementation Direction
 
@@ -115,7 +106,7 @@ At minimum prove:
 7. `run_command` executes in the Code Mode workspace and reports success/non-zero results in the Harness-defined form.
 8. `start_command` returns an id; `check_command` observes it; `stop_command` terminates it and returns final evidence.
 9. A Code Mode run does not leak a managed Harness background process after the owning lifecycle ends.
-10. Existing `local_exec`, `repo_search`, `subagent_call`, background Code Mode, and current public MCP surface remain regression-green.
+10. Existing `local_exec`, `subagent_call`, background Code Mode, and current public MCP surface remain regression-green.
 
 Tests should use temporary workspaces/processes and avoid real credentials, network dependencies, destructive commands, or long-lived daemons.
 
@@ -158,9 +149,9 @@ Fresh-session live acceptance (2026-08-14):
 - Live acceptance is **PASS**. No additional MCP restart is required for this capability rollout.
 
 
-## Follow-up — trusted read roots + repo_search cwd (2026-08-14)
+## Follow-up — trusted read roots (2026-08-14)
 
-A real cross-repository GBrain task exposed an ergonomics gap in Decision 2 above: `cwd=~/gbrain` correctly contained Harness FileSystem access, but normal reference work also needed `~/ref` without changing the primary workspace. A second live probe showed `repo_search(path="src")` resolved from the wrong base instead of Code Mode `cwd`.
+A real cross-repository GBrain task exposed an ergonomics gap in Decision 2 above: `cwd=~/gbrain` correctly contained Harness FileSystem access, but normal reference work also needed `~/ref` without changing the primary workspace.
 
 ### Decision
 
@@ -170,7 +161,6 @@ A real cross-repository GBrain task exposed an ergonomics gap in Decision 2 abov
 - Only `read_file`, `list_directory`, `search_files`, `find_files`, and `file_info` may use those external roots, and only through explicit absolute/`~/...` paths.
 - Keep `write_file`, `edit_file`, and `create_directory` bound directly to the primary workspace FileSystem.
 - Relative `../` traversal never switches roots.
-- Make relative `repo_search(path=...)` resolve from the Code Mode workspace; absolute/`~/` paths stay explicit.
 
 This supersedes only the earlier consequence that outside-workspace reads always require a different Code Mode `cwd`. It preserves the earlier reason for a meaningful writable repository boundary.
 
@@ -184,7 +174,6 @@ Harness FileSystem is intentionally single-root and already implements canonical
 - trusted external write: rejected and target unchanged
 - unlisted absolute root read: rejected
 - symlink inside trusted root escaping outside it: rejected by Harness containment
-- relative `repo_search(path="src")`: resolves to `<cwd>/src`
 - existing FileSystem/Shell capability tests remain green
 
 Local acceptance:
@@ -195,6 +184,6 @@ Local acceptance:
 - `uv run pytest -q` -> **87 passed**
 - `uv run ruff check src/gpt_dive/app.py tests/test_code_runtime.py tests/test_surface.py` -> PASS
 - `uv run pyright src/gpt_dive/app.py` -> **0 errors**
-- direct source-runtime probe: `cwd=~/gbrain -> read_file(~/ref/pydantic-ai/pyproject.toml)` PASS; `repo_search(path="src")` resolved to `/home/nicezic/gpt-dive/src`.
+- direct source-runtime probe: `cwd=~/gbrain -> read_file(~/ref/pydantic-ai/pyproject.toml)` PASS.
 
 A service reload is required before the active MCP process exposes this follow-up behavior; fresh-session live acceptance should re-check the model-facing capability descriptions and one real `cwd=~/gbrain -> ~/ref` read after reload.

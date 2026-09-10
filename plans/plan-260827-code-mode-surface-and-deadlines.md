@@ -361,7 +361,6 @@ Agent/Search
 ├─ subagent_call
 ├─ peer_review
 ├─ m3_evidence
-├─ repo_search
 └─ council_emit
 
 Task
@@ -485,7 +484,7 @@ test_harness_shell_direct_registry_preserves_output_cap
 test_code_mode_result_passthrough_for_raw_shell_execution
 ```
 
-Update `test_capabilities_are_runtime_discoverable` to assert the five removed names are absent. Keep representative FileSystem, agent, repo-search, and Task names present.
+Update `test_capabilities_are_runtime_discoverable` to assert the five removed names are absent. Keep representative FileSystem, agent, repository search, and Task names present.
 
 Replace background-test timing helpers such as:
 

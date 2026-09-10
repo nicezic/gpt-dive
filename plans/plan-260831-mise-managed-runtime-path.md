@@ -28,7 +28,6 @@ GPT Dive execution surfaces
           │
           ├─ run_command
           ├─ execution workers
-          ├─ repo_search
           └─ model/subagent runtimes
 ```
 

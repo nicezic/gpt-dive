@@ -85,7 +85,7 @@ Final gates after both: **232 tests** / ruff / pyright / diff --check green.
 
 Morning `/code-review` findings (Standards axis) cleaned on this same branch per user decision; one commit per finding, full gates green at every step. #4 (data-clump typing across signatures) deliberately deferred; #5/#8 accepted as-is.
 
-- `672277c` C1 (#6): `stderr_tail` becomes the single stderr-cap owner — unused `limit` kwarg dropped, raw `stderr[-2000:]` slices replaced in model_call / subagent_runtime / agy_worker / repo_search / task_runtime. stdout caps untouched.
+- `672277c` C1 (#6): `stderr_tail` becomes the single stderr-cap owner — unused `limit` kwarg dropped, raw `stderr[-2000:]` slices replaced in model_call / subagent_runtime / agy_worker / task_runtime. stdout caps untouched.
 - `054b946` C2 (#7): `_run_worker` result identity (model/provider/mode) resolved once instead of four `peer_review` ternaries.
 - `9ef8c44` C3 (#2): `WorkerOutcome(NamedTuple)` replaces the string-keyed envelope dict from `run_bounded_worker`; callers use attribute access so typos fail in pyright, not as distant runtime KeyErrors. Timeout test fake now mirrors real asyncio by setting returncode after SIGTERM reap.
 - `fd6ccb4` C4 (#1): `worker_failure()` owns timeout/nonzero-exit detection and message wording for all three lanes; lane payloads stay with each caller per the documented envelope policy. Additive change: timeout error payloads across lanes now carry `timed_out: true` (agy already did); no test asserted old wording.

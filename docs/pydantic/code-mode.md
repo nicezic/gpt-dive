@@ -72,9 +72,9 @@ Agent and model 3
 └─ peer_review(provider, model?, prompt, cwd?)
 
 Other 4
-├─ repo_search(query, path?, max_results?, max_tokens?, allow_tests?)
 ├─ council_emit(council_dir, message, expected_head?)
 ├─ run_command(command)
+├─ gz64(payload)
 └─ deadline_remaining()
 ```
 

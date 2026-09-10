@@ -27,7 +27,7 @@ The triggering failure was a contract-adherence error: live `CAPABILITIES` corre
 ### Explicit Non-goals
 
 - No parameter aliases or automatic `query -> pattern` correction.
-- No rename/change to `search_files`, `repo_search`, or other capability contracts.
+- No rename/change to `search_files` or other capability contracts.
 - No prompt/bootstrap expansion as the primary fix.
 - No worker/model routing or tool-surface changes.
 - No user-facing `type_check=False` escape hatch in this change.
@@ -77,7 +77,7 @@ At minimum prove:
 
 1. Given live `search_files(pattern, *, path, include_glob)`, when Code Mode receives `search_files(query=...)`, then it raises `MontyTypingError` naming both the missing `pattern` and unknown `query` before host dispatch.
 2. A representative valid capability call still executes normally with type checking enabled.
-3. Existing patterns using `CAPABILITIES`, `INPUT`, `asyncio.gather`, FileSystem, Shell, `repo_search`, `subagent_call`, `bare`, and background Code Mode remain regression-green through the existing test suite.
+3. Existing patterns using `CAPABILITIES`, `INPUT`, `asyncio.gather`, FileSystem, Shell, `subagent_call`, `bare`, and background Code Mode remain regression-green through the existing test suite.
 4. Type-check stubs are derived from the registry rather than a duplicated static signature list.
 
 ## Acceptance / Validation
