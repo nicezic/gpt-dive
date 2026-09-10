@@ -28,7 +28,7 @@ def test_build_command_uses_safe_plan_mode() -> None:
 
     assert command[0].endswith("/.local/bin/agy")
     assert command[1:3] == ["-p", "review this"]
-    assert command[command.index("--model") + 1] == "gemini-3.7-flash-high"
+    assert command[command.index("--model") + 1] == "gemini-3.8-flash-high"
     assert command[command.index("--output-format") + 1] == "stream-json"
     assert command[command.index("--mode") + 1] == "plan"
     assert command[command.index("--print-timeout") + 1] == "13s"

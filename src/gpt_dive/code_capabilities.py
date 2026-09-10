@@ -195,7 +195,7 @@ def build_code_registry(
     ) -> dict[str, Any]:
         """Run a read-only Antigravity worker through the official agy CLI.
 
-        Defaults to Gemini 3.7 Flash High. Google authentication and entitlement stay
+        Defaults to Gemini 3.8 Flash High. Google authentication and entitlement stay
         inside agy. Pass conversation_id to resume that exact AGY conversation. The worker
         runs in read-only plan mode and auto-approves headless tool permission prompts.
         """

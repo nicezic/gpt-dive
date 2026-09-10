@@ -111,7 +111,7 @@ Current operating reality:
 
 - **ChatGPT Web GPT-5.6 Sol**: primary engineer/conductor; observed Web quota is generous enough that Web-first engineering is economically preferred.
 - **OpenAI Codex pool (Sol/Terra/Luna)**: comparatively scarce on the user's ChatGPT Plus subscription; preserve this pool for cases where Codex-native execution or independent review adds real value.
-- **Google Antigravity / Gemini 3.7 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode → agy_worker()`; deliberately external long work may be delegated to a sibling `systemd-run --user` unit outside GPT Dive Runtime.
+- **Google Antigravity / Gemini 3.8 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode → agy_worker()`; deliberately external long work may be delegated to a sibling `systemd-run --user` unit outside GPT Dive Runtime.
 - **Opus-5 through third-party providers**: paid/selective independent reviewer. Useful for consequential peer review, not the default worker.
 - **MiniMax M3**: abundant purchased quota but lower trust for difficult reasoning; not a design authority.
 
@@ -138,7 +138,7 @@ Do not silently reinterpret the user's words to make them fit. Surface the confl
 The user and Web SOL may use recurring conversational aliases alongside canonical terms:
 
 - **웹솔이** = ChatGPT Web GPT-5.6 Sol, the primary engineer/conductor.
-- **잼민이** = the Gemini worker, usually Gemini 3.7 Flash High through `agy`.
+- **잼민이** = the Gemini worker, usually Gemini 3.8 Flash High through `agy`.
 - **단틱이** = Pydantic AI.
 
 These aliases are conversational shorthand, not automatically Conduit domain terms; only concepts specific to Conduit belong in `docs/conduit/CONTEXT.md`.

@@ -8,7 +8,7 @@ from typing import Any
 from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
 
 AGY = Path.home() / ".local" / "bin" / "agy"
-DEFAULT_MODEL = "gemini-3.7-flash-high"
+DEFAULT_MODEL = "gemini-3.8-flash-high"
 _PROVIDER = "antigravity"
 
 
