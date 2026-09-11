@@ -50,7 +50,7 @@ async def _complete_opus_turn(
     *,
     invoke: OpusInvoker,
     timeout: float,
-    output_tokens_limit: int,
+    output_tokens_limit: int | None,
 ) -> dict[str, Any]:
     before_context = context_commit(repo, "OPUS")
     unread = unread_transcript(repo, "OPUS", target_commit)
@@ -116,7 +116,7 @@ async def run_opus_turn(
     *,
     invoke: OpusInvoker = invoke_subagent,
     timeout: float = 180.0,
-    output_tokens_limit: int = 4096,
+    output_tokens_limit: int | None = None,
 ) -> dict[str, Any]:
     """Commit one USER turn, ask OPUS, commit its response, then advance its cursor."""
     repo = Path(council_dir).expanduser().resolve()
@@ -136,7 +136,7 @@ async def retry_opus_turn(
     *,
     invoke: OpusInvoker = invoke_subagent,
     timeout: float = 180.0,
-    output_tokens_limit: int = 4096,
+    output_tokens_limit: int | None = None,
 ) -> dict[str, Any]:
     """Retry OPUS from its unchanged cursor without appending a duplicate USER turn."""
     repo = Path(council_dir).expanduser().resolve()

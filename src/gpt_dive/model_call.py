@@ -202,11 +202,16 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             model_settings=AnthropicModelSettings(max_tokens=output_tokens_limit),
         )
     else:
-        output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
         raw_model = str(
             payload.get("alias") or payload.get("model_alias") or payload.get("model")
         )
         provider, model_name = resolve_model(raw_model)
+        raw_limit = payload.get("output_tokens_limit")
+        output_tokens_limit = (
+            int(raw_limit)
+            if raw_limit is not None
+            else model_output_tokens_limit(model_name)
+        )
         route = PROVIDER_ROUTES.get(provider)
         transport = (
             "codex-subscription"
@@ -247,9 +252,14 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             )
         run_prompt = [stable_base, CachePoint(ttl="5m"), round_delta]
 
+    usage_limits = (
+        UsageLimits(output_tokens_limit=output_tokens_limit)
+        if output_tokens_limit is not None
+        else None
+    )
     result = await agent.run(
         run_prompt,
-        usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),
+        usage_limits=usage_limits,
     )
     response = result.response
     finish_reason = response.finish_reason
@@ -288,7 +298,7 @@ async def invoke_model_call(
     alias: str | None = None,
     prompt: str,
     timeout: float,
-    output_tokens_limit: int = 4096,
+    output_tokens_limit: int | None = None,
     peer_review: bool = False,
     provider: str | None = None,
     workspace_dir: str | None = None,
@@ -322,12 +332,12 @@ async def invoke_model_call(
             provider_label = provider
             payload_model = None
             model_label = _peer_model_label(payload_model, provider)
-        requested_output_tokens_limit = None
+        requested_output_tokens_limit = output_tokens_limit
     else:
         if effective_alias is None:
             raise ValueError("alias is required for model calls")
         provider_label, payload_model = resolve_model(effective_alias)
-        if output_tokens_limit <= 0:
+        if output_tokens_limit is not None and output_tokens_limit <= 0:
             raise ValueError("output_tokens_limit must be greater than 0")
         model_label = effective_alias
         requested_output_tokens_limit = output_tokens_limit

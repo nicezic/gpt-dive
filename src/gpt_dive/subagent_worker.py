@@ -19,7 +19,7 @@ from pydantic_ai_harness.tool_output_limits import (
     Truncate,
 )
 
-from .model_registry import get_model, resolve_model
+from .model_registry import get_model, model_output_tokens_limit, resolve_model
 from .runtime_env import DENIED_MODEL_ENV_PATTERNS, build_runtime_path
 
 _TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 8_000
@@ -89,15 +89,25 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     provider, model_name = resolve_model(raw_model)
     task = str(payload["task"])
-    output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
+    raw_limit = payload.get("output_tokens_limit")
+    output_tokens_limit = (
+        int(raw_limit)
+        if raw_limit is not None
+        else model_output_tokens_limit(model_name)
+    )
     workspace_dir = payload.get("workspace_dir")
     capabilities = (
         _build_worker_capabilities(str(workspace_dir)) if workspace_dir else []
     )
     agent = Agent(get_model(raw_model), capabilities=capabilities)
+    usage_limits = (
+        UsageLimits(output_tokens_limit=output_tokens_limit)
+        if output_tokens_limit is not None
+        else None
+    )
     result = await agent.run(
         task,
-        usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),
+        usage_limits=usage_limits,
     )
     return {
         "ok": True,

@@ -18,14 +18,14 @@ MODEL_SPECS = model_catalog()
 
 
 def _validate_call(
-    alias: str, task: str, timeout: float, output_tokens_limit: int
+    alias: str, task: str, timeout: float, output_tokens_limit: int | None
 ) -> tuple[str, str]:
     prov, model_name = resolve_model(alias)
     if not task.strip():
         raise ValueError("task must not be empty")
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
-    if output_tokens_limit <= 0:
+    if output_tokens_limit is not None and output_tokens_limit <= 0:
         raise ValueError("output_tokens_limit must be greater than 0")
     return prov, model_name
 
@@ -35,7 +35,7 @@ async def invoke_subagent(
     alias: str | None = None,
     task: str,
     timeout: float,
-    output_tokens_limit: int = 4096,
+    output_tokens_limit: int | None = None,
     workspace_dir: str | None = None,
     model_alias: str | None = None,
     model: str | None = None,

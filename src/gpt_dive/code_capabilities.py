@@ -210,7 +210,7 @@ def build_code_registry(
         *,
         alias: str | None = None,
         task: str,
-        output_tokens_limit: int = 4096,
+        output_tokens_limit: int | None = None,
         cwd: str | None = None,
         model: str | None = None,
         model_alias: str | None = None,
