@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 from pydantic_ai import CachePoint, UsageLimits
 from pydantic_ai_harness import CodeMode, FileSystem
@@ -316,3 +316,61 @@ def test_peer_review_worker_rejects_unknown_provider(tmp_path) -> None:
 
     assert result["ok"] is False
     assert "registered providers" in result["error"]
+
+
+def test_peer_review_supports_openai_codex_exact_model(monkeypatch, tmp_path) -> None:
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+
+    async def _verify(provider: str, model: str, **_kwargs: object) -> dict[str, object]:
+        assert (provider, model) == ("openai-codex", "gpt-6-astra")
+        return {"checked": True, "exists": True, "available": [model]}
+
+    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
+    monkeypatch.setattr(model_call_module, "verify_provider_model", _verify)
+
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "openai-codex",
+                "model": "gpt-6-astra",
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    model = _FakeAgent.init_args[0]
+    assert isinstance(model, OpenAICodexModel)
+    assert model.model_name == "gpt-6-astra"
+    assert result["ok"] is True
+
+
+def test_openai_codex_peer_review_requires_exact_model(tmp_path) -> None:
+    result = asyncio.run(
+        model_call_module._run_worker(
+            {
+                "peer_review": True,
+                "provider": "openai-codex",
+                "model": None,
+                "prompt": "review this",
+                "workspace_dir": str(tmp_path),
+            }
+        )
+    )
+
+    assert result["ok"] is False
+    assert "model is required" in result["error"]
+
+
+def test_peer_review_file_read_is_bounded_by_output_bytes(tmp_path) -> None:
+    (tmp_path / "large.txt").write_text(("x" * 80 + "\n") * 4000)
+    capabilities = model_call_module._build_peer_review_capabilities(str(tmp_path))
+    filesystem = next(cap for cap in capabilities if isinstance(cap, FileSystem))
+    toolset = cast(Any, filesystem.get_toolset())
+
+    result = asyncio.run(toolset.read_file("large.txt"))
+
+    assert "  2001\t" in result
+    assert len(result.encode("utf-8")) <= 256 * 1024
+    assert "Use offset=" in result

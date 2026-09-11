@@ -208,39 +208,61 @@ def build_code_registry(
 
     async def subagent_call(
         *,
-        model: str,
+        alias: str | None = None,
         task: str,
         output_tokens_limit: int = 4096,
         cwd: str | None = None,
+        model: str | None = None,
+        model_alias: str | None = None,
+        user_alias_model: str | None = None,
     ) -> dict[str, Any]:
         """Call a registered subagent with file tools scoped to cwd.
 
         If ok is false, preserve the full result including error/stderr diagnostics;
         do not project the failure down to only ok/model/output.
         """
+        effective_alias = alias or model_alias or user_alias_model or model
+        if not effective_alias:
+            raise TypeError("subagent_call() missing required argument: 'alias'")
         return await invoke_subagent(
-            model=model,
+            alias=effective_alias,
+            model_alias=effective_alias,
+            model=effective_alias,
             task=task,
             timeout=child_budget(record, _SUBAGENT_POLICY_SECONDS),
             output_tokens_limit=output_tokens_limit,
-            workspace_dir=cwd if cwd is not None else default_cwd,
+            workspace_dir=cwd if cwd is not None else str(effective_cwd),
         )
 
     async def peer_review(
         *,
-        provider: str,
-        model: str | None = None,
+        alias: str | None = None,
         prompt: str,
         cwd: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_alias: str | None = None,
+        user_alias_model: str | None = None,
     ) -> dict[str, Any]:
-        """Call an independent peer reviewer; omit model to use the provider's default."""
+        """Call an independent peer reviewer with file tools scoped to cwd."""
+        effective_alias = (
+            alias
+            or model_alias
+            or user_alias_model
+            or model
+            or provider
+        )
+        if not effective_alias:
+            raise TypeError("peer_review() missing required argument: 'alias'")
         return await invoke_model_call(
-            provider=provider,
-            model=model,
+            alias=effective_alias,
+            model_alias=effective_alias,
+            model=effective_alias,
             prompt=prompt,
             timeout=child_budget(record, _PEER_REVIEW_POLICY_SECONDS),
             peer_review=True,
-            workspace_dir=cwd if cwd is not None else default_cwd,
+            workspace_dir=cwd if cwd is not None else str(effective_cwd),
+            provider=provider if model is not None else None,
         )
 
     async def run_command(command: str) -> RunCommandResult:

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .model_registry import ModelAlias, model_catalog, resolve_model
+from .model_registry import model_catalog, resolve_model
 from .runtime_env import build_runtime_path
 from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
 
@@ -18,31 +18,42 @@ MODEL_SPECS = model_catalog()
 
 
 def _validate_call(
-    model: str, task: str, timeout: float, output_tokens_limit: int
-) -> ModelAlias:
-    alias = resolve_model(model, lane="subagent")
+    alias: str, task: str, timeout: float, output_tokens_limit: int
+) -> tuple[str, str]:
+    prov, model_name = resolve_model(alias)
     if not task.strip():
         raise ValueError("task must not be empty")
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
     if output_tokens_limit <= 0:
         raise ValueError("output_tokens_limit must be greater than 0")
-    return alias
+    return prov, model_name
 
 
 async def invoke_subagent(
     *,
-    model: str,
+    alias: str | None = None,
     task: str,
     timeout: float,
     output_tokens_limit: int = 4096,
     workspace_dir: str | None = None,
+    model_alias: str | None = None,
+    model: str | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Run one registered coding subagent with credentials scoped to a child process."""
-    alias = _validate_call(model, task, timeout, output_tokens_limit)
+    effective_alias = alias or model_alias or kwargs.get("user_alias_model") or model
+    if not effective_alias:
+        raise ValueError("unknown model alias: must provide alias")
+    provider, model_name = _validate_call(effective_alias, task, timeout, output_tokens_limit)
     payload = json.dumps(
         {
-            "model": alias.value,
+            "alias": effective_alias,
+            "model_alias": effective_alias,
+            "model": effective_alias,
+            "provider": provider,
+            "model_name": model_name,
+            "model_id": f"{provider}/{model_name}",
             "task": task,
             "output_tokens_limit": output_tokens_limit,
             "workspace_dir": workspace_dir,
@@ -78,8 +89,12 @@ async def invoke_subagent(
     )
     failure = worker_failure(outcome, kind="subagent", timeout=timeout)
     if failure is not None:
-        failure["model"] = alias.value
-        failure["provider"] = alias.provider
+        failure["alias"] = effective_alias
+        failure["model_alias"] = effective_alias
+        failure["model"] = effective_alias
+        failure["provider"] = provider
+        failure["model_name"] = model_name
+        failure["model_id"] = f"{provider}/{model_name}"
         if not outcome.timed_out:
             failure["stderr"] = stderr_tail(outcome.stderr_text)
         return failure
@@ -91,8 +106,12 @@ async def invoke_subagent(
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
-            "model": alias.value,
-            "provider": alias.provider,
+            "alias": effective_alias,
+            "model_alias": effective_alias,
+            "model": effective_alias,
+            "provider": provider,
+            "model_name": model_name,
+            "model_id": f"{provider}/{model_name}",
             "error": f"invalid subagent worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_tail(stderr_text),

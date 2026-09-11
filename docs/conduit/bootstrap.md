@@ -110,7 +110,7 @@ Architecture reviews must include the user's real model economics. Omitting them
 Current operating reality:
 
 - **ChatGPT Web GPT-5.6 Sol**: primary engineer/conductor; observed Web quota is generous enough that Web-first engineering is economically preferred.
-- **OpenAI Codex pool (Sol/Terra/Luna)**: comparatively scarce on the user's ChatGPT Plus subscription; preserve this pool for cases where Codex-native execution or independent review adds real value.
+- **OpenAI Codex subscription pool**: comparatively scarce; preserve it for cases where Codex-native execution or independent review adds real value. Model-specific usage policy lives in `~/wiki/USER_RULES.md`.
 - **Google Antigravity / Gemini 3.8 Flash High**: fast external worker through the official `agy` CLI. Normal worker path is `code_mode → agy_worker()`; deliberately external long work may be delegated to a sibling `systemd-run --user` unit outside GPT Dive Runtime.
 - **Opus-5 through third-party providers**: paid/selective independent reviewer. Useful for consequential peer review, not the default worker.
 - **MiniMax M3**: abundant purchased quota but lower trust for difficult reasoning; not a design authority.

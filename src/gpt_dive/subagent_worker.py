@@ -19,7 +19,7 @@ from pydantic_ai_harness.tool_output_limits import (
     Truncate,
 )
 
-from .model_registry import build_model, resolve_model
+from .model_registry import get_model, resolve_model
 from .runtime_env import DENIED_MODEL_ENV_PATTERNS, build_runtime_path
 
 _TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 8_000
@@ -84,23 +84,29 @@ def _usage_summary(result: Any) -> dict[str, Any]:
 
 
 async def _run(payload: dict[str, Any]) -> dict[str, Any]:
-    alias = resolve_model(str(payload["model"]), lane="subagent")
+    raw_model = str(
+        payload.get("alias") or payload.get("model_alias") or payload.get("model")
+    )
+    provider, model_name = resolve_model(raw_model)
     task = str(payload["task"])
     output_tokens_limit = int(payload.get("output_tokens_limit", 4096))
     workspace_dir = payload.get("workspace_dir")
     capabilities = (
         _build_worker_capabilities(str(workspace_dir)) if workspace_dir else []
     )
-    agent = Agent(build_model(alias), capabilities=capabilities)
+    agent = Agent(get_model(raw_model), capabilities=capabilities)
     result = await agent.run(
         task,
         usage_limits=UsageLimits(output_tokens_limit=output_tokens_limit),
     )
     return {
         "ok": True,
-        "model": alias.value,
-        "provider": alias.provider,
-        "model_name": alias.model_name,
+        "alias": raw_model,
+        "model_id": f"{provider}/{model_name}",
+        "model": raw_model,
+        "model_alias": raw_model,
+        "provider": provider,
+        "model_name": model_name,
         "output": str(result.output),
         "usage": _usage_summary(result),
     }

@@ -9,6 +9,7 @@ from gpt_dive.subagent_runtime import MODEL_SPECS, invoke_subagent, model_catalo
 
 def test_model_catalog_is_sanitized_and_complete() -> None:
     expected_models = {
+        "opus",
         "opus5",
         "micu-opus5",
         "ds",
@@ -18,11 +19,13 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
         "vip4",
         "m3",
         "glm-5.3-flash",
+        "glm-flash",
         "muse-free",
         "sol",
         "terra",
         "luna",
         "gpt6",
+        "astra",
     }
     assert set(MODEL_SPECS) == expected_models
     catalog = model_catalog()
