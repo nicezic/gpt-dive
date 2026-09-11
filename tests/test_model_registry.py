@@ -80,5 +80,23 @@ def test_verify_provider_model_skips_unknown_provider() -> None:
     assert result == {"checked": False, "exists": False, "available": []}
 
 def test_verify_provider_model_skips_unlisted_codex_provider() -> None:
-    result = asyncio.run(verify_provider_model("openai-codex", "gpt-5.6-sol"))
+    result = asyncio.run(verify_provider_model("openai-codex", "gpt-6-astra"))
     assert result == {"checked": False, "exists": False, "available": []}
+
+
+def test_opencode_aliases_use_native_openai_interfaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+
+    from gpt_dive.model_registry import PROVIDER_ROUTES
+
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-opencode-key")
+
+    glm = build_model("glm-5.3-flash")
+    muse = build_model("muse-free")
+
+    assert isinstance(glm, OpenAIChatModel)
+    assert glm.model_name == "glm-5.3-flash"
+    assert PROVIDER_ROUTES["opencode-go"].base_url == "https://opencode.ai/zen/go/v1"
+    assert isinstance(muse, OpenAIResponsesModel)
+    assert muse.model_name == "muse-spark-1.3-contributor-free"
+    assert PROVIDER_ROUTES["opencode-zen"].base_url == "https://opencode.ai/zen/v1"

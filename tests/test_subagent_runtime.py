@@ -17,9 +17,12 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
         "grok",
         "vip4",
         "m3",
+        "glm-5.3-flash",
+        "muse-free",
         "sol",
         "terra",
         "luna",
+        "gpt6",
     }
     assert set(MODEL_SPECS) == expected_models
     catalog = model_catalog()
@@ -35,6 +38,8 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
     assert catalog["sol"]["model"] == "gpt-5.6-sol"
     assert catalog["terra"]["model"] == "gpt-5.6-terra"
     assert catalog["luna"]["model"] == "gpt-5.6-luna"
+    assert catalog["gpt6"]["provider"] == "openai-codex"
+    assert catalog["gpt6"]["model"] == "gpt-6-astra"
     assert "key" not in repr(catalog).lower()
 
 

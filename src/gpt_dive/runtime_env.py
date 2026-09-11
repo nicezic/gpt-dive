@@ -9,6 +9,7 @@ DENIED_MODEL_ENV_PATTERNS = (
     *LLM_API_KEY_ENV_PATTERNS,
     "MINIMAX_*",
     "MICU_*",
+    "OPENCODE_*",
 )
 
 

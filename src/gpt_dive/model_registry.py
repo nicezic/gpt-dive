@@ -21,11 +21,12 @@ _MODEL_OUTPUT_TOKENS_LIMITS: dict[str, int] = {
 
 
 class ProviderRoute(NamedTuple):
-    """Connection route plus default model for one Anthropic-compatible provider."""
+    """Connection route, model interface, and default model for one provider."""
 
     credential_env: str
     base_url: str
     default_model: str
+    transport: str = "anthropic-compatible"
 
 
 # Single source of truth for exact-model provider routing (peer review and any
@@ -54,6 +55,18 @@ PROVIDER_ROUTES: dict[str, ProviderRoute] = {
     "minimax": ProviderRoute(
         "MINIMAX_API_KEY", "https://api.minimax.io/anthropic", "MiniMax-M3"
     ),
+    "opencode-go": ProviderRoute(
+        "OPENCODE_GO_API_KEY",
+        "https://opencode.ai/zen/go/v1",
+        "glm-5.3-flash",
+        "openai-chat-compatible",
+    ),
+    "opencode-zen": ProviderRoute(
+        "OPENCODE_GO_API_KEY",
+        "https://opencode.ai/zen/v1",
+        "muse-spark-1.3-contributor-free",
+        "openai-responses-compatible",
+    ),
 }
 
 
@@ -62,9 +75,6 @@ class ModelAlias(StrEnum):
 
     provider: str
     model_name: str
-    transport: str
-    credential_env: str | None
-    base_url: str | None
     peer_review: bool
     subagent: bool
     output_tokens_limit: int | None
@@ -74,7 +84,6 @@ class ModelAlias(StrEnum):
         alias: str,
         provider: str,
         model_name: str,
-        transport: str,
         peer_review: bool = True,
         subagent: bool = True,
     ):
@@ -82,30 +91,34 @@ class ModelAlias(StrEnum):
         obj._value_ = alias
         obj.provider = provider
         obj.model_name = model_name
-        obj.transport = transport
-        if transport == "anthropic-compatible":
-            route = PROVIDER_ROUTES.get(provider)
-            obj.credential_env = route.credential_env if route else None
-            obj.base_url = route.base_url if route else None
-        else:
-            obj.credential_env = None
-            obj.base_url = None
         obj.peer_review = peer_review
         obj.subagent = subagent
         obj.output_tokens_limit = _MODEL_OUTPUT_TOKENS_LIMITS.get(model_name)
         return obj
 
-    OPUS5 = ("opus5", "micu", "claude-opus-5", "anthropic-compatible")
-    MICU_OPUS5 = ("micu-opus5", "micu", "claude-opus-5", "anthropic-compatible")
-    DEEPSEEK = ("ds", "micu-ds", "deepseek-v4-pro-0813", "anthropic-compatible")
-    KIMI = ("kimi", "micu-kimi", "kimi-k3", "anthropic-compatible")
-    GLM = ("glm", "micu-glm", "glm-5.3", "anthropic-compatible")
-    GROK = ("grok", "micu-grok", "grok-4.6", "anthropic-compatible")
-    VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro-0813", "anthropic-compatible")
-    M3 = ("m3", "minimax", "MiniMax-M3", "anthropic-compatible")
-    SOL = ("sol", "openai-codex", "gpt-5.6-sol", "codex-subscription")
-    TERRA = ("terra", "openai-codex", "gpt-5.6-terra", "codex-subscription")
-    LUNA = ("luna", "openai-codex", "gpt-5.6-luna", "codex-subscription")
+    OPUS5 = ("opus5", "micu", "claude-opus-5")
+    MICU_OPUS5 = ("micu-opus5", "micu", "claude-opus-5")
+    DEEPSEEK = ("ds", "micu-ds", "deepseek-v4-pro-0813")
+    KIMI = ("kimi", "micu-kimi", "kimi-k3")
+    GLM = ("glm", "micu-glm", "glm-5.3")
+    GROK = ("grok", "micu-grok", "grok-4.6")
+    VIP4 = ("vip4", "micu-vip4", "deepseek-v4-pro-0813")
+    M3 = ("m3", "minimax", "MiniMax-M3")
+    GLM_FLASH = ("glm-5.3-flash", "opencode-go", "glm-5.3-flash")
+    MUSE_FREE = ("muse-free", "opencode-zen", "muse-spark-1.3-contributor-free")
+    SOL = ("sol", "openai-codex", "gpt-5.6-sol")
+    TERRA = ("terra", "openai-codex", "gpt-5.6-terra")
+    LUNA = ("luna", "openai-codex", "gpt-5.6-luna")
+    GPT6 = ("gpt6", "openai-codex", "gpt-6-astra")
+
+    @property
+    def transport(self) -> str:
+        if self.provider == "openai-codex":
+            return "codex-subscription"
+        route = PROVIDER_ROUTES.get(self.provider)
+        if route is None:
+            raise RuntimeError(f"missing provider route for model {self.value!r}")
+        return route.transport
 
     def public_spec(self) -> dict[str, str | bool | int | None]:
         return {
@@ -145,24 +158,38 @@ def resolve_model(value: str | ModelAlias, *, lane: str | None = None) -> ModelA
     return alias
 
 
+def _build_routed_model(route: ProviderRoute, model_name: str) -> Any:
+    api_key = os.environ[route.credential_env]
+    if route.transport == "anthropic-compatible":
+        return AnthropicModel(
+            model_name,
+            provider=AnthropicProvider(api_key=api_key, base_url=route.base_url),
+        )
+
+    if route.transport in {"openai-chat-compatible", "openai-responses-compatible"}:
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        provider = OpenAIProvider(api_key=api_key, base_url=route.base_url)
+        if route.transport == "openai-chat-compatible":
+            return OpenAIChatModel(model_name, provider=provider)
+        return OpenAIResponsesModel(model_name, provider=provider)
+
+    raise RuntimeError(f"unsupported provider transport {route.transport!r}")
+
+
 def build_model(value: str | ModelAlias) -> Any:
     """Build the Pydantic AI model from the central registry metadata."""
     alias = resolve_model(value)
-    if alias.transport == "anthropic-compatible":
-        if not alias.credential_env or not alias.base_url:
-            raise RuntimeError(f"incomplete provider routing for model {alias.value!r}")
-        provider = AnthropicProvider(
-            api_key=os.environ[alias.credential_env],
-            base_url=alias.base_url,
-        )
-        return AnthropicModel(alias.model_name, provider=provider)
-
-    if alias.transport == "codex-subscription":
+    if alias.provider == "openai-codex":
         from pydantic_ai.models.openai_codex import OpenAICodexModel
 
         return OpenAICodexModel(alias.model_name)
 
-    raise RuntimeError(f"unsupported transport {alias.transport!r} for {alias.value!r}")
+    route = PROVIDER_ROUTES.get(alias.provider)
+    if route is None:
+        raise RuntimeError(f"incomplete provider routing for model {alias.value!r}")
+    return _build_routed_model(route, alias.model_name)
 
 
 def build_provider_model(provider: str, model_name: str) -> Any:
@@ -178,13 +205,7 @@ def build_provider_model(provider: str, model_name: str) -> Any:
         raise ValueError(
             f"unknown peer provider {provider!r}; registered providers: {known}"
         )
-    return AnthropicModel(
-        model_name,
-        provider=AnthropicProvider(
-            api_key=os.environ[route.credential_env],
-            base_url=route.base_url,
-        ),
-    )
+    return _build_routed_model(route, model_name)
 
 
 def _async_client_for_route(route: ProviderRoute) -> Any:
@@ -208,7 +229,7 @@ async def verify_provider_model(
     model ids whenever the listing succeeded.
     """
     route = PROVIDER_ROUTES.get(provider)
-    if route is None:
+    if route is None or route.transport != "anthropic-compatible":
         return {"checked": False, "exists": False, "available": []}
     try:
         client = _async_client_for_route(route)
@@ -216,7 +237,7 @@ async def verify_provider_model(
         async def _list_ids() -> list[str]:
             return [model.id async for model in client.models.list()]
 
-        available: list[str] = await asyncio.wait_for(_list_ids(), timeout=timeout)
+        available = await asyncio.wait_for(_list_ids(), timeout=timeout)
     except Exception:
         return {"checked": False, "exists": False, "available": []}
     return {"checked": True, "exists": model_name in available, "available": available}

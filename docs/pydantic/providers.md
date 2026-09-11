@@ -11,6 +11,9 @@ This page records **GPT Dive provider/model integration roles and adapter owners
 | `m3` | MiniMax Anthropic-compatible | MiniMax-M3 | high-quota evidence analyst/controller; prefer bounded tool-less review over autonomous multi-tool loops |
 | `terra` | OpenAI Codex subscription | GPT-5.6 Terra | local subscription-backed judgment/review/worker candidate |
 | `luna` | OpenAI Codex subscription | GPT-5.6 Luna | subscription-backed conductor/judgment candidate |
+| `gpt6` | OpenAI Codex subscription | GPT-6 Astra | explicit user-requested premium review / coding only (`~/wiki/USER_RULES.md`) |
+| `glm-5.3-flash` | OpenCode Go | `glm-5.3-flash` | low-cost OpenAI-compatible subagent route |
+| `muse-free` | `opencode-zen` | `muse-spark-1.3-contributor-free` | free OpenAI Responses route |
 
 The alias layer hides provider URL/key/model-name details from Monty orchestration code. Anthropic-compatible exact-model routes may soft-check their authenticated `/v1/models` catalog before inference. OpenAI Codex authentication and transport are owned by Pydantic AI's official `openai-codex` provider.
 
