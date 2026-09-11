@@ -18,7 +18,7 @@ Local MCP bridge
   -> explicit subagent model calls
   -> Harness coding-worker bundle
   -> direct Harness FileSystem + bounded run_command in Code Mode
-  -> local Codex subscription compatibility layer
+  -> upstream Pydantic OpenAI Codex subscription support
   -> Probe-backed repository retrieval
   -> current extensible runtime
 ```
@@ -86,17 +86,15 @@ GPT Dive still owns lower local execution policy such as `guard-bin` PATH preced
 
 Code Mode resolves relative filesystem paths from the effective `cwd` and allows host reads/writes across `/` subject to normal OS permissions, except explicitly blocked credential/secret paths. Registered Harness FileSystem capabilities share this policy. `run_command` inherits the same cwd, shared runtime PATH, denied secret environment, and outer Execution deadline; guard-bin stays first and the mise-managed toolchain is exposed immediately behind it as documented in `docs/runtime/architecture.md`. Subagents and external workers retain bounded, audited execution capabilities under standard guard policies.
 
-### 7. Local ChatGPT Codex subscription compatibility
+### 7. Upstream OpenAI Codex subscription support
 
 **Change**
-- GPT Dive consumes official stable `pydantic-ai-slim` rather than carrying a downstream Pydantic fork.
-- Subscription-backed Codex aliases route through the local `gpt_dive.openai_codex` compatibility package.
+- GPT Dive consumes official stable `pydantic-ai-slim` and routes subscription-backed Codex aliases through Pydantic AI's official `OpenAICodexModel` / `OpenAICodexProvider`.
+- The former local Codex compatibility package was retired once equivalent support shipped upstream.
 
 **Why**
-- Keep upstream Pydantic upgradeable while isolating only the OAuth/provider/Responses behavior that is not yet available in the required released upstream form.
-- Make the compatibility layer explicitly retireable.
-
-Maintenance SSOT: root-level `README.patch.openai.provider.md`. It intentionally stays prominent at repository root so Pydantic upgrades do not miss the compatibility/retirement check.
+- Provider authentication, refresh, transport, streaming, and Responses behavior belong to Pydantic AI rather than GPT Dive.
+- GPT Dive keeps only local alias/routing policy.
 
 ### 8. Repository retrieval through shell tools
 

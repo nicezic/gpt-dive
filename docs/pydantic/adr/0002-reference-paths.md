@@ -20,6 +20,6 @@ Their primary role is source/docs/API reference, compatibility inspection, and t
 
 - Core authority: `~/ref/pydantic-ai/`.
 - Harness: `~/ref/pydantic-ai-harness/`.
-- `~/ref/pydantic-ai-pr-6433/` remains only as behavioral/provenance reference for the GPT Dive local Codex compatibility layer; the runtime dependency normalized to official stable on 2026-08-14.
+- `~/ref/pydantic-ai-pr-6433/` is historical provenance for the former local Codex compatibility layer; GPT Dive retired that layer after official support shipped in Pydantic AI 2.42.0.
 
 Official docs are read from these clones directly; Wiki does not maintain a duplicate official-doc tree.

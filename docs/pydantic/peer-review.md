@@ -18,7 +18,7 @@ Web SOL
                  -> independent review
 ```
 
-Internal `invoke_model_call(..., peer_review=False)` remains available as a tool-less model call primitive. Exact model ids are soft-verified against the provider `/v1/models` listing inside the credentialed worker before inference.
+Internal `invoke_model_call(..., peer_review=False)` remains available as a tool-less model call primitive. Anthropic-compatible exact model ids may be soft-verified against the provider `/v1/models` listing before inference; OpenAI Codex uses Pydantic AI's official provider contract.
 
 ## Implementation ownership
 

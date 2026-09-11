@@ -1,33 +1,27 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import pytest
 
-from gpt_dive.model_registry import build_model
+from gpt_dive.model_registry import build_model, verify_provider_model
 
 
-def test_registry_import_does_not_load_codex_compat_for_non_codex_paths(
+def test_codex_alias_uses_upstream_pydantic_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
-    had_codex = sys.modules.pop("gpt_dive.openai_codex", None)
-    try:
-        assert "gpt_dive.openai_codex" not in sys.modules
-        build_model("m3")
-        assert "gpt_dive.openai_codex" not in sys.modules
-    finally:
-        if had_codex is not None:
-            sys.modules["gpt_dive.openai_codex"] = had_codex
+    import pydantic_ai.models.openai_codex as codex_model
 
+    captured: dict[str, str] = {}
 
-def test_codex_alias_uses_local_compat_layer() -> None:
-    from gpt_dive.openai_codex import OpenAICodexResponsesModel
+    class _FakeCodexModel:
+        def __init__(self, model_name: str) -> None:
+            captured["model_name"] = model_name
 
-    model = build_model("sol")
-    assert isinstance(model, OpenAICodexResponsesModel)
-    assert model.system == "openai-codex"
+    monkeypatch.setattr(codex_model, "OpenAICodexModel", _FakeCodexModel)
+
+    build_model("sol")
+    assert captured == {"model_name": "gpt-5.6-sol"}
 
 
 def test_verify_provider_model_reports_missing_model(monkeypatch) -> None:
@@ -83,4 +77,8 @@ def test_verify_provider_model_skips_unknown_provider() -> None:
     from gpt_dive.model_registry import verify_provider_model
 
     result = asyncio.run(verify_provider_model("not-a-provider", "x"))
+    assert result == {"checked": False, "exists": False, "available": []}
+
+def test_verify_provider_model_skips_unlisted_codex_provider() -> None:
+    result = asyncio.run(verify_provider_model("openai-codex", "gpt-5.6-sol"))
     assert result == {"checked": False, "exists": False, "available": []}

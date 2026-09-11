@@ -158,17 +158,20 @@ def build_model(value: str | ModelAlias) -> Any:
         return AnthropicModel(alias.model_name, provider=provider)
 
     if alias.transport == "codex-subscription":
-        from .openai_codex import OpenAICodexProvider, OpenAICodexResponsesModel
+        from pydantic_ai.models.openai_codex import OpenAICodexModel
 
-        return OpenAICodexResponsesModel(
-            alias.model_name, provider=OpenAICodexProvider()
-        )
+        return OpenAICodexModel(alias.model_name)
 
     raise RuntimeError(f"unsupported transport {alias.transport!r} for {alias.value!r}")
 
 
 def build_provider_model(provider: str, model_name: str) -> Any:
-    """Build an exact model name on a registered Anthropic-compatible provider route."""
+    """Build an exact model name on a registered peer-review provider."""
+    if provider == "openai-codex":
+        from pydantic_ai.models.openai_codex import OpenAICodexModel
+
+        return OpenAICodexModel(model_name)
+
     route = PROVIDER_ROUTES.get(provider)
     if route is None:
         known = ", ".join(sorted(PROVIDER_ROUTES))

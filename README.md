@@ -24,12 +24,9 @@ Code Mode enforces deterministic server-side execution deadlines (not AI argumen
 
 The full lifetime and cleanup contract is in [`docs/runtime/timeouts.md`](docs/runtime/timeouts.md).
 
-## OpenAI Codex subscription compatibility
+## OpenAI Codex subscription
 
-GPT Dive consumes official Pydantic AI. Subscription-backed `sol` / `terra` / `luna` models route through the optional local `gpt_dive.openai_codex` compatibility layer rather than a downstream Pydantic AI fork. The local layer owns only Codex-specific OAuth, credential rotation, provider transport, and the narrow Responses adaptation needed to preserve ordinary `Agent.run()`. Non-Codex providers remain ordinary Pydantic AI paths.
-
-**Update Policy**
-Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `README.patch.openai.provider.md`.
+GPT Dive uses Pydantic AI's official `openai-codex` model/provider for ChatGPT subscription-backed Codex models. Authentication, credential refresh, transport, and Responses adaptation are upstream Pydantic AI responsibilities; GPT Dive only maps local aliases to provider/model identities.
 
 ## Documentation architecture & ownership
 
@@ -54,7 +51,6 @@ Maintenance SSOT, upstream seams, upgrade procedure, and retirement condition: `
 | **결정 기록 (ADR)** | [`docs/runtime/adr/`](docs/runtime/adr/) | 왜 그렇게 설계했는가 (ADR 0004~0011, 폐기 대안, 장애 계보) |
 | **운영 & 재시작** | [`docs/runtime/operations.md`](docs/runtime/operations.md) | Systemd 터널 서비스 관리, 지연 안전 재시작 절차 |
 | **Council** | [`docs/council/README.md`](docs/council/README.md) | 다자 협업 Room 아키텍처 및 Svelte 프론트엔드 |
-| **Codex 호환 계층** | [`README.patch.openai.provider.md`](README.patch.openai.provider.md) | Upstream 패치 경계 및 유지보수 SSOT |
 
 Registered Code Mode capability signatures and callable docstrings are model-visible live contracts exposed through `CAPABILITIES` inside `code_mode`; the public MCP schema owns the outer tool contract. `bootstrap` loads the configured Wiki preload packet, not capability signatures. When capability behavior changes, keep its signature and docstring concise and accurate; detailed AI usage/routing policy belongs in the Wiki rather than being duplicated here.
 

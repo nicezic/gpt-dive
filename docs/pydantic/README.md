@@ -10,7 +10,7 @@ Keep here:
 
 - Pydantic/Harness integration architecture inside GPT Dive.
 - Code Mode implementation and capability-registry behavior.
-- Local provider/model integration and compatibility layers.
+- Local provider/model routing and upstream integration boundaries.
 - GPT Dive-specific ADRs and upstream-delta rationale.
 - Upgrade/retirement seams that must evolve with this repository.
 
@@ -29,7 +29,6 @@ Keep elsewhere:
 - `peer-review.md` — peer-review lane behind Code Mode `peer_review(...)`, review-packet guidance, read-only inspection boundary, and experimental acceptance lessons.
 - `tool-output-limits.md` — SubAgent ToolOutputLimits policy and the distinct Code Mode final-output spill seam.
 - `providers.md` — provider/model alias integration roles and repository ownership boundaries.
-- Root `README.patch.openai.provider.md` — intentionally prominent maintenance SSOT for the local ChatGPT Codex subscription compatibility layer; keep it at repository root so Pydantic upgrades encounter it early.
 - `adr/README.md` — ADR admission rule and scope boundary.
 - `adr/0004-code-mode-host-filesystem-policy.md` — Code Mode host filesystem policy: broad non-secret reads/writes across the host, with shared credential/secret denial.
 

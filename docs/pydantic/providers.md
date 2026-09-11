@@ -12,7 +12,7 @@ This page records **GPT Dive provider/model integration roles and adapter owners
 | `terra` | OpenAI Codex subscription | GPT-5.6 Terra | local subscription-backed judgment/review/worker candidate |
 | `luna` | OpenAI Codex subscription | GPT-5.6 Luna | subscription-backed conductor/judgment candidate |
 
-The alias layer hides provider URL/key/model-name details from Monty orchestration code. For paid peer review, routing metadata alone is insufficient: the configured authenticated provider `/v1/models` catalog must advertise the exact model ID before inference. That verification runs inside the credentialed `model_call_worker`: unknown ids fail fast with the provider's available list; unsupported/slow listings are skipped so verification never blocks a legitimate call.
+The alias layer hides provider URL/key/model-name details from Monty orchestration code. Anthropic-compatible exact-model routes may soft-check their authenticated `/v1/models` catalog before inference. OpenAI Codex authentication and transport are owned by Pydantic AI's official `openai-codex` provider.
 
 ## Adding an Anthropic-compatible provider
 
@@ -28,9 +28,7 @@ Removing or rotating a provider is the same table plus the credential store. Sub
 ## Pydantic adapters
 
 - AiApiFlow / MiniMax compatible paths use Pydantic's Anthropic-compatible provider/model interfaces where verified.
-- GPT Dive consumes official stable `pydantic-ai-slim`; subscription-backed Codex aliases route through the local `gpt_dive.openai_codex` compatibility layer.
-- `~/ref/pydantic-ai-pr-6433/` is now a slim behavioral/provenance pack only, not a Git checkout. The runtime Git source pin was removed on 2026-08-14.
-- Maintenance seams, upgrade procedure, and retirement gate live in `~/gpt-dive/README.patch.openai.provider.md`.
+- GPT Dive consumes official stable `pydantic-ai-slim`; subscription-backed Codex aliases use Pydantic AI's official `OpenAICodexModel` / `OpenAICodexProvider`.
 
 ## Credentials
 
