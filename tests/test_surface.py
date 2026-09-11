@@ -738,3 +738,61 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
         _call_periodic_reminder_middleware("code_mode", state)
     )
     assert len(third_after_reset.content) == 2
+
+
+def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None:
+    async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
+        return app.CodeModeCompleted(
+            execution_id="large1",
+            result="A" * 200_000,
+        )
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "code_mode",
+            {"label": "large", "code": "'A' * 200000"},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "code_mode", fake_code_mode)
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(
+        app.executions.store, "list_run_command_evidence", lambda _id: []
+    )
+
+    result = asyncio.run(call())
+    structured = result.structured_content
+    assert structured["status"] == "completed"
+    assert "output truncated at 128 KiB" in structured["result"]
+    assert "execution_id: large1" in structured["result"]
+    assert len(structured["result"].encode("utf-8")) <= 128 * 1024 + 200
+
+
+def test_code_mode_output_preserves_structured_type_when_under_128k(monkeypatch) -> None:
+    payload = {"key": "value", "items": [1, 2, 3]}
+
+    async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
+        return app.CodeModeCompleted(
+            execution_id="small1",
+            result=payload,
+        )
+
+    async def call() -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "code_mode",
+            {"label": "small", "code": "payload"},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    monkeypatch.setattr(app, "code_mode", fake_code_mode)
+    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(
+        app.executions.store, "list_run_command_evidence", lambda _id: []
+    )
+
+    result = asyncio.run(call())
+    structured = result.structured_content
+    assert structured["status"] == "completed"
+    assert structured["result"] == payload

@@ -26,6 +26,7 @@ from pydantic import (
     Field,
     RootModel,
     TypeAdapter,
+    ValidationInfo,
     field_validator,
     model_serializer,
 )
@@ -368,6 +369,36 @@ def _bounded_stderr_preview(data: bytes) -> str:
     return text[:head] + marker + text[-tail:]
 
 
+_CODE_MODE_RESULT_MAX_BYTES = 128 * 1024  # 128 KiB
+
+
+def _bound_code_mode_result(result: Any, execution_id: str | None = None) -> Any:
+    if isinstance(result, str):
+        encoded = result.encode("utf-8", errors="replace")
+        if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
+            return result
+        prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
+        marker = (
+            f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
+        )
+        return prefix + marker
+
+    try:
+        serialized = json.dumps(result, ensure_ascii=False)
+    except Exception:
+        return result
+
+    encoded = serialized.encode("utf-8", errors="replace")
+    if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
+        return result
+
+    prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
+    marker = (
+        f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
+    )
+    return prefix + marker
+
+
 def _processed_output_text(output: Any) -> str:
     if isinstance(output, str):
         return output
@@ -378,12 +409,12 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
     try:
         evidence_rows = executions.store.list_run_command_evidence(execution_id)
     except KeyError, sqlite3.Error:
-        return result
+        return _bound_code_mode_result(result, execution_id)
     if not evidence_rows or any(
         row.get("exit_code") is None or row.get("duration_ms") is None
         for row in evidence_rows
     ):
-        return result
+        return _bound_code_mode_result(result, execution_id)
 
     lines = [f"id: {execution_id}", ""]
     for row in evidence_rows:
@@ -399,7 +430,7 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
         else:
             lines.append(line)
     lines.extend(["", "----", _processed_output_text(result)])
-    return "\n".join(lines)
+    return _bound_code_mode_result("\n".join(lines), execution_id)
 
 
 _render_code_mode_completed_output = _render_code_mode_completed_result
@@ -646,6 +677,12 @@ class CodeModeCompleted(_ClosedModel):
     result: Any
     tracked_tasks: list[TrackedTaskView] | None = None
     tracked_tasks_guidance: str | None = None
+
+    @field_validator("result", mode="after")
+    @classmethod
+    def _validate_result(cls, v: Any, info: ValidationInfo) -> Any:
+        exec_id = info.data.get("execution_id") if info.data else None
+        return _bound_code_mode_result(v, exec_id)
 
 
 _CODE_MODE_RUNNING_GUIDANCE = (

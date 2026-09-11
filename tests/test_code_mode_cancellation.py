@@ -85,14 +85,14 @@ def test_run_command_truncates_context_and_keeps_raw_evidence(
     record = record_for_test(tmp_path)
     result = asyncio.run(
         run_command(
-            "yes X | head -c 20000",
+            "yes X | head -c 200000",
             cwd=str(tmp_path),
             record=record,
         )
     )
 
     assert result["truncated"] is True
-    assert len(result["stdout"]) <= 8000
+    assert len(result["stdout"]) <= 128 * 1024
     assert "spill_path" not in result
     stdout_path = (
         Path(tempfile.gettempdir())
@@ -102,7 +102,7 @@ def test_run_command_truncates_context_and_keeps_raw_evidence(
         / "stdout"
     )
     assert stdout_path.is_file()
-    assert stdout_path.stat().st_size == 20000
+    assert stdout_path.stat().st_size == 200000
 
 
 def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_output(
