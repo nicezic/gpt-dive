@@ -194,7 +194,7 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
         exit_code=1,
     )
 
-    outcome = app._code_mode_outcome(manager.result(execution_id))
+    outcome = app._code_mode_output(manager.result(execution_id))
 
     assert isinstance(outcome, app.CodeModeFailed)
     assert outcome.model_dump() == {

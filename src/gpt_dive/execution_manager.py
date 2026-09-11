@@ -54,7 +54,7 @@ def _parse_code_mode_envelope(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not isinstance(envelope, dict):
         return None
-    if envelope.get("v") not in {3, CODE_MODE_WORKER_PROTOCOL} or not isinstance(
+    if envelope.get("v") != CODE_MODE_WORKER_PROTOCOL or not isinstance(
         envelope.get("ok"), bool
     ):
         return None
@@ -326,23 +326,13 @@ class ExecutionManager:
                 message="Code Mode Worker produced no valid result envelope.",
             )
         if envelope["ok"] is True and state == "completed":
-            if envelope["v"] == 3:
-                legacy = envelope.get("result")
-                if not isinstance(legacy, dict) or "result" not in legacy:
-                    return _code_mode_error_result(
-                        payload,
-                        code="worker_protocol_error",
-                        message="Code Mode Worker produced no valid result envelope.",
-                    )
-                result = legacy["result"]
-            else:
-                if "result" not in envelope and "output" not in envelope:
-                    return _code_mode_error_result(
-                        payload,
-                        code="worker_protocol_error",
-                        message="Code Mode Worker produced no valid result envelope.",
-                    )
-                result = envelope.get("result", envelope.get("output"))
+            if "result" not in envelope and "output" not in envelope:
+                return _code_mode_error_result(
+                    payload,
+                    code="worker_protocol_error",
+                    message="Code Mode Worker produced no valid result envelope.",
+                )
+            result = envelope.get("result", envelope.get("output"))
             return {
                 "status": "completed",
                 "execution_id": str(payload["execution_id"]),

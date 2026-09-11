@@ -6,11 +6,9 @@ requires-python = ">=3.14"
 dependencies = [
     "mcp>=2.0.0",
     "pydantic>=2.13.4",
-        "pydantic-monty>=0.0.23",
+    "pydantic-monty>=0.0.23",
     "pydantic-ai-slim[anthropic,openai]",
     "pydantic-ai-harness>=0.29.0",
-    "filelock>=3.20.3",
-    "playwright>=1.62.0",
     "redis>=6.0.0",
     "starlette>=1.6.0",
     "uvicorn>=0.52.1",

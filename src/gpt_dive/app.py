@@ -433,9 +433,6 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
     return _bound_code_mode_result("\n".join(lines), execution_id)
 
 
-_render_code_mode_completed_output = _render_code_mode_completed_result
-
-
 async def _periodic_reminder_middleware(
     ctx: ServerRequestContext[Any, Any], call_next: CallNext
 ) -> HandlerResult:
@@ -738,11 +735,7 @@ CodeModeOutput = Annotated[
     Field(discriminator="status"),
 ]
 
-# Backward compatibility aliases
-CodeModeTask = CodeModeRunning
-CodeModeError = CodeModeFailed
 CodeModeOutcome = CodeModeOutput
-CodeModeWorkOutcome = CodeModeOutput
 
 
 class _CodeModePublicOutput(RootModel[CodeModeOutput]):
@@ -768,8 +761,6 @@ class WslExecWorkOutput(BaseModel):
 
 
 _CODE_MODE_OUTPUT_ADAPTER = TypeAdapter(CodeModeOutput)
-_CODE_MODE_OUTCOME_ADAPTER = _CODE_MODE_OUTPUT_ADAPTER
-_CODE_MODE_WORK_OUTCOME_ADAPTER = _CODE_MODE_OUTPUT_ADAPTER
 
 
 def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
@@ -808,9 +799,6 @@ def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
         payload["guidance"] = _CODE_MODE_RUNNING_GUIDANCE
 
     return _CODE_MODE_OUTPUT_ADAPTER.validate_python(payload)
-
-
-_code_mode_outcome = _code_mode_output
 
 
 _SESSION_TASKS_STATE_KEY = "published_task_ids"
