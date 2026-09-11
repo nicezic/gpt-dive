@@ -58,11 +58,13 @@ class _PeerFileSystemToolset(FileSystemToolset[Any]):
             line_number = last_line.split("\t", 1)[0].strip()
             if line_number.isdigit():
                 return (
-                    prefix
-                    + f"... (read_file output capped at 256 KiB. "
+                    prefix + f"... (read_file output capped at 256 KiB. "
                     f"Use offset={line_number} to continue reading.)\n"
                 )
-        return prefix + "\n... (read_file output capped at 256 KiB; narrow with offset/limit.)\n"
+        return (
+            prefix
+            + "\n... (read_file output capped at 256 KiB; narrow with offset/limit.)\n"
+        )
 
 
 class _PeerFileSystem(FileSystem):
@@ -268,7 +270,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     truncated = finish_reason == "length"
     # Resolve the lane identity once instead of branching on peer_review per field.
     if peer_review:
-        model_label = str(payload.get("alias") or payload.get("model_alias") or model_name)
+        model_label = str(
+            payload.get("alias") or payload.get("model_alias") or model_name
+        )
         provider_label_result = provider
         resolved_model_name = model_name
         mode = "peer-review"
@@ -407,7 +411,9 @@ async def invoke_model_call(
             "model": model_label,
             "model_alias": model_label,
             "provider": provider_label,
-            "model_id": f"{provider_label}/{payload_model}" if payload_model else provider_label,
+            "model_id": f"{provider_label}/{payload_model}"
+            if payload_model
+            else provider_label,
             "error": f"invalid model call worker JSON: {exc}",
             "stdout": stdout_text[-2000:],
             "stderr": stderr_tail(stderr_text),

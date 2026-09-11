@@ -245,13 +245,7 @@ def build_code_registry(
         user_alias_model: str | None = None,
     ) -> dict[str, Any]:
         """Call an independent peer reviewer with file tools scoped to cwd."""
-        effective_alias = (
-            alias
-            or model_alias
-            or user_alias_model
-            or model
-            or provider
-        )
+        effective_alias = alias or model_alias or user_alias_model or model or provider
         if not effective_alias:
             raise TypeError("peer_review() missing required argument: 'alias'")
         return await invoke_model_call(

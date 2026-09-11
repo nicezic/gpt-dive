@@ -321,7 +321,9 @@ def test_peer_review_worker_rejects_unknown_provider(tmp_path) -> None:
 def test_peer_review_supports_openai_codex_exact_model(monkeypatch, tmp_path) -> None:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
 
-    async def _verify(provider: str, model: str, **_kwargs: object) -> dict[str, object]:
+    async def _verify(
+        provider: str, model: str, **_kwargs: object
+    ) -> dict[str, object]:
         assert (provider, model) == ("openai-codex", "gpt-6-astra")
         return {"checked": True, "exists": True, "available": [model]}
 

@@ -172,9 +172,7 @@ def get_model(model_alias: str, provider: str | None = None) -> Any:
     route = PROVIDER_ROUTES.get(prov)
     if route is None:
         choices = ", ".join(sorted(PROVIDER_ROUTES))
-        raise ValueError(
-            f"unknown provider {prov!r}; registered providers: {choices}"
-        )
+        raise ValueError(f"unknown provider {prov!r}; registered providers: {choices}")
     return _build_exact_model(route, model_name)
 
 
@@ -194,7 +192,9 @@ def model_catalog() -> dict[str, dict[str, Any]]:
             "transport": (
                 "codex-subscription"
                 if prov == "openai-codex"
-                else (PROVIDER_ROUTES[prov].transport if prov in PROVIDER_ROUTES else "")
+                else (
+                    PROVIDER_ROUTES[prov].transport if prov in PROVIDER_ROUTES else ""
+                )
             ),
             "output_tokens_limit": model_output_tokens_limit(model),
         }

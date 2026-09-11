@@ -18,7 +18,7 @@ from .worker_subprocess import terminate_and_reap
 _RUN_COMMAND_POLICY_SECONDS = 43190.0
 _RUN_COMMAND_CLEANUP_RESERVE_SECONDS = 9.0
 _SPOOL_BYTES_PER_STREAM = 8 * 1024 * 1024
-_CONTEXT_CHARS = 128 * 1024
+_WSL_EXEC_MAX_CHARS = 128 * 1024
 _DRAIN_CHUNK_BYTES = 64 * 1024
 WSL_EXEC_TIMEOUT_SECONDS = 600.0
 
@@ -200,16 +200,26 @@ def _read_shell_outputs(
     *,
     stdout_overflow: bool,
     stderr_overflow: bool,
+    max_chars: int | None = None,
 ) -> tuple[str, str, bool]:
-    stdout_size = stdout_path.stat().st_size
-    stderr_size = stderr_path.stat().st_size
+    if max_chars is None:
+        stdout = (
+            stdout_path.read_text(errors="replace") if stdout_path.is_file() else ""
+        )
+        stderr = (
+            stderr_path.read_text(errors="replace") if stderr_path.is_file() else ""
+        )
+        return stdout, stderr, (stdout_overflow or stderr_overflow)
+
+    stdout_size = stdout_path.stat().st_size if stdout_path.is_file() else 0
+    stderr_size = stderr_path.stat().st_size if stderr_path.is_file() else 0
     if stdout_size and stderr_size:
-        stdout_budget = _CONTEXT_CHARS // 2
-        stderr_budget = _CONTEXT_CHARS - stdout_budget
+        stdout_budget = max_chars // 2
+        stderr_budget = max_chars - stdout_budget
     elif stdout_size:
-        stdout_budget, stderr_budget = _CONTEXT_CHARS, 0
+        stdout_budget, stderr_budget = max_chars, 0
     else:
-        stdout_budget, stderr_budget = 0, _CONTEXT_CHARS
+        stdout_budget, stderr_budget = 0, max_chars
     stdout, stdout_context_truncated = _read_bounded_text(stdout_path, stdout_budget)
     stderr, stderr_context_truncated = _read_bounded_text(stderr_path, stderr_budget)
     return (
@@ -332,6 +342,7 @@ async def run_wsl_command(
             stderr_path,
             stdout_overflow=stdout_overflow,
             stderr_overflow=stderr_overflow,
+            max_chars=_WSL_EXEC_MAX_CHARS,
         )
     if cancelled:
         raise asyncio.CancelledError

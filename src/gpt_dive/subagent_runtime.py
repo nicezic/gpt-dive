@@ -45,7 +45,9 @@ async def invoke_subagent(
     effective_alias = alias or model_alias or kwargs.get("user_alias_model") or model
     if not effective_alias:
         raise ValueError("unknown model alias: must provide alias")
-    provider, model_name = _validate_call(effective_alias, task, timeout, output_tokens_limit)
+    provider, model_name = _validate_call(
+        effective_alias, task, timeout, output_tokens_limit
+    )
     payload = json.dumps(
         {
             "alias": effective_alias,

@@ -378,9 +378,7 @@ def _bound_code_mode_result(result: Any, execution_id: str | None = None) -> Any
         if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
             return result
         prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-        marker = (
-            f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-        )
+        marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
         return prefix + marker
 
     try:
@@ -393,9 +391,7 @@ def _bound_code_mode_result(result: Any, execution_id: str | None = None) -> Any
         return result
 
     prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-    marker = (
-        f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-    )
+    marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
     return prefix + marker
 
 

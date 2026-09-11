@@ -769,7 +769,9 @@ def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None
     assert len(structured["result"].encode("utf-8")) <= 128 * 1024 + 200
 
 
-def test_code_mode_output_preserves_structured_type_when_under_128k(monkeypatch) -> None:
+def test_code_mode_output_preserves_structured_type_when_under_128k(
+    monkeypatch,
+) -> None:
     payload = {"key": "value", "items": [1, 2, 3]}
 
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
@@ -796,3 +798,10 @@ def test_code_mode_output_preserves_structured_type_when_under_128k(monkeypatch)
     structured = result.structured_content
     assert structured["status"] == "completed"
     assert structured["result"] == payload
+
+
+def test_wsl_exec_truncates_output_at_128k(tmp_path: Path) -> None:
+    result = asyncio.run(app.wsl_exec("yes X | head -c 200000", cwd=str(tmp_path)))
+    assert result["exit_code"] == 0
+    assert result["truncated"] is True
+    assert len(result["stdout"]) <= 128 * 1024

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import gpt_dive.command_runtime as command_runtime_module
 import gpt_dive.worker_subprocess as worker_subprocess_module
 from gpt_dive.command_runtime import RuntimeRecord, run_command, runtime_record
 from gpt_dive.execution_store import ExecutionStore, generate_execution_id
@@ -81,18 +82,20 @@ def test_run_command_timeout_is_terminal_and_bounded(tmp_path: Path) -> None:
 
 def test_run_command_truncates_context_and_keeps_raw_evidence(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(command_runtime_module, "_SPOOL_BYTES_PER_STREAM", 20000)
     record = record_for_test(tmp_path)
     result = asyncio.run(
         run_command(
-            "yes X | head -c 200000",
+            "yes X | head -c 50000",
             cwd=str(tmp_path),
             record=record,
         )
     )
 
     assert result["truncated"] is True
-    assert len(result["stdout"]) <= 128 * 1024
+    assert len(result["stdout"]) <= 20000
     assert "spill_path" not in result
     stdout_path = (
         Path(tempfile.gettempdir())
@@ -102,7 +105,7 @@ def test_run_command_truncates_context_and_keeps_raw_evidence(
         / "stdout"
     )
     assert stdout_path.is_file()
-    assert stdout_path.stat().st_size == 200000
+    assert stdout_path.stat().st_size == 20000
 
 
 def test_worker_subprocess_final_reap_timeout_is_bounded_and_preserves_partial_output(

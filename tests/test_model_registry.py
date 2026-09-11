@@ -79,12 +79,15 @@ def test_verify_provider_model_skips_unknown_provider() -> None:
     result = asyncio.run(verify_provider_model("not-a-provider", "x"))
     assert result == {"checked": False, "exists": False, "available": []}
 
+
 def test_verify_provider_model_skips_unlisted_codex_provider() -> None:
     result = asyncio.run(verify_provider_model("openai-codex", "gpt-6-astra"))
     assert result == {"checked": False, "exists": False, "available": []}
 
 
-def test_opencode_aliases_use_native_openai_interfaces(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_aliases_use_native_openai_interfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
     from gpt_dive.model_registry import PROVIDER_ROUTES
