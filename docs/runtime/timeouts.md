@@ -4,38 +4,38 @@
 
 ## 이 clock들이 필요한 이유
 
-관찰된 ChatGPT tunnel은 약 120초에 응답을 끊을 수 있다. 그러나 Runtime은 이 transport 문제가 고쳐지든 끝내 원인을 모르든 올바르게 동작해야 한다. 따라서 durability는 사용자 code보다 먼저 시작하고, deadline은 transport health를 추측하는 대신 resource를 제한한다.
+2026-09-22 실측: GPT Dive의 70초 auto 작업은 로컬에서 정상 완료됐으나 ChatGPT가 결과를 못 받았고 같은 명령이 새 Execution으로 다시 실행됐다. 별도 Conduit 경계 시험에서는 서버 작업 60.0초의 성공과 60.1초의 실패가 반복됐다. 이는 관찰값이며 OpenAI 내부 설정값이나 GPT Dive의 성공 보증값은 아니다. Runtime의 durable work lifetime은 transport 한도와 독립적이다.
 
 ```text
 t=0       accepted Execution commit
 │
-├─ 100s   auto-mode inline wait 종료
-│          └─ 끝나지 않은 작업을 Task로 publish; 재시작하지 않음
-├─ 110s   MCP response deadline
+├─ 54s    auto-mode inline wait 종료
+│          └─ 이미 완료됐더라도 cutoff 뒤에는 같은 실행을 Task로 publish
+├─ 57s    GPT Dive 내부 MCP response deadline
 │
 ├─ 43190s Execution work cutoff (12h - 10s)
 │          └─ TERM → KILL → drain/reap
 └─ 43200s absolute Execution lifetime (12h)
 
-t≈120s    관찰된 외부 tunnel 경계
-           └─ 외부 증거일 뿐 Runtime clock이 아님
+t≈60s     2026-09-22 별도 Conduit 시험에서 관찰된 실패 경계
+           └─ 외부 증거일 뿐 공식 OpenAI 한도나 Runtime clock이 아님
 ```
 
-각 work/wait cutoff 뒤 10초는 runtime bookkeeping 또는 cleanup reserve다. 사용자 code에 주는 추가 시간이 아니다.
+54초와 57초 사이 3초는 GPT Dive 내부 Task 공개·응답 처리를 위한 여유이며, 터널 전송·ChatGPT 수신까지 보장하지 않는다. 43,190초 work cutoff 뒤 10초는 cleanup reserve이지 사용자 code에 주는 추가 시간이 아니다.
 
 ## Inline delivery
 
 ```text
 delivery=auto
-├─ 100초 전에 terminal result → completed/error, Task 없음
-├─ 100초에도 실행 중          → Task publish + execution_id 반환
-└─ waiter/transport cancel     → Task publish, Execution 계속
+├─ 54초 전에 결과 구성 완료 → completed/error, Task 없음
+├─ 54초에 inline 대기 만료   → 이미 terminal이어도 Task publish + 동일 execution_id 반환
+└─ 관측된 waiter/transport cancel → Task publish, Execution 계속
 
 delivery=task
 └─ launch 시 publish하고 즉시 반환
 ```
 
-110초 response deadline은 acceptance, Worker launch, inline observation, Task publication, result shaping을 감싼다. Execution cutoff로 사용하지 않는다. 공개 cancellation은 명시적 `task(action="cancel")`뿐이다.
+57초 response deadline은 GPT Dive 내부 acceptance, Worker launch, inline observation, Task publication, result shaping의 한도다. Wrapper의 TrackedTasks 조회·직렬화 및 tunnel 전달은 여기에 포함되지 않을 수 있어 ChatGPT 수신 시각을 보장하지 않는다. 상위 호출 실패가 Runtime cancellation으로 전달된다고 보장할 수도 없다. 같은 부작용 작업의 자동 재시도를 금지한다. 공개 cancellation은 명시적 `task(action="cancel")`뿐이다.
 
 ## Execution lifetime
 
@@ -110,8 +110,14 @@ Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한�
 ## 첫 failure boundary 진단
 
 ```text
-약 100초에 Task 반환
-└─ 정상 inline delivery 경계; Execution은 계속 로컬에서 소유됨
+약 54초에 Task 반환
+└─ 정상 inline delivery 경계; Execution을 재시작하지 않고 동일 ID로 공개
+
+`Code Mode tool call timed out` 등 최상위 도구 오류
+└─ 실행 실패로 단정하지 않고 기존 Task/Execution 증거 확인. 같은 명령을 맹목적으로 재호출하지 않음
+
+오래된 `accepted` Execution
+└─ 기존 launch grace 경과 후 `launch_interrupted`로 복구; 54/57초 응답 설정과 무관
 
 failed(reason=deadline_exceeded)
 └─ Runtime work cutoff; partial output과 workload 크기 확인

@@ -41,8 +41,8 @@ from .runtime_diagnostics import (
     request_lifecycle_middleware,
 )
 
-_INLINE_WAIT_SECONDS = 100.0
-_INLINE_RESPONSE_DEADLINE_SECONDS = 110.0
+_INLINE_WAIT_SECONDS = 54.0
+_INLINE_RESPONSE_DEADLINE_SECONDS = 57.0
 _TASK_LIST_LIMIT = 50
 _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 TRACKED_TASKS_LIMIT = 8
@@ -609,18 +609,21 @@ def _code_mode_execution_result(execution_id: str) -> dict[str, Any]:
 async def _wait_for_execution(
     execution_id: str, *, wait_deadline: float
 ) -> dict[str, Any]:
-    while True:
+    while time.monotonic() < wait_deadline:
         record = await asyncio.to_thread(executions.store.get, execution_id)
         if record["state"] not in {"accepted", "running"}:
-            return await asyncio.to_thread(_code_mode_execution_result, execution_id)
+            result = await asyncio.to_thread(_code_mode_execution_result, execution_id)
+            # The result lookup can finish after the inline budget. Do not
+            # choose an inline result at the deadline: publish a retrievable
+            # Task instead, including when the worker has already finished.
+            if time.monotonic() < wait_deadline:
+                return result
+            break
         remaining = wait_deadline - time.monotonic()
         if remaining <= 0:
             break
         await asyncio.sleep(min(0.2, remaining))
 
-    status = await asyncio.to_thread(executions.status, execution_id)
-    if status["state"] not in {"accepted", "running"}:
-        return await asyncio.to_thread(_code_mode_execution_result, execution_id)
     task = await _publish_accepted_task(executions, execution_id)
     return {
         "status": "running",
@@ -679,7 +682,7 @@ class CodeModeCompleted(_ClosedModel):
 
 
 _CODE_MODE_RUNNING_GUIDANCE = (
-    "Execution continues in background. "
+    "Execution has a published Task. If still running, it continues in background. "
     "Use task(action='get', execution_id=...) to inspect status or retrieve result."
 )
 
@@ -698,7 +701,7 @@ _CODE_MODE_ERROR_GUIDANCE = (
     "Treat error.code as the stable category, error.message as the summary, and "
     "error.detail as the concrete cause. DO NOT invent fallbacks or assume tools are broken. "
     "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [FIX PREVIEW], "
-    "inspect error detail and live contract, and retry only a corrected call on the canonical path. "
+    "inspect existing execution evidence before retrying side-effectful work; retry only when duplicate execution is safe. "
     "A top-level tool or transport failure with no CodeModeFailed payload is outside this "
     "application error contract; do not label it a Code Mode failure without tunnel evidence."
 )

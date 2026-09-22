@@ -1,7 +1,7 @@
 ---
 title: ADR - Always-Durable Code Mode Runtime
 created: 2026-08-27
-updated: 2026-08-28
+updated: 2026-09-22
 type: decision
 status: accepted
 ---
@@ -10,6 +10,7 @@ status: accepted
 
 > 이 문서는 GPT Dive Runtime 리뉴얼의 단일 결정 권위(decision authority)다.
 > 설계에 이르기까지의 검증 과정과 폐기된 안의 경위는 `0_design-session-260827.md`에 있다.
+> 2026-08-27 원래 수치 100/110초와 과거 120초 관찰은 아래에서 역사적 근거로 보존한다. 현재 운영 시계 54/57초와 2026-09-22 후속 실측의 한계는 `../timeouts.md`가 소유한다.
 
 ## 결정 요약 (Decision summary)
 
@@ -190,9 +191,9 @@ Task publication은 Execution을 재시작·재생(replay)하지 않으며 deadl
 
 ```text
 t=0       accepted Execution 존재
-t=100s    auto 모드 inline wait 종료; 미전달이면 publish
-t=110s    inline MCP 응답 deadline
-t≈120s    관측된 외부 tunnel 경계 (Runtime 정책 아님)
+t=54s     auto 모드 inline wait 종료; cutoff가 완료 조회보다 우선, Task publish
+t=57s     GPT Dive 내부 MCP 응답 deadline
+t≈60s     2026-09-22 Conduit 관찰 경계 (OpenAI의 공식 제한값 아님)
 t=43190s  Execution work cutoff; bounded 종료·drain 시작
 t=43200s  Execution 절대 수명 종료 (12시간)
 ```

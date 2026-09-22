@@ -98,7 +98,7 @@ _피할 표현_: backing state가 확실히 사라졌는데 stale이라고 부�
 2. `execution_id`만 공개 lifecycle identity다. Task는 별도 ID를 만들지 않는다.
 3. Execution lifecycle과 Task awareness는 별개다. Publication과 dismissal은 execution state를 바꾸지 않는다.
 4. Worker는 `accepted → running` CAS(Compare-And-Set, 예상 상태일 때만 수행하는 원자적 변경)에 성공한 뒤에만 사용자 code를 실행한다.
-5. Runtime은 사용자 code를 자동 replay 또는 retry하지 않는다.
+5. Runtime은 사용자 code를 자동 replay 또는 retry하지 않는다. 단, GPT Dive 밖에서 같은 MCP 요청이 재발행되면 새 Execution이 만들어질 수 있다. 특히 상위 응답 유실이 Runtime cancellation으로 전달되지 않은 경우, 완료된 inline Execution은 Task로 공개되지 않을 수 있다. 최상위 도구 오류 후 기존 실행 증거를 확인하기 전에는 부작용 있는 작업을 재요청하지 않는다.
 6. Transport loss는 cancellation이 아니다. 명시적인 Task cancel 요청만 Execution을 취소한다.
 7. Terminal result 읽기는 비파괴적이다. 명시적 dismissal만 Task awareness를 제거한다.
 8. SQLite가 control-plane state의 권위다. Filesystem은 artifact를 저장할 뿐 경쟁 lifecycle truth가 아니다.

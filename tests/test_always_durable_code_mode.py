@@ -290,6 +290,67 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
     asyncio.run(scenario())
 
 
+def test_expired_auto_wait_publishes_even_if_execution_has_just_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    execution_id = "late01"
+    create_terminal_code_mode_record(
+        manager,
+        execution_id=execution_id,
+        cwd=tmp_path,
+        label="completed at cutoff",
+        envelope={"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": 42},
+        exit_code=0,
+    )
+    # Returning a completed result after the inline deadline can lose the
+    # response upstream, leaving an unpublished execution that task(get)
+    # cannot recover. The cutoff must win over a completion race.
+    outcome = asyncio.run(
+        app._wait_for_execution(execution_id, wait_deadline=time.monotonic() - 0.001)
+    )
+    assert outcome["status"] == "running"
+    assert outcome["execution_id"] == execution_id
+    assert manager.store.get_task(execution_id)["state"] == "completed"
+    recovered = asyncio.run(
+        app.task(app.TaskGetRequest(action="get", execution_id=execution_id))
+    )
+    assert isinstance(recovered, app.CodeModeCompleted)
+    assert recovered.result == 42
+
+
+def test_result_lookup_crossing_auto_deadline_publishes_same_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    execution_id = "late02"
+    create_terminal_code_mode_record(
+        manager,
+        execution_id=execution_id,
+        cwd=tmp_path,
+        label="slow result retrieval",
+        envelope={"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": 93},
+        exit_code=0,
+    )
+    original_result = app._code_mode_execution_result
+
+    def slow_result(identifier: str) -> dict[str, object]:
+        time.sleep(0.025)
+        return original_result(identifier)
+
+    monkeypatch.setattr(app, "_code_mode_execution_result", slow_result)
+    result = asyncio.run(
+        app._wait_for_execution(execution_id, wait_deadline=time.monotonic() + 0.005)
+    )
+    assert result["status"] == "running"
+    assert result["execution_id"] == execution_id
+    recovered = asyncio.run(
+        app.task(app.TaskGetRequest(action="get", execution_id=execution_id))
+    )
+    assert isinstance(recovered, app.CodeModeCompleted)
+    assert recovered.result == 93
+
+
 def test_task_get_keeps_lost_execution_in_error_vocabulary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
