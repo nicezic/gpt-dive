@@ -202,7 +202,7 @@ This bootstrap preserves causal context. For current detailed truth, follow the 
 | Council current architecture | `docs/council/README.md` |
 | Council causal history / lessons | `docs/council/history.md` |
 | User model subscriptions, economics, routing | `~/wiki/user/models-and-providers.md` |
-| Pydantic AI / Harness operating baseline | `~/wiki/workflow/pydantic-ai/README.md` |
+| Pydantic AI / Harness operating baseline | `~/wiki/workflow/code-mode.md` + `~/wiki/workflow/code-mode-CAPABILITIES-map.md` |
 | GBrain retrieval/current corpus policy | `~/wiki/infra/gbrain.md` |
 | GBrain installation/maintenance/reconstruction | `~/gpt-dive/gbrain/docs/reconstruction.md` |
 | Logged-in Edge / Playwright operating contract | `~/wiki/skills/web/edge-playwright.md` |

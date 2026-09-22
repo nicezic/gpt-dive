@@ -230,7 +230,7 @@ intro
 - `docs/runtime/adr/0006-tracked-tasks-connector-projection.md`
 - `docs/pydantic/code-mode.md`
 - `~/wiki/bootstrap/intro.md`, `~/wiki/bootstrap/preload.json`
-- `~/wiki/workflow/pydantic-ai/code-mode.md`
-- `~/wiki/workflow/pydantic-ai/code-mode-CAPABILITIES-map.md`
+- `~/wiki/workflow/code-mode.md`
+- `~/wiki/workflow/code-mode-CAPABILITIES-map.md`
 - `~/wiki/workflow/code-mode-reminder.md`
 - `~/wiki/ERROR_CASE.md`

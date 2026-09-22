@@ -16,7 +16,7 @@ Keep here:
 
 Keep elsewhere:
 
-- Web SOL operating rules: `~/wiki/workflow/pydantic-ai/`.
+- Web SOL operating rules: `~/wiki/workflow/code-mode.md` and `~/wiki/workflow/code-mode-CAPABILITIES-map.md`.
 - Cross-component AI Orchestra policy: `~/wiki/workflow/orchestra/`.
 - Verified reusable Pydantic concepts: `~/wiki/pydantic/handbook/`.
 - Ongoing Pydantic study/incubation: `~/wiki/pydantic/study/`.

@@ -89,7 +89,7 @@ Trying to apply the SubAgent hook semantics to every Code Mode capability would 
 ## Documentation surfaces
 
 - MCP `code_mode` description: only the immediate behavior/action needed by a fresh model-facing call.
-- `~/wiki/workflow/pydantic-ai/code-mode.md`: only the Web SOL operating rule.
+- `~/wiki/workflow/code-mode.md`: only the Web SOL operating rule.
 - This document: implementation architecture, rationale, and SubAgent/Code Mode distinction.
 - `plans/code_mode/plan-260814-output-spill.md`: one-change decision, implementation, and acceptance history.
 

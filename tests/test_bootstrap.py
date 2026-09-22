@@ -12,7 +12,7 @@ from gpt_dive import app as app_module
 def _write_test_wiki(tmp_path: Path) -> Path:
     wiki = tmp_path / "wiki"
     (wiki / "bootstrap").mkdir(parents=True)
-    (wiki / "workflow" / "pydantic-ai").mkdir(parents=True)
+    (wiki / "workflow").mkdir(parents=True)
     (wiki / "skills").mkdir()
     (wiki / "bootstrap" / "preload.json").write_text(
         json.dumps(
@@ -20,8 +20,11 @@ def _write_test_wiki(tmp_path: Path) -> Path:
                 "preload_files": [
                     "bootstrap/intro.md",
                     "USER_RULES.md",
-                    "workflow/pydantic-ai/README.md",
-                    "workflow/pydantic-ai/code-mode.md",
+                    "workflow/gpt-dive.md",
+                    "workflow/code-mode.md",
+                    "workflow/code-mode-CAPABILITIES-map.md",
+                    "workflow/search.md",
+                    "workflow/code-mode-reminder.md",
                     "skills/INDEX.md",
                 ]
             }
@@ -39,8 +42,11 @@ def _write_test_wiki(tmp_path: Path) -> Path:
     (wiki / "USER_RULES.md").write_text(
         "# USER_RULES\n\n## Work\nFULL RULES\n\n## Reminder\nROUTE\nPREVIEW FIRST\n"
     )
-    (wiki / "workflow" / "pydantic-ai" / "README.md").write_text("PYDANTIC")
-    (wiki / "workflow" / "pydantic-ai" / "code-mode.md").write_text("CODE MODE")
+    (wiki / "workflow" / "gpt-dive.md").write_text("GPT DIVE")
+    (wiki / "workflow" / "code-mode.md").write_text("CODE MODE")
+    (wiki / "workflow" / "code-mode-CAPABILITIES-map.md").write_text("CAPABILITIES MAP")
+    (wiki / "workflow" / "search.md").write_text("SEARCH")
+    (wiki / "workflow" / "code-mode-reminder.md").write_text("CODE MODE REMINDER")
     (wiki / "skills" / "INDEX.md").write_text("SKILLS")
     (wiki / "ERROR_CASE.md").write_text("# ERROR_CASE\nSHOULD NOT BE PRELOADED\n")
     (wiki / "log.md").write_text("RECENT LOG MUST NOT BE PRELOADED")
@@ -115,8 +121,11 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert result["preloaded_files"] == [
         "bootstrap/intro.md",
         "USER_RULES.md",
-        "workflow/pydantic-ai/README.md",
-        "workflow/pydantic-ai/code-mode.md",
+        "workflow/gpt-dive.md",
+        "workflow/code-mode.md",
+        "workflow/code-mode-CAPABILITIES-map.md",
+        "workflow/search.md",
+        "workflow/code-mode-reminder.md",
         "skills/INDEX.md",
     ]
     assert "===== BEGIN" not in result["stdout"]
@@ -129,7 +138,10 @@ def test_read_bootstrap_packet_exposes_map_and_omits_log_tail(
     assert f"`$ cat {wiki / 'USER_RULES.md'}`" in result["stdout"]
     assert "INTRO" in result["stdout"]
     assert "FULL RULES" in result["stdout"]
-    assert "PYDANTIC" in result["stdout"]
+    assert "GPT DIVE" in result["stdout"]
+    assert "CAPABILITIES MAP" in result["stdout"]
+    assert "SEARCH" in result["stdout"]
+    assert "CODE MODE REMINDER" in result["stdout"]
     assert "CODE MODE" in result["stdout"]
     assert "SKILLS" in result["stdout"]
     assert "SHOULD NOT BE PRELOADED" not in result["stdout"]
