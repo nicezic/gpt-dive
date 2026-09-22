@@ -254,6 +254,101 @@ def test_code_mode_description_exposes_failed_error_contract() -> None:
     assert "execution_id" in description
 
 
+def test_unavailable_task_get_returns_actionable_structured_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gpt_dive.execution_manager import ExecutionManager
+
+    manager = ExecutionManager(tmp_path / "executions")
+    manager._systemd_available = False
+    monkeypatch.setattr(app, "executions", manager)
+    unpublished = manager.start("true", label="inline only", kind="test")
+    existing_id = str(unpublished["execution_id"])
+
+    async def call(execution_id: str) -> CallToolResult:
+        return await app.mcp._tool_manager.call_tool(
+            "task",
+            {"request": {"action": "get", "execution_id": execution_id}},
+            cast(Any, None),
+            convert_result=True,
+        )
+
+    for identifier in ("ZZZZZZ", existing_id):
+        response = asyncio.run(call(identifier))
+        assert response.is_error is False
+        result = response.structured_content
+        assert result is not None
+        assert result["status"] == "failed"
+        assert result["action"] == "get"
+        assert result["execution_id"] == identifier
+        assert result["error"]["code"] == "TASK.NOT_AVAILABLE"
+        assert "task(action='list')" in result["guidance"]
+        assert "repeat the original work" in result["guidance"]
+
+
+@pytest.mark.parametrize("action", ["cancel", "dismiss"])
+def test_unavailable_task_mutation_returns_structured_error(
+    action: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gpt_dive.execution_manager import ExecutionManager
+
+    manager = ExecutionManager(tmp_path / "executions")
+    manager._systemd_available = False
+    monkeypatch.setattr(app, "executions", manager)
+    response = asyncio.run(
+        app.mcp._tool_manager.call_tool(
+            "task",
+            {"request": {"action": action, "execution_id": "ZZZZZZ"}},
+            cast(Any, None),
+            convert_result=True,
+        )
+    )
+    assert response.is_error is False
+    assert response.structured_content is not None
+    payload = response.structured_content
+    assert payload["status"] == "failed"
+    assert payload["action"] == action
+    assert payload["execution_id"] == "ZZZZZZ"
+    assert payload["error"]["code"] == "TASK.NOT_AVAILABLE"
+    assert "task(action='list')" in payload["guidance"]
+
+
+def test_task_dismiss_running_returns_actionable_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gpt_dive.execution_manager import ExecutionManager
+
+    manager = ExecutionManager(tmp_path / "executions")
+    manager._systemd_available = False
+    monkeypatch.setattr(app, "executions", manager)
+    started = manager.start("sleep 1", label="unfinished", publish=True)
+    execution_id = str(started["execution_id"])
+    try:
+        response = asyncio.run(
+            app.mcp._tool_manager.call_tool(
+                "task",
+                {"request": {"action": "dismiss", "execution_id": execution_id}},
+                cast(Any, None),
+                convert_result=True,
+            )
+        )
+        assert response.is_error is False
+        assert response.structured_content is not None
+        assert response.structured_content["error"]["code"] == "TASK.NOT_TERMINAL"
+        assert "Do not cancel" in response.structured_content["guidance"]
+    finally:
+        manager.cancel(execution_id)
+
+
+def test_code_mode_error_guidance_distinguishes_retry_safety() -> None:
+    deadline = app._code_mode_error_guidance("response_deadline_exceeded")
+    serialization = app._code_mode_error_guidance("non_json_result")
+    assert "not a work deadline" in deadline
+    assert "before any retry" in deadline
+    assert "JSON-safe final expression" in serialization
+    assert "Never treat a top-level transport error" in serialization
+
+
 def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
     def detailed_tasks(*, limit=None):
         assert limit == 50
@@ -390,6 +485,8 @@ def test_code_mode_public_output_summarizes_run_command(
             "[0] 0, 2310 ms, 13 B\n"
             "[2] 2, 410 ms, 29 B, stderr ↓\n"
             "ruff failed\n\n"
+            "COMMAND EXIT WARNING: one or more run_command calls exited nonzero. "
+            "Code Mode completed means the Monty script finished, not that every shell command succeeded.\n\n"
             "----\n"
             '{\n  "pytest": "2 passed"\n}'
         ),

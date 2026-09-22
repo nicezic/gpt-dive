@@ -55,6 +55,11 @@ def test_tool_error_normalizer_rewrites_sdk_generic_unexpected_failure(
         "request_id": "req-9",
         "tool": "boom",
         "recovery": "inspect_boundary",
+        "guidance": (
+            "Match request_id and tool in GPT Dive server diagnostics; the cause is "
+            "not known from this payload. Check whether the original execution "
+            "ran before retrying any side-effectful request."
+        ),
     }
     assert "server-only secret" not in result.content[0].text
     assert "code=MCP.SERVER.UNHANDLED" in caplog.text

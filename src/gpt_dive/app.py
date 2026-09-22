@@ -34,7 +34,7 @@ from pydantic import (
 from .code_capabilities import code_mode_capability_catalog
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
-from .execution_manager import ExecutionManager
+from .execution_manager import ExecutionManager, ExecutionNotFoundError
 from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import (
     normalize_tool_error_middleware,
@@ -425,6 +425,14 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
             lines.extend([line + ", stderr ↓", _bounded_stderr_preview(stderr)])
         else:
             lines.append(line)
+    if any(int(row["exit_code"]) != 0 for row in evidence_rows):
+        lines.extend(
+            [
+                "",
+                "COMMAND EXIT WARNING: one or more run_command calls exited nonzero. "
+                "Code Mode completed means the Monty script finished, not that every shell command succeeded.",
+            ]
+        )
     lines.extend(["", "----", _processed_output_text(result)])
     return _bound_code_mode_result("\n".join(lines), execution_id)
 
@@ -707,6 +715,36 @@ _CODE_MODE_ERROR_GUIDANCE = (
 )
 
 
+# A next step must be tied to the observed failure class, not a generic retry.
+# In particular, an error after acceptance does not prove user code was stopped.
+_CODE_MODE_NEXT_STEPS: dict[str, str] = {
+    "execution_error": "Inspect error.detail and the submitted Monty code/capability result; check prior side effects before a corrected call.",
+    "non_json_result": "Return a JSON-safe final expression (string, number, list, or dict); inspect the returned value before correcting the code.",
+    "worker_protocol_error": "Inspect retained worker stderr/outcome for this execution_id; do not infer that the user code did not run.",
+    "launch_unobserved": "Verify the live input and Execution record; acceptance was not confirmed. Do not blindly repeat side-effectful work.",
+    "launch_interrupted": "Inspect the Execution record and launch diagnostics before deciding whether a new request is safe.",
+    "response_deadline_exceeded": "The response deadline is not a work deadline. Check task(list) and existing Execution evidence before any retry.",
+    "task_publication_failed": "Inspect the original Execution record and Task publication state; do not start a duplicate Execution.",
+    "result_retrieval_failed": "Inspect the retained result and store diagnostics for this execution_id before retrying the original work.",
+    "response_protocol_error": "Inspect error.detail and the live output schema; avoid rerunning the original side-effectful code.",
+    "deadline_exceeded": "Inspect the recorded work deadline and retained partial output; verify side effects before a new execution.",
+    "cancelled": "Confirm the explicit cancellation and retained artifacts; do not assume child side effects were rolled back.",
+    "lost": "The execution outcome is not observable. Inspect retained evidence; do not infer success or rerun side-effectful work.",
+}
+
+
+def _code_mode_error_guidance(code: str) -> str:
+    step = _CODE_MODE_NEXT_STEPS.get(
+        code,
+        "Inspect error.detail, the live contract, and retained Execution evidence before a corrected call.",
+    )
+    return (
+        f"Next: {step} "
+        "Preserve error.code/message/detail and execution_id in the user report. "
+        "Never treat a top-level transport error as proof of execution failure."
+    )
+
+
 class CodeModeErrorDetails(_ClosedModel):
     code: str
     message: str
@@ -785,7 +823,9 @@ def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
                 err["detail"] = payload.pop("detail")
             payload["error"] = err
         if "guidance" not in payload:
-            payload["guidance"] = _CODE_MODE_ERROR_GUIDANCE
+            payload["guidance"] = _code_mode_error_guidance(
+                str(payload["error"].get("code", "execution_error"))
+            )
 
     if (
         payload.get("status") == "completed"
@@ -899,7 +939,7 @@ def _code_mode_error(
     return CodeModeFailed(
         execution_id=execution_id,
         error=CodeModeErrorDetails(code=code, message=message, detail=detail),
-        guidance=_CODE_MODE_ERROR_GUIDANCE,
+        guidance=_code_mode_error_guidance(code),
     )
 
 
@@ -1376,6 +1416,29 @@ class TaskListOutput(_ClosedModel):
     tasks: list[TaskView]
 
 
+class TaskActionFailed(_ClosedModel):
+    status: Literal["failed"] = "failed"
+    action: Literal["get", "cancel", "dismiss"]
+    execution_id: str
+    error: CodeModeErrorDetails
+    guidance: str
+
+
+def _task_action_failure(
+    request: TaskGetRequest | TaskCancelRequest | TaskDismissRequest,
+    *,
+    code: str,
+    message: str,
+    guidance: str,
+) -> TaskActionFailed:
+    return TaskActionFailed(
+        action=request.action,
+        execution_id=request.execution_id,
+        error=CodeModeErrorDetails(code=code, message=message),
+        guidance=guidance,
+    )
+
+
 class TaskCancelOutput(_ClosedModel):
     action: Literal["cancel"] = "cancel"
     task: TaskView
@@ -1388,7 +1451,13 @@ class TaskDismissOutput(_ClosedModel):
     dismissed: bool
 
 
-TaskOutcome = TaskListOutput | CodeModeOutcome | TaskCancelOutput | TaskDismissOutput
+TaskOutcome = (
+    TaskListOutput
+    | CodeModeOutcome
+    | TaskCancelOutput
+    | TaskDismissOutput
+    | TaskActionFailed
+)
 
 
 class _TaskPublicOutcome(RootModel[TaskOutcome]):
@@ -1405,7 +1474,15 @@ async def task(request: TaskRequest) -> TaskOutcome:
         return TaskListOutput(tasks=[_task_view(row) for row in rows])
 
     if isinstance(request, TaskGetRequest):
-        result = await asyncio.to_thread(_task_get, request.execution_id)
+        try:
+            result = await asyncio.to_thread(_task_get, request.execution_id)
+        except ExecutionNotFoundError:
+            return _task_action_failure(
+                request,
+                code="TASK.NOT_AVAILABLE",
+                message="No accessible published Task exists for this execution_id.",
+                guidance="Check task(action='list') and the exact execution_id. It may be missing, unpublished, or dismissed. Do not repeat the original work just to recover a result.",
+            )
         if bool(result["ready"]):
             return _code_mode_output(result["result"])
         if bool(result.get("unavailable", False)):
@@ -1420,9 +1497,34 @@ async def task(request: TaskRequest) -> TaskOutcome:
             elapsed_seconds=task_view.get("elapsed_seconds", 0),
         )
     if isinstance(request, TaskCancelRequest):
-        result = await asyncio.to_thread(_task_cancel, request.execution_id)
+        try:
+            result = await asyncio.to_thread(_task_cancel, request.execution_id)
+        except ExecutionNotFoundError:
+            return _task_action_failure(
+                request,
+                code="TASK.NOT_AVAILABLE",
+                message="No accessible published Task exists for this execution_id.",
+                guidance="Check task(action='list') and the exact execution_id. Do not start a replacement execution.",
+            )
         return TaskCancelOutput(task=_task_view(result["task"]))
-    result = await asyncio.to_thread(_task_dismiss, request.execution_id)
+    try:
+        result = await asyncio.to_thread(_task_dismiss, request.execution_id)
+    except ExecutionNotFoundError:
+        return _task_action_failure(
+            request,
+            code="TASK.NOT_AVAILABLE",
+            message="No accessible published Task exists for this execution_id.",
+            guidance="Check task(action='list') and the exact execution_id; only published terminal Tasks can be dismissed.",
+        )
+    except ValueError as exc:
+        if str(exc) != "dismiss requires a terminal or lost Task":
+            raise
+        return _task_action_failure(
+            request,
+            code="TASK.NOT_TERMINAL",
+            message="Only a terminal or lost Task can be dismissed.",
+            guidance="Leave the Task running; check its state through task(action='list') or task(action='get') when a result is needed. Do not cancel just to dismiss it.",
+        )
     return TaskDismissOutput.model_validate({"action": "dismiss", **result})
 
 
@@ -1432,7 +1534,10 @@ async def task(request: TaskRequest) -> TaskOutcome:
     description=(
         "Operate a published Code Mode Task by its single execution_id. list performs explicit "
         "detailed inspection, get is non-destructive status/result pickup, cancel explicitly cancels "
-        "running work, and dismiss removes terminal awareness without deleting retention."
+        "running work, and dismiss removes terminal awareness without deleting retention. "
+        "Expected lookup/action failures return status='failed', action, error.code/message, "
+        "and an action-specific guidance; unavailable IDs do not disclose whether the "
+        "underlying Execution ever existed."
     ),
 )
 async def _mcp_task(

@@ -205,7 +205,7 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
             "message": message,
             "detail": None,
         },
-        "guidance": app._CODE_MODE_ERROR_GUIDANCE,
+        "guidance": app._code_mode_error_guidance(code),
     }
 
 
@@ -388,7 +388,7 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
                 "message": "Code Mode Execution outcome is no longer observable.",
                 "detail": None,
             },
-            "guidance": app._CODE_MODE_ERROR_GUIDANCE,
+            "guidance": app._code_mode_error_guidance("lost"),
         }
         assert second.model_dump() == first.model_dump()
 
@@ -536,7 +536,7 @@ def test_post_acceptance_response_timeout_returns_structured_error(
                 ),
                 "detail": None,
             },
-            "guidance": app._CODE_MODE_ERROR_GUIDANCE,
+            "guidance": app._code_mode_error_guidance("response_deadline_exceeded"),
         }
         assert manager.store.get(outcome.execution_id)["state"] == "accepted"
         deadline = time.monotonic() + 1
@@ -574,7 +574,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
             "message": "Code Mode Worker could not be launched.",
             "detail": "TimeoutError: launcher response timed out",
         },
-        "guidance": app._CODE_MODE_ERROR_GUIDANCE,
+        "guidance": app._code_mode_error_guidance("launch_interrupted"),
     }
     record = manager.store.get(outcome.execution_id)
     assert record["state"] == "failed"

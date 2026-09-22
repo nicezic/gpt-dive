@@ -90,6 +90,11 @@ async def normalize_tool_error_middleware(ctx: Any, call_next: Any) -> Any:
         "request_id": request_id,
         "tool": tool,
         "recovery": "inspect_boundary",
+        "guidance": (
+            "Match request_id and tool in GPT Dive server diagnostics; the cause is "
+            "not known from this payload. Check whether the original execution "
+            "ran before retrying any side-effectful request."
+        ),
     }
     logger.warning(
         "MCP TOOL ERROR boundary=mcp_server code=MCP.SERVER.UNHANDLED request=%s tool=%s",
