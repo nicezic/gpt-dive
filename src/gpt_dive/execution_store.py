@@ -87,6 +87,8 @@ class ExecutionStore:
                     stderr_path TEXT NOT NULL,
                     outcome_path TEXT NOT NULL,
                     exit_code INTEGER,
+                    dedupe_key TEXT,
+                    dedupe_hash TEXT,
                     accepted_at TEXT NOT NULL,
                     claimed_at TEXT,
                     finished_at TEXT,
@@ -109,6 +111,17 @@ class ExecutionStore:
                 connection.execute(
                     "ALTER TABLE executions DROP COLUMN run_command_next_ordinal"
                 )
+            for column in ("dedupe_key", "dedupe_hash"):
+                if column not in execution_columns:
+                    connection.execute(
+                        f"ALTER TABLE executions ADD COLUMN {column} TEXT"
+                    )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS executions_dedupe_key
+                ON executions (dedupe_key) WHERE dedupe_key IS NOT NULL
+                """
+            )
 
             legacy_evidence_columns = {
                 "execution_id",
@@ -201,11 +214,16 @@ class ExecutionStore:
         outcome_path: Path,
         publish: bool = False,
         execution_id: str | None = None,
+        dedupe_key: str | None = None,
+        dedupe_hash: str | None = None,
     ) -> dict[str, Any]:
         clean_kind = kind.strip()
         if not clean_kind:
             raise ValueError("kind must not be empty")
         clean_label = self._validate_label(label)
+        clean_key = (dedupe_key or "").strip() or None
+        if clean_key is not None and len(clean_key) > 80:
+            raise ValueError("dedupe_key must be 80 characters or fewer")
         if backend not in {"systemd", "popen"}:
             raise ValueError(f"unsupported execution backend: {backend}")
         if work_timeout_seconds <= 0:
@@ -233,12 +251,12 @@ class ExecutionStore:
                     work_timeout_seconds, cleanup_timeout_seconds,
                     work_deadline_at, absolute_deadline_at,
                     request_path, artifact_dir, stdout_path, stderr_path,
-                    outcome_path,
+                    outcome_path, dedupe_key, dedupe_hash,
                     accepted_at, updated_at, published_at
                 ) VALUES (
                     ?, ?, ?, 'accepted', ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?
                 )
                 """,
@@ -258,6 +276,8 @@ class ExecutionStore:
                     str(stdout_path),
                     str(stderr_path),
                     str(outcome_path),
+                    clean_key,
+                    dedupe_hash if clean_key is not None else None,
                     accepted_at,
                     accepted_at,
                     published_at,
@@ -282,6 +302,15 @@ class ExecutionStore:
         if record["published_at"] is None or record["dismissed_at"] is not None:
             raise KeyError(execution_id.strip())
         return record
+
+    def find_dedupe(self, dedupe_key: str) -> dict[str, Any] | None:
+        """Return the execution bound to a dedupe key, if one exists."""
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM executions WHERE dedupe_key = ?",
+                (dedupe_key.strip(),),
+            ).fetchone()
+        return self._record(row) if row is not None else None
 
     def list_executions(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:

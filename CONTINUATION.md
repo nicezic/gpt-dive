@@ -28,7 +28,7 @@ ADR 0004 (Durable Runtime v2) ──→ ADR 0010 (Codex Contract) ──→ ADR 
 ```text
 Web MCP Tools
 ├─ bootstrap                                  ── 세션 오리엔테이션 및 위키 맵 로드
-├─ code_mode(label, code, payload?, cwd?)    ── Pydantic Monty 격리 파이썬 코드 실행 (Durable)
+├─ code_mode(label, code, payload?, cwd?, delivery?, dedupe_key?)  ── Pydantic Monty 격리 파이썬 코드 실행 (Durable)
 └─ task({action: list|get|cancel|dismiss})    ── 백그라운드 Task 생명주기 관리 및 결과 수신
 
 Execution & Storage

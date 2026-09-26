@@ -205,13 +205,13 @@ def test_runtime_supplies_child_budget_without_model_timeout(
 
     async def fake_subagent(**kwargs: object) -> dict[str, object]:
         calls.append(kwargs)
-        return {"ok": True, "model": kwargs["model"], "output": "OK"}
+        return {"ok": True, "model": kwargs["alias"], "output": "OK"}
 
     monkeypatch.setattr(capabilities_module, "invoke_subagent", fake_subagent)
 
     result = run_code(
         tmp_path,
-        "await subagent_call(model='terra', task='review', output_tokens_limit=321)",
+        "await subagent_call(alias='terra', task='review', output_tokens_limit=321)",
     )
 
     assert result == {"ok": True, "model": "terra", "output": "OK"}
@@ -222,7 +222,7 @@ def test_runtime_supplies_child_budget_without_model_timeout(
     with pytest.raises((MontyTypingError, MontyRuntimeError)):
         run_code(
             tmp_path,
-            "await subagent_call(model='terra', task='review', timeout=30)",
+            "await subagent_call(alias='terra', task='review', timeout=30)",
         )
 
 
@@ -246,7 +246,7 @@ def test_all_model_capabilities_receive_runtime_owned_budget(
         tmp_path,
         "await asyncio.gather("
         "agy_worker(task='research'), "
-        "peer_review(provider='openai', prompt='review'))",
+        "peer_review(alias='micu', prompt='review'))",
     )
 
     assert set(calls) == {"agy", "peer"}

@@ -12,7 +12,7 @@ GPT Dive exposes outer Code Mode `peer_review(...)` as the current peer-review l
 Web SOL
   -> code_mode(label="Peer review: …", delivery="task")
        -> Task / TrackedTasks awareness
-       -> peer_review(provider, model, prompt, cwd)
+       -> peer_review(alias, prompt, cwd)
             -> invoke_model_call(peer_review=True)
                  -> Pydantic Agent
                  -> independent review
@@ -57,7 +57,7 @@ Normal path:
 ```text
 host local read peer_packet.md
         ↓
-peer_review(provider=<approved>, model=<exact ID>, prompt=<complete packet>, timeout=<explicit seconds>)
+peer_review(alias=<approved provider or alias[:model]>, prompt=<complete packet>)
         ↓
 peer final review text
         ↓

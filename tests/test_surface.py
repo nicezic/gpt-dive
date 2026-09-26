@@ -128,6 +128,11 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
     assert schema["properties"]["label"]["minLength"] == 1
     assert "mode" not in schema["properties"]
     assert schema["properties"]["delivery"]["enum"] == ["auto", "task"]
+    dedupe = schema["properties"]["dedupe_key"]
+    dedupe_str = next(
+        branch for branch in dedupe["anyOf"] if branch.get("type") == "string"
+    )
+    assert dedupe_str["maxLength"] == 80
 
     assert tool.output_schema is not None
     assert "result" not in tool.output_schema.get("properties", {})

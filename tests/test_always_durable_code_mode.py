@@ -204,6 +204,7 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
             "code": code,
             "message": message,
             "detail": None,
+            "recovery": "inspect_first",
         },
         "guidance": app._code_mode_error_guidance(code),
     }
@@ -387,6 +388,7 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
                 "code": "lost",
                 "message": "Code Mode Execution outcome is no longer observable.",
                 "detail": None,
+                "recovery": "inspect_first",
             },
             "guidance": app._code_mode_error_guidance("lost"),
         }
@@ -535,6 +537,7 @@ def test_post_acceptance_response_timeout_returns_structured_error(
                     "finish before the response deadline."
                 ),
                 "detail": None,
+                "recovery": "inspect_first",
             },
             "guidance": app._code_mode_error_guidance("response_deadline_exceeded"),
         }
@@ -573,6 +576,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
             "code": "launch_interrupted",
             "message": "Code Mode Worker could not be launched.",
             "detail": "TimeoutError: launcher response timed out",
+            "recovery": "inspect_first",
         },
         "guidance": app._code_mode_error_guidance("launch_interrupted"),
     }
@@ -751,3 +755,123 @@ def test_code_mode_output_discriminator_resolves_union_types() -> None:
     assert isinstance(failed, app.CodeModeFailed)
     assert failed.status == "failed"
     assert failed.error.code == "boom"
+
+
+def test_error_details_fill_recovery_from_code() -> None:
+    assert (
+        app.CodeModeErrorDetails(code="cancelled", message="m").recovery == "no_retry"
+    )
+    assert (
+        app.CodeModeErrorDetails(code="TASK.NOT_TERMINAL", message="m").recovery
+        == "no_retry"
+    )
+    assert (
+        app.CodeModeErrorDetails(code="execution_error", message="m").recovery
+        == "inspect_first"
+    )
+
+
+def test_dedupe_key_returns_existing_execution_instead_of_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+
+    first = asyncio.run(
+        app.code_mode(
+            label="dedupe",
+            code="1 + 2",
+            cwd=str(tmp_path),
+            dedupe_key="req-1",
+        )
+    )
+    second = asyncio.run(
+        app.code_mode(
+            label="dedupe resubmitted",
+            code="1 + 2",
+            cwd=str(tmp_path),
+            dedupe_key="req-1",
+        )
+    )
+
+    assert isinstance(first, app.CodeModeCompleted)
+    assert isinstance(second, app.CodeModeCompleted)
+    assert second.execution_id == first.execution_id
+    assert len(manager.store.list_executions()) == 1
+
+    with pytest.raises(ValueError, match="dedupe_key"):
+        asyncio.run(
+            app.code_mode(
+                label="different request",
+                code="2 + 2",
+                cwd=str(tmp_path),
+                dedupe_key="req-1",
+            )
+        )
+
+
+def test_dedupe_hit_on_running_execution_returns_same_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        first = await app.code_mode(
+            label="slow dedupe",
+            code="await run_command('sleep 0.3; printf OK')",
+            cwd=str(tmp_path),
+            dedupe_key="req-2",
+        )
+        assert isinstance(first, app.CodeModeRunning)
+
+        second = await app.code_mode(
+            label="slow dedupe resubmitted",
+            code="await run_command('sleep 0.3; printf OK')",
+            cwd=str(tmp_path),
+            dedupe_key="req-2",
+        )
+        assert isinstance(second, app.CodeModeRunning)
+        assert second.execution_id == first.execution_id
+        assert len(manager.store.list_executions()) == 1
+
+        collected = await app.task(
+            app.TaskGetRequest(action="get", execution_id=first.execution_id)
+        )
+        assert collected is not None
+
+    asyncio.run(scenario())
+
+
+def test_dedupe_insert_collision_returns_marker_for_existing_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    create_terminal_code_mode_record(
+        manager,
+        execution_id="dedup1",
+        cwd=tmp_path,
+        label="original",
+        envelope={"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": 3},
+        exit_code=0,
+    )
+    dedupe_hash = app._dedupe_fingerprint(code="1 + 2", payload=None, cwd=str(tmp_path))
+    with manager.store._connect() as connection, connection:
+        connection.execute(
+            "UPDATE executions SET dedupe_key = ?, dedupe_hash = ? "
+            "WHERE execution_id = ?",
+            ("req-3", dedupe_hash, "dedup1"),
+        )
+
+    launched = app._start_code_mode_execution(
+        execution_id="dup999",
+        label="colliding",
+        code="1 + 2",
+        cwd=str(tmp_path),
+        payload=None,
+        publish=False,
+        dedupe_key="req-3",
+        dedupe_hash=dedupe_hash,
+    )
+
+    assert launched == {"dedupe_execution_id": "dedup1"}
+    assert len(manager.store.list_executions()) == 1

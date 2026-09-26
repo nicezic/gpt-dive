@@ -111,19 +111,6 @@ def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
     ]
 
 
-def _peer_model_label(payload_model: str | None, provider: str) -> str:
-    """Best-effort model label for error envelopes.
-
-    Explicit ids win; otherwise report the route's default so transport-error
-    envelopes never carry an empty ``model`` field. Unknown providers keep
-    "" — the worker reports the authoritative unknown-provider error.
-    """
-    if payload_model:
-        return payload_model
-    route = PROVIDER_ROUTES.get(provider)
-    return route.default_model if route else ""
-
-
 def _usage_summary(result: Any) -> dict[str, Any]:
     usage = result.usage
     if callable(usage):
@@ -299,61 +286,32 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def invoke_model_call(
     *,
-    alias: str | None = None,
+    alias: str,
     prompt: str,
     timeout: float,
     output_tokens_limit: int | None = None,
     peer_review: bool = False,
-    provider: str | None = None,
     workspace_dir: str | None = None,
     anthropic_thinking: str | None = None,
-    model_alias: str | None = None,
-    model: str | None = None,
-    **kwargs: Any,
 ) -> dict[str, Any]:
     """Run a model call, using alias for resolution."""
-    effective_alias = (
-        alias
-        or model_alias
-        or kwargs.get("user_alias_model")
-        or (str(model) if model is not None else None)
-    )
     if not prompt.strip():
         raise ValueError(_EMPTY_PROMPT_ERROR)
     if timeout <= 0:
         raise ValueError("timeout must be greater than 0")
+    if output_tokens_limit is not None and output_tokens_limit <= 0:
+        raise ValueError("output_tokens_limit must be greater than 0")
 
-    if peer_review:
-        if not effective_alias and not provider:
-            raise ValueError("alias is required for peer-review mode")
-        if effective_alias:
-            prov, model_name = resolve_model(effective_alias, provider=provider)
-            provider_label = prov
-            model_label = effective_alias
-            payload_model = model_name
-        else:
-            assert provider is not None
-            provider_label = provider
-            payload_model = None
-            model_label = _peer_model_label(payload_model, provider)
-        requested_output_tokens_limit = output_tokens_limit
-    else:
-        if effective_alias is None:
-            raise ValueError("alias is required for model calls")
-        provider_label, payload_model = resolve_model(effective_alias)
-        if output_tokens_limit is not None and output_tokens_limit <= 0:
-            raise ValueError("output_tokens_limit must be greater than 0")
-        model_label = effective_alias
-        requested_output_tokens_limit = output_tokens_limit
+    provider_label, payload_model = resolve_model(alias)
 
     payload = json.dumps(
         {
             "provider": provider_label if peer_review else None,
             "model": payload_model,
-            "alias": model_label,
-            "model_alias": model_label,
+            "alias": alias,
+            "model_alias": alias,
             "prompt": prompt,
-            "output_tokens_limit": requested_output_tokens_limit,
+            "output_tokens_limit": output_tokens_limit,
             "peer_review": peer_review,
             "workspace_dir": workspace_dir,
             "anthropic_thinking": anthropic_thinking,
@@ -389,9 +347,9 @@ async def invoke_model_call(
     )
     failure = worker_failure(outcome, kind="model call", timeout=timeout)
     if failure is not None:
-        failure["alias"] = model_label
-        failure["model"] = model_label
-        failure["model_alias"] = model_label
+        failure["alias"] = alias
+        failure["model"] = alias
+        failure["model_alias"] = alias
         failure["provider"] = provider_label
         if payload_model:
             failure["model_name"] = payload_model
@@ -407,9 +365,9 @@ async def invoke_model_call(
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
-            "alias": model_label,
-            "model": model_label,
-            "model_alias": model_label,
+            "alias": alias,
+            "model": alias,
+            "model_alias": alias,
             "provider": provider_label,
             "model_id": f"{provider_label}/{payload_model}"
             if payload_model

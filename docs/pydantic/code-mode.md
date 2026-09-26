@@ -7,7 +7,7 @@
 Code Mode is GPT Dive's programmable local execution root. It keeps the public MCP surface small while giving one Monty program direct access to a typed, discoverable capability registry.
 
 ```text
-code_mode(label, code, payload?, cwd?, mode?)
+code_mode(label, code, payload?, cwd?, delivery?, dedupe_key?)
         │
         ▼
 always-durable Execution
@@ -68,8 +68,8 @@ FileSystem 8
 
 Agent and model 3
 ├─ agy_worker(task, model?, cwd?, conversation_id?)
-├─ subagent_call(model, task, output_tokens_limit?, cwd?)
-└─ peer_review(provider, model?, prompt, cwd?)
+├─ subagent_call(alias, task, output_tokens_limit?, cwd?)
+└─ peer_review(alias, prompt, cwd?)
 
 Other 4
 ├─ council_emit(council_dir, message, expected_head?)
@@ -139,7 +139,7 @@ Use outer `payload=` for multiline or quoting-sensitive opaque data so `code=` s
 
 ```python
 packet = PAYLOAD
-result = await peer_review(provider="openai", prompt=packet)
+result = await peer_review(alias="micu", prompt=packet)
 result
 ```
 

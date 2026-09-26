@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from pydantic import (
     RootModel,
     TypeAdapter,
     ValidationInfo,
+    computed_field,
     field_validator,
     model_serializer,
 )
@@ -489,6 +491,16 @@ def _task_dismiss(execution_id: str) -> dict[str, Any]:
     return executions.dismiss_task(execution_id)
 
 
+def _dedupe_fingerprint(*, code: str, payload: str | None, cwd: str | None) -> str:
+    normalized_cwd = str(Path(cwd).expanduser().resolve()) if cwd is not None else None
+    canonical = json.dumps(
+        {"code": code, "cwd": normalized_cwd, "payload": payload},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _start_code_mode_execution(
     *,
     execution_id: str,
@@ -497,6 +509,8 @@ def _start_code_mode_execution(
     cwd: str | None,
     payload: str | None,
     publish: bool,
+    dedupe_key: str | None = None,
+    dedupe_hash: str | None = None,
 ) -> dict[str, Any]:
     request = {
         "v": CODE_MODE_WORKER_PROTOCOL,
@@ -511,15 +525,24 @@ def _start_code_mode_execution(
         f"--execution={shlex.quote(execution_id)} "
         f"--request={shlex.quote(str(request_path))}"
     )
-    return executions.start(
-        command,
-        execution_id=execution_id,
-        label=label,
-        cwd=cwd,
-        kind="code_mode",
-        publish=publish,
-        input_payload=request,
-    )
+    try:
+        return executions.start(
+            command,
+            execution_id=execution_id,
+            label=label,
+            cwd=cwd,
+            kind="code_mode",
+            publish=publish,
+            input_payload=request,
+            dedupe_key=dedupe_key,
+            dedupe_hash=dedupe_hash,
+        )
+    except sqlite3.IntegrityError:
+        if dedupe_key is not None and dedupe_hash is not None:
+            existing = executions.store.find_dedupe(dedupe_key)
+            if existing is not None and existing.get("dedupe_hash") == dedupe_hash:
+                return {"dedupe_execution_id": str(existing["execution_id"])}
+        raise
 
 
 def _spawn_followup(coro: Coroutine[Any, Any, None]) -> None:
@@ -745,6 +768,9 @@ def _code_mode_error_guidance(code: str) -> str:
     )
 
 
+RecoveryAction = Literal["inspect_first", "no_retry", "ask_user"]
+
+
 class CodeModeErrorDetails(_ClosedModel):
     code: str
     message: str
@@ -756,6 +782,13 @@ class CodeModeErrorDetails(_ClosedModel):
         if value is not None and len(value) > _ERROR_DETAIL_MAX_CHARS:
             return value[: _ERROR_DETAIL_MAX_CHARS - 3] + "..."
         return value
+
+    @computed_field
+    @property
+    def recovery(self) -> RecoveryAction:
+        if self.code in {"cancelled", "TASK.NOT_TERMINAL"}:
+            return "no_retry"
+        return "inspect_first"
 
 
 class CodeModeFailed(_ClosedModel):
@@ -994,6 +1027,28 @@ async def _code_mode_launch_error(
     )
 
 
+async def _dedupe_outcome(
+    execution_id: str,
+    *,
+    delivery: str,
+    wait_deadline: float,
+) -> CodeModeOutput:
+    if delivery == "task" and time.monotonic() < wait_deadline:
+        try:
+            record = await asyncio.to_thread(executions.store.get, execution_id)
+            if record["state"] in {"accepted", "running"}:
+                task = await _publish_accepted_task(executions, execution_id)
+                return CodeModeRunning(
+                    execution_id=execution_id,
+                    state=task["state"],
+                    elapsed_seconds=task.get("elapsed_seconds", 0),
+                )
+        except KeyError:
+            pass
+    raw = await _wait_for_execution(execution_id, wait_deadline=wait_deadline)
+    return _code_mode_output(raw)
+
+
 async def code_mode(
     *,
     label: str,
@@ -1001,10 +1056,10 @@ async def code_mode(
     payload: str | None = None,
     cwd: str | None = None,
     delivery: Literal["auto", "task"] | None = None,
-    mode: Literal["auto", "task"] | None = None,
+    dedupe_key: str | None = None,
 ) -> CodeModeOutput:
     """Launch one always-durable Code Mode Execution."""
-    chosen_delivery = delivery or mode or "auto"
+    chosen_delivery = delivery or "auto"
     clean_label = label.strip()
     if not clean_label:
         raise ValueError("label must not be empty")
@@ -1013,10 +1068,33 @@ async def code_mode(
     if not code.strip():
         raise ValueError("code must not be empty")
 
-    execution_id = generate_execution_id()
+    clean_key = (dedupe_key or "").strip()
+    if len(clean_key) > 80:
+        raise ValueError("dedupe_key must be 80 characters or fewer")
+    dedupe_hash = (
+        _dedupe_fingerprint(code=code, payload=payload, cwd=cwd) if clean_key else None
+    )
+
     started_at = time.monotonic()
     wait_deadline = started_at + _INLINE_WAIT_SECONDS
     response_deadline = started_at + _INLINE_RESPONSE_DEADLINE_SECONDS
+
+    if clean_key:
+        existing = await asyncio.to_thread(executions.store.find_dedupe, clean_key)
+        if existing is not None:
+            if existing.get("dedupe_hash") != dedupe_hash:
+                raise ValueError(
+                    f"dedupe_key {clean_key!r} is bound to a different request "
+                    f"(execution_id {existing['execution_id']}); use a new key "
+                    "or inspect that Execution first"
+                )
+            return await _dedupe_outcome(
+                str(existing["execution_id"]),
+                delivery=chosen_delivery,
+                wait_deadline=wait_deadline,
+            )
+
+    execution_id = generate_execution_id()
     launch_task = asyncio.create_task(
         asyncio.to_thread(
             _start_code_mode_execution,
@@ -1026,6 +1104,8 @@ async def code_mode(
             cwd=cwd,
             payload=payload,
             publish=chosen_delivery == "task",
+            dedupe_key=clean_key or None,
+            dedupe_hash=dedupe_hash,
         )
     )
 
@@ -1050,14 +1130,21 @@ async def code_mode(
                 response_deadline=response_deadline,
             )
         _spawn_followup(_observe_launch(launch_task))
+        if dedupe_hit := task.get("dedupe_execution_id"):
+            return await _dedupe_outcome(
+                str(dedupe_hit),
+                delivery=chosen_delivery,
+                wait_deadline=wait_deadline,
+            )
         return CodeModeRunning(
             execution_id=execution_id,
             state=task["state"],
             elapsed_seconds=task.get("elapsed_seconds", 0),
         )
 
+    launched: dict[str, Any] | None = None
     try:
-        await asyncio.wait_for(
+        launched = await asyncio.wait_for(
             asyncio.shield(launch_task),
             timeout=max(0.0, wait_deadline - time.monotonic()),
         )
@@ -1078,12 +1165,18 @@ async def code_mode(
             )
         if not launch_task.done():
             try:
-                await _wait_for_acceptance(
+                task = await _wait_for_acceptance(
                     executions,
                     launch_task,
                     execution_id,
                     deadline=response_deadline,
                 )
+                if dedupe_hit := task.get("dedupe_execution_id"):
+                    return await _dedupe_outcome(
+                        str(dedupe_hit),
+                        delivery=chosen_delivery,
+                        wait_deadline=wait_deadline,
+                    )
             except asyncio.CancelledError:
                 await _preserve_interrupted_launch(
                     executions, launch_task, execution_id
@@ -1166,6 +1259,9 @@ async def code_mode(
             exc,
             response_deadline=response_deadline,
         )
+
+    if launched and (dedupe_hit := launched.get("dedupe_execution_id")):
+        execution_id = str(dedupe_hit)
 
     remaining_response = max(0.0, response_deadline - time.monotonic())
     try:
@@ -1343,6 +1439,19 @@ async def _mcp_code_mode(
             )
         ),
     ] = "auto",
+    dedupe_key: Annotated[
+        str | None,
+        Field(
+            max_length=80,
+            description=(
+                "Optional idempotency key. A resubmission carrying the same key "
+                "and an identical code/payload/cwd returns the existing "
+                "Execution instead of starting a duplicate; the same key with "
+                "different inputs is rejected. Use it only when the request "
+                "must not run twice."
+            ),
+        ),
+    ] = None,
     ctx: Context | None = None,
 ) -> _CodeModePublicOutput:
     primary = await code_mode(
@@ -1351,6 +1460,7 @@ async def _mcp_code_mode(
         cwd=cwd,
         payload=payload,
         delivery=delivery,
+        dedupe_key=dedupe_key,
     )
     if isinstance(primary, CodeModeRunning):
         _record_session_task(ctx, primary.execution_id)

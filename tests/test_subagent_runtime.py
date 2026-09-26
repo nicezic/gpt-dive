@@ -48,4 +48,4 @@ def test_model_catalog_is_sanitized_and_complete() -> None:
 
 def test_unknown_model_rejected_before_process_launch() -> None:
     with pytest.raises(ValueError, match="unknown model alias"):
-        asyncio.run(invoke_subagent(model="nope", task="x", timeout=30.0))
+        asyncio.run(invoke_subagent(alias="nope", task="x", timeout=30.0))

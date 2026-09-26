@@ -33,7 +33,7 @@ MCP connection은 결과를 잠시 기다릴 수 있지만 작업 소유자가 �
 bootstrap
 └─ 신뢰하는 fresh-session context 적재
 
-code_mode(label, code, payload?, cwd?, delivery=auto|task)
+code_mode(label, code, payload?, cwd?, delivery=auto|task, dedupe_key?)
 ├─ durable Execution 하나 생성
 ├─ auto → bounded inline wait 뒤 result 또는 Task
 └─ task → Task를 즉시 publish

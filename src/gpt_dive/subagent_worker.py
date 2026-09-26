@@ -84,9 +84,7 @@ def _usage_summary(result: Any) -> dict[str, Any]:
 
 
 async def _run(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_model = str(
-        payload.get("alias") or payload.get("model_alias") or payload.get("model")
-    )
+    raw_model = str(payload["alias"])
     provider, model_name = resolve_model(raw_model)
     task = str(payload["task"])
     raw_limit = payload.get("output_tokens_limit")

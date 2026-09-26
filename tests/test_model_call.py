@@ -34,14 +34,14 @@ class _FakeAgent:
         return _FakeResult()
 
 
-def test_peer_model_label_prefers_explicit_then_route_default() -> None:
-    from gpt_dive.model_call import _peer_model_label
-    from gpt_dive.model_registry import PROVIDER_ROUTES
+def test_resolve_model_falls_back_to_provider_default_model() -> None:
+    from gpt_dive.model_registry import PROVIDER_ROUTES, resolve_model
 
-    known = next(iter(PROVIDER_ROUTES))
-    assert _peer_model_label("explicit-id", known) == "explicit-id"
-    assert _peer_model_label(None, known) == PROVIDER_ROUTES[known].default_model
-    assert _peer_model_label(None, "not-a-registered-provider") == ""
+    assert resolve_model("micu") == (
+        "micu",
+        PROVIDER_ROUTES["micu"].default_model,
+    )
+    assert resolve_model("m3") == ("minimax", "MiniMax-M3")
 
 
 def test_model_call_worker_builds_agent_without_tools_or_capabilities(

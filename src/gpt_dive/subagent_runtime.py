@@ -32,27 +32,17 @@ def _validate_call(
 
 async def invoke_subagent(
     *,
-    alias: str | None = None,
+    alias: str,
     task: str,
     timeout: float,
     output_tokens_limit: int | None = None,
     workspace_dir: str | None = None,
-    model_alias: str | None = None,
-    model: str | None = None,
-    **kwargs: Any,
 ) -> dict[str, Any]:
     """Run one registered coding subagent with credentials scoped to a child process."""
-    effective_alias = alias or model_alias or kwargs.get("user_alias_model") or model
-    if not effective_alias:
-        raise ValueError("unknown model alias: must provide alias")
-    provider, model_name = _validate_call(
-        effective_alias, task, timeout, output_tokens_limit
-    )
+    provider, model_name = _validate_call(alias, task, timeout, output_tokens_limit)
     payload = json.dumps(
         {
-            "alias": effective_alias,
-            "model_alias": effective_alias,
-            "model": effective_alias,
+            "alias": alias,
             "provider": provider,
             "model_name": model_name,
             "model_id": f"{provider}/{model_name}",
@@ -91,9 +81,9 @@ async def invoke_subagent(
     )
     failure = worker_failure(outcome, kind="subagent", timeout=timeout)
     if failure is not None:
-        failure["alias"] = effective_alias
-        failure["model_alias"] = effective_alias
-        failure["model"] = effective_alias
+        failure["alias"] = alias
+        failure["model_alias"] = alias
+        failure["model"] = alias
         failure["provider"] = provider
         failure["model_name"] = model_name
         failure["model_id"] = f"{provider}/{model_name}"
@@ -108,9 +98,9 @@ async def invoke_subagent(
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
-            "alias": effective_alias,
-            "model_alias": effective_alias,
-            "model": effective_alias,
+            "alias": alias,
+            "model_alias": alias,
+            "model": alias,
             "provider": provider,
             "model_name": model_name,
             "model_id": f"{provider}/{model_name}",

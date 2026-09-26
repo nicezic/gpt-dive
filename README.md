@@ -17,9 +17,9 @@ Fresh structured sessions begin with `bootstrap`. Preload files come from `~/wik
 Code Mode enforces deterministic server-side execution deadlines (not AI arguments):
 
 - **Always-Durable Execution:** All `code_mode` executions start with durable lifecycle tracking backed by SQLite, identified by a compact 6-character URL-safe `execution_id`, and require a descriptive `label`.
-- **Inline Wait & Publication (~100s):** Fixed 110.0-second response deadline, divided into a 100-second inline delivery/wait cutoff and a 10-second MCP response window.
-  - If execution completes within 100 seconds, the structured outcome (`completed` or `error`) is returned directly.
-  - If execution exceeds 100 seconds, the same continuing Execution keeps running uninterrupted in the background up to the 12-hour limit (43,190s work cutoff + 10s cleanup reserve) and is published as a tracked Task for subsequent `task` tool retrieval.
+- **Inline Wait & Publication:** A fixed server-side response deadline, divided into a bounded inline delivery wait and an MCP response reserve. Live values live in [`docs/runtime/timeouts.md`](docs/runtime/timeouts.md).
+  - If execution completes within the inline wait, the structured outcome (`completed` or `error`) is returned directly.
+  - If execution exceeds the inline wait, the same continuing Execution keeps running uninterrupted in the background up to the work cutoff and is published as a tracked Task for subsequent `task` tool retrieval.
 - **Direct Shell Execution:** Direct shell execution capability `run_command` is available within `code_mode` with bounded spool files and process-group containment, inheriting the full Execution work budget.
 
 The full lifetime and cleanup contract is in [`docs/runtime/timeouts.md`](docs/runtime/timeouts.md).

@@ -130,6 +130,8 @@ class ExecutionManager:
         publish: bool = False,
         execution_id: str | None = None,
         input_payload: dict[str, Any] | None = None,
+        dedupe_key: str | None = None,
+        dedupe_hash: str | None = None,
     ) -> dict[str, Any]:
         if not command.strip():
             raise ValueError("command must not be empty")
@@ -178,6 +180,8 @@ class ExecutionManager:
                     stderr_path=stderr_path,
                     outcome_path=outcome_path,
                     publish=publish,
+                    dedupe_key=dedupe_key,
+                    dedupe_hash=dedupe_hash,
                 )
             except Exception:
                 shutil.rmtree(execution_dir, ignore_errors=True)

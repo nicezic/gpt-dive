@@ -133,6 +133,10 @@ def resolve_model(
         prov = provider.strip().lower()
         return prov, model_alias.strip()
 
+    route = PROVIDER_ROUTES.get(key)
+    if route is not None and route.default_model:
+        return key, route.default_model
+
     choices = ", ".join(sorted(MODEL_ALIASES))
     raise ValueError(
         f"unknown model alias {model_alias!r}; choose one of: {choices} or use 'provider:model_name' or 'provider/model_name'"
