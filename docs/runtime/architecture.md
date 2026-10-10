@@ -137,6 +137,28 @@ exit_code / stdout / stderr / duration_ms / truncated
 
 `start_command`, `check_command`, `stop_command` mode는 없다.
 
+## Error Handling
+
+오류는 **원인을 아는 최초 경계에서 한 번 정규화**한다. 이후 Worker → Execution Manager → MCP 공개 모델은 확인된 `category`, `code`, `message`, `detail`, `recovery`를 재분류하지 않고 전달한다. GPT Dive 자체의 수락·실행 수명·전달 오류는 해당 경계에서 별도로 생성한다. 오류가 관찰된 영역이 근본 원인이라는 뜻은 아니다.
+
+```mermaid
+flowchart LR
+    U["Monty / 모델 등 업스트림"] --> W["발생 지점: 오류 정규화"]
+    W --> E["Worker 결과 + Execution 증거"]
+    E --> M["Execution Manager: 전달 / Runtime 오류 보완"]
+    M --> P["MCP: 공개 크기 제한"]
+    P --> C["ChatGPT"]
+    W --> S["SQLite error_events"]
+    M --> S
+```
+
+- **업스트림 진단:** Monty 타입 검사는 `type_check_format="json"`으로 ty의 복수 `diagnostics[]`(코드·위치)를 보존한다. Pydantic AI 하위 Worker는 확인된 예외 타입과 HTTP 상태를 전달하며, 공개 오류 모델은 `http_status`를 명시적 선택 필드로 허용한다. `error.code`는 업스트림 예외 타입 또는 GPT Dive 오류 코드이며, 세부 진단이 있는 경우에만 `diagnostics[]`를 추가한다.
+- **증거와 응답:** Worker artifact에는 원본 구조화 진단을 남기고, 공개 응답은 진단 최대 8개와 `diagnostics_total`을 제공한다. `detail`도 길이 제한을 적용한다. 최종 MCP 응답에 보이지 않는 진단은 Execution 증거로 확인한다.
+- **복구와 실패 의미:** `recovery`는 발생 지점에서 실행 단계·부작용 가능성에 따라 결정한다. 결과가 불명확하면 임의 재실행하지 않는다. Capability의 `ok=false`, 셸 종료 코드, MCP의 `isError` 플래그만으로 Code Mode Execution 실패를 단정하지 않는다.
+- **통계:** `runtime.sqlite3`의 `error_events`는 실행당 최초 오류 1행(`execution_id UNIQUE`)을 저장하고 `task(get)` 중복 조회로 늘어나지 않는다. 실행 전 거절은 ID 없이 별도 이벤트다. Worker 오류는 발생 지점에서, Runtime의 `failed`·`cancelled`·`lost` 오류는 상태 확정 시 기록한다. 통계 쓰기 실패는 로그만 남기고 원래 오류 전달과 Execution 상태를 변경하지 않는다. 민감한 원문 대신 분류·진단 코드만 저장하며, `json_each()`로 복수 진단을 집계한다. 증거 보존 기간이 지나도 통계는 유지한다.
+
+터널·전송 오류는 GPT Dive 바깥에서 발생할 수 있으므로 내부 Execution 실패로 추정하지 않는다. **경계별 의미**는 `mcp-stdio-lifecycle.md`, **오류 계약**은 `CONTEXT.md`, **통계 SQL과 조사 절차**는 `operations.md`를 참고한다.
+
 ## Runtime 밖으로 명시적으로 넘기는 작업
 
 `systemd-run --user`를 명시적으로 호출하면 GPT Dive Runtime 밖의 sibling unit에 작업을 위임할 수 있다.
@@ -172,11 +194,13 @@ src/gpt_dive/
 ├─ wiki_bootstrap.py      Wiki preload, reminder loading, path validation
 ├─ model_registry.py      User aliases and Pydantic AI provider connections
 ├─ worker_subprocess.py   Shared worker launch, JSON response, process cleanup
-├─ execution_store.py     SQLite lifecycle and awareness transitions
+├─ execution_store.py     SQLite lifecycle, Task awareness, error_events
 ├─ execution_manager.py   launch, observe, cancel, recover, retain
-│                         Code Mode result normalization (envelope projection)
+│                         Code Mode result projection, upstream error passthrough
 ├─ execution_worker.py    claim-before-code and process-tree containment
-├─ code_mode_worker.py    durable Monty worker envelope
+├─ code_mode_worker.py    Monty error diagnostics, durable worker envelope
+├─ mcp_models.py          Public error fields and bounded diagnostics
+├─ code_mode_errors.py    GPT Dive error defaults and recovery guidance
 ├─ code_mode_protocol.py  worker envelope protocol version constant
 ├─ code_runtime.py        Monty runtime and capability registry
 ├─ code_capabilities.py   15 Code Mode capabilities

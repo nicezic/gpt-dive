@@ -46,14 +46,28 @@ PY
 
 예상 top-level set은 `bootstrap`, `code_mode`, `task`, `wsl_exec`다. `code_mode`는 `label`과 `code`를 필수로 요구하고, `task`는 strict action union을 받으며, 모든 tool은 알 수 없는 인자를 거부해야 한다.
 
+## MCP 운영 로그
+
+MCP 서버 시작점(`gpt-dive` CLI / `python -m gpt_dive`)은 표준 라이브러리 `RotatingFileHandler`로 운영 이벤트를 기록한다.
+
+- 위치: `~/gpt-dive/logs/gpt-dive.log`
+- 최대 용량: 활성 5 MiB + 백업 파일 `gpt-dive.log.1`~`.3` (총 최대 약 20 MiB).
+- 환경변수: `GPT_DIVE_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR|CRITICAL` (기본 `INFO`).
+- 내용: 서버 시작/종료, MCP 요청, Code Mode 결과와 request/execution ID, Task 발행·취소·정리, 진단 오류.
+- 일반 이벤트 로그에는 코드 본문이나 Payload를 의도적으로 기록하지 않는다. 단, 예외 메시지 자체가 입력 일부를 포함할 수 있으므로 운영 로그도 비공개로 취급한다. 개별 실행의 stdout/stderr는 Execution artifact에 별도 보관한다.
+- 파일 로깅은 MCP **서버 프로세스 시작 시** 초기화하며 도구 호출/Worker별 중복 핸들러는 만들지 않는다.
+
+확인: `tail -n 100 ~/gpt-dive/logs/gpt-dive.log` (서버 재시작 후 파일 생성).
+별도 DB/의존성을 도입하지 않는다.
+
 ## Runtime state
 
 ```text
 ~/.local/state/gpt-dive/
-├─ runtime-v2.sqlite3          lifecycle + Task awareness + run_command evidence
-├─ runtime-v2.sqlite3-wal      active SQLite WAL
-├─ runtime-v2.sqlite3-shm
-└─ executions-v2/<id>/
+├─ runtime.sqlite3          lifecycle + Task awareness + run_command evidence
+├─ runtime.sqlite3-wal      active SQLite WAL
+├─ runtime.sqlite3-shm
+└─ executions/<id>/
    ├─ request.json             Worker가 읽으면 삭제
    ├─ stdout.log
    ├─ stderr.log
@@ -144,6 +158,20 @@ call 실패
 ```
 
 `lost`를 replay로 수리하지 않는다. 사용자가 manual rerun이 안전한지 판단할 때까지 row와 증거를 보존한다.
+
+## Error 통계
+
+새 `runtime.sqlite3`의 `error_events`는 Execution당 최초 오류 1행(`execution_id UNIQUE`)을 기록한다. 실행 전 거절은 ID가 없으므로 별도 행이다. 원문 메시지·파일 경로 대신 분류 코드만 영속 저장하며, 수명 만료로 Execution artifact가 삭제돼도 집계는 유지된다. 반복 `task(get)`은 중복 삽입하지 않는다. Worker 또는 Runtime 상태 확정 지점에서 기록하므로 `task(get)` 호출이 없어도 오류를 집계할 수 있다. 통계 저장에 실패하면 `ERROR_EVENT persistence failed` 로그를 남기고 원래 실행 결과를 유지하므로, 이 경우 통계 누락은 가능하다. **Capability의 `ok=false`나 셸 종료 코드는 자동으로 Execution 오류로 분류하지 않는다.**
+
+```sql
+SELECT json_extract(error_json, '$.category') category,
+       json_extract(error_json, '$.code') code, COUNT(*) executions
+FROM error_events GROUP BY 1, 2 ORDER BY 3 DESC;
+
+SELECT json_extract(d.value, '$.code') diagnostic, COUNT(*) occurrences
+FROM error_events e, json_each(e.error_json, '$.diagnostics') d
+GROUP BY 1 ORDER BY 2 DESC;
+```
 
 ## Runtime 밖의 명시적 작업
 

@@ -58,7 +58,7 @@ read_file(path, offset=1, limit=None, line_numbers=False, raw=None)
 
 ### 3. SQLite 중심의 에러 감사(Audit) 체제 확립
 - 에러 케이스를 매 턴마다 마크다운 파일(`ERROR_CASE.md`)에 수기 기록하던 방식을 폐지.
-- SQLite SSOT(`~/.local/state/gpt-dive/runtime-v2.sqlite3`의 `executions` 테이블)를 단일 진실 공급원으로 삼고, 주기적 감사 쿼리를 통해 체계적으로 트러블슈팅을 수행한다.
+- SQLite SSOT(`~/.local/state/gpt-dive/runtime.sqlite3`의 `executions` 테이블)를 단일 진실 공급원으로 삼고, 주기적 감사 쿼리를 통해 체계적으로 트러블슈팅을 수행한다.
 
 ---
 

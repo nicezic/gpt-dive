@@ -49,13 +49,13 @@ The JSON-RPC message may be only `Bad Gateway`; prefer the structured `tunnel_fa
 GPT Dive normalizes the failure classes it actually owns; it does not pretend to own tunnel failures:
 
 ```text
-POLICY.USER_AUTH_REQUIRED   → boundary=policy; default-deny caller assertion guard, not proof of user-origin
-CodeModeFailed              → boundary=application; use error.code/message/detail
-MCP.SERVER.UNHANDLED        → boundary=mcp_server; unexpected tool failure observed by MCP server
-synthetic 502/tunnel_failure → boundary=tunnel/transport; use tunnel provenance
+POLICY.USER_AUTH_REQUIRED   → error.category=policy; default-deny caller assertion guard
+CodeModeFailed              → error.category + error.code + error.detail
+MCP.SERVER.UNHANDLED        → error.category=mcp_server; unexpected tool failure observed by MCP server
+synthetic 502/tunnel_failure → outside GPT Dive error categories; use tunnel provenance
 ```
 
-MCP 2.0 normally reduces an unexpected tool crash to `Error executing tool <name>`. GPT Dive rewrites that exact generic result to compact JSON carrying `code=MCP.SERVER.UNHANDLED`, `boundary=mcp_server`, `request_id`, `tool`, and `recovery=inspect_boundary`. The original exception remains in server diagnostics; the normalizer does not invent or expose a cause it cannot prove. Anticipated detailed tool errors are left unchanged.
+MCP 2.0 normally reduces an unexpected tool crash to `Error executing tool <name>`. GPT Dive rewrites that exact generic result to compact JSON carrying `code=MCP.SERVER.UNHANDLED`, `category=mcp_server`, `request_id`, `tool`, and `recovery=inspect_first`. The original exception remains in server diagnostics; the normalizer does not invent or expose a cause it cannot prove. Anticipated detailed tool errors are left unchanged.
 
 This middleware only runs when GPT Dive receives the request and can return an MCP tool result. A synthetic tunnel `502` created before a deliverable GPT Dive response is therefore **not** `MCP.SERVER.UNHANDLED` and cannot be normalized by GPT Dive.
 

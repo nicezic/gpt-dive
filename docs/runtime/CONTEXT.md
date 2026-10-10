@@ -82,7 +82,18 @@ _피할 표현_: Job list; Execution list; Web-facing projection을 Task store �
 
 - `status="completed"`: 실행 완료. `result`에 최종 프로그램 결과 전달.
 - `status="running"`: 백그라운드 진행 중. `state="running"`, `elapsed_seconds`, 그리고 `task(get)`을 안내하는 `guidance` 제공.
-- `status="failed"`: 실행 실패. `error: {code, message, detail}`과 `guidance` 제공.
+- `status="failed"`: 거절·실패. `error: {category, code, message, detail, recovery}`와 `guidance` 제공. **수락 전 입력 거절은 `execution_id`가 없다**. 수락된 실행에는 반드시 ID가 있다.
+
+오류 발생 지점에서 `category`(원천 영역)·`code`(업스트림 예외 타입 또는 GPT Dive 코드)·`recovery`를 한 번 결정하고 이후 경로는 그대로 전달한다. Monty는 `MontyTypingError`의 `diagnostics[]`에 ty 원본 코드와 위치를 보존한다(공개 응답은 최대 8건, 전체 건수는 `diagnostics_total`). `model`은 Pydantic AI 하위 Worker 오류 영역이며 HTTP 상태는 확인된 경우에만 `http_status`로 포함한다. 알 수 없는 값은 임의 재분류하지 않는다. **오류가 관찰된 경계와 실제 근본 원인은 다를 수 있다.**
+
+- `invalid_request`: 입력 거절, Execution 생성 없음.
+- `MontyTypingError`: Monty 사전 진단으로 사용자 코드 실행 전 거절. `diagnostics[]`의 규칙 이름·위치로 수정한다.
+- `MontyRuntimeError` 등: 업스트림 예외 타입을 유지한다. 실행 단계·부작용은 타입 이름만으로 단정하지 않는다. `non_json_result`는 반환 직렬화 실패다.
+- 런타임·Task·전송 오류: `error.code`에 맞는 기존 실행 상태를 확인하고, 미확인 결과를 자동 재실행하지 않는다.
+
+`recovery`는 오류 발생 지점이 제공한 값을 우선하며, 명시되지 않은 구형 오류에만 기본값을 채운다. `correct_input`(실행 전 입력 교정), `inspect_first`(증거·부작용 확인), `no_retry`(중단 유지), `ask_user`(권한 요청) 중 하나다. GPT Dive는 사용자 코드를 자동 수정·재실행하지 않는다. `print()`만 사용한 정상 Monty 결과 `null`도 실패로 바꾸지 않는다.
+
+운영 로그는 `CODEMODE outcome=… execution_id=… request=…` 및 `TASK publish|cancel|dismiss execution_id=…` 형식으로 남긴다. 원본 코드와 Payload는 로그에 남기지 않는다.
 
 현재 세션에 active한 백그라운드 Task가 있을 때 `tracked_tasks`가 포함된다. `tracked_tasks_guidance`는 같은 Task 집합이 처음 보일 때와 이후 9개 응답마다만 재출력하며, Task가 없으면 둘 다 생략된다.
 
