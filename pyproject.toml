@@ -5,10 +5,10 @@ description = "MCP runtime for GPT to dive into the user's local development env
 requires-python = ">=3.14"
 dependencies = [
     "mcp>=2.0.0",
-    "pydantic>=2.13.4",
-    "pydantic-monty>=0.0.23",
+    "pydantic>=2.14.0",
+    "pydantic-monty>=1.1.0",
     "pydantic-ai-slim[anthropic,openai]",
-    "pydantic-ai-harness>=0.29.0",
+    "pydantic-ai-harness>=0.55.0",
     "redis>=6.0.0",
     "starlette>=1.6.0",
     "uvicorn>=0.52.1",
