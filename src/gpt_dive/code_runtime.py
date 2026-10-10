@@ -10,9 +10,9 @@ from typing import Any, get_type_hints
 
 from pydantic import TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema
-from pydantic_ai._function_schema import FunctionSchema, function_schema
 from pydantic_ai.function_signature import FunctionSignature
-from pydantic_monty import AsyncMonty, MontyComplete
+from pydantic_ai.tools import Tool
+from pydantic_monty import AsyncMonty
 
 from .filesystem_policy import HostFileSystemOS
 
@@ -25,26 +25,23 @@ class CapabilityDefinition:
     fn: Callable[..., Any]
     description: str
     python_signature: inspect.Signature
-    function_schema: FunctionSchema
+    tool: Tool[Any]
     model_signature: FunctionSignature
     return_adapter: TypeAdapter[Any]
     is_async: bool
 
     @classmethod
     def from_callable(cls, name: str, fn: Callable[..., Any]) -> CapabilityDefinition:
-        schema = function_schema(
-            fn,
-            GenerateJsonSchema,
-            tool_name=name,
-            takes_ctx=False,
-        )
+        # A public Pydantic AI Tool owns validation and its generated schema.
+        tool = Tool(fn, name=name, takes_ctx=False, schema_generator=GenerateJsonSchema)
+        schema = tool.function_schema
         return_annotation = get_type_hints(fn, include_extras=True).get("return", Any)
         return cls(
             name=name,
             fn=fn,
             description=inspect.getdoc(fn) or "",
             python_signature=inspect.signature(fn),
-            function_schema=schema,
+            tool=tool,
             model_signature=FunctionSignature.from_schema(
                 name=name,
                 parameters_schema=schema.json_schema,
@@ -58,7 +55,7 @@ class CapabilityDefinition:
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         bound = self.python_signature.bind(*args, **kwargs)
-        validated = self.function_schema.validator.validate_python(
+        validated = self.tool.function_schema.validator.validate_python(
             dict(bound.arguments)
         )
         bound.arguments.clear()
@@ -252,7 +249,7 @@ class MontyCodeRuntime:
                     ),
                 ) as session,
             ):
-                state = await session.feed_start(
+                return await session.feed_run(
                     runtime_code,
                     inputs=inputs,
                     external_lookup=registry.as_external_lookup(),
@@ -260,9 +257,5 @@ class MontyCodeRuntime:
                     os=host_os,
                     skip_type_check=False,
                 )
-                while not isinstance(state, MontyComplete):
-                    state = await state.resume_auto()
-
-            return state.output
         finally:
             await registry.aclose()

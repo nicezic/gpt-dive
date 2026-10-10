@@ -83,9 +83,7 @@ class HostFileSystemOS(AbstractOS):
             return raw
         return self.cwd / raw
 
-    def _path(
-        self, arg: PurePosixPath | MontyFileHandle, *, write: bool = False
-    ) -> Path:
+    def _path(self, arg: PurePosixPath | MontyFileHandle) -> Path:
         canonical = self._lexical(arg).resolve()
         if is_secret_path(canonical, home=self.home):
             raise PermissionError(f"Credential/secret path is blocked: {canonical}")
@@ -112,21 +110,21 @@ class HostFileSystemOS(AbstractOS):
         return self._path(path).read_bytes()
 
     def path_write_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
-        return self._path(path, write=True).write_text(data)
+        return self._path(path).write_text(data)
 
     def path_write_bytes(
         self, path: PurePosixPath | MontyFileHandle, data: bytes
     ) -> int:
-        return self._path(path, write=True).write_bytes(data)
+        return self._path(path).write_bytes(data)
 
     def path_mkdir(self, path: PurePosixPath, parents: bool, exist_ok: bool) -> None:
-        self._path(path, write=True).mkdir(parents=parents, exist_ok=exist_ok)
+        self._path(path).mkdir(parents=parents, exist_ok=exist_ok)
 
     def path_unlink(self, path: PurePosixPath) -> None:
-        self._path(path, write=True).unlink()
+        self._path(path).unlink()
 
     def path_rmdir(self, path: PurePosixPath) -> None:
-        self._path(path, write=True).rmdir()
+        self._path(path).rmdir()
 
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
         directory = self._path(path)
@@ -141,8 +139,8 @@ class HostFileSystemOS(AbstractOS):
         return StatResult(*value[:10])
 
     def path_rename(self, path: PurePosixPath, target: PurePosixPath) -> None:
-        source = self._path(path, write=True)
-        destination = self._path(target, write=True)
+        source = self._path(path)
+        destination = self._path(target)
         source.rename(destination)
 
     def path_resolve(self, path: PurePosixPath) -> str:

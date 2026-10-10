@@ -211,10 +211,10 @@ def test_runtime_supplies_child_budget_without_model_timeout(
 
     result = run_code(
         tmp_path,
-        "await subagent_call(alias='terra', task='review', output_tokens_limit=321)",
+        "await subagent_call(alias='terra5', task='review', output_tokens_limit=321)",
     )
 
-    assert result == {"ok": True, "model": "terra", "output": "OK"}
+    assert result == {"ok": True, "model": "terra5", "output": "OK"}
     timeout = calls[0]["timeout"]
     assert isinstance(timeout, int | float)
     assert 0 < timeout <= 60
@@ -222,7 +222,7 @@ def test_runtime_supplies_child_budget_without_model_timeout(
     with pytest.raises((MontyTypingError, MontyRuntimeError)):
         run_code(
             tmp_path,
-            "await subagent_call(alias='terra', task='review', timeout=30)",
+            "await subagent_call(alias='terra5', task='review', timeout=30)",
         )
 
 
@@ -296,6 +296,62 @@ def test_read_file_raw_by_default_and_line_numbers(tmp_path: Path) -> None:
     # offset & limit with raw
     sliced = run_code(tmp_path, "await read_file('sample.json', offset=1, limit=1)")
     assert sliced == '  "key": "value"\n'
+
+
+def test_raw_read_round_trips_to_exact_edit_file_with_crlf(tmp_path: Path) -> None:
+    target = tmp_path / "settings.txt"
+    before = b'first\r\n  setting = "old"\r\nlast\r\n'
+    after = before.replace(b'"old"', b'"new"')
+    target.write_bytes(before)
+
+    result = run_code(
+        tmp_path,
+        """
+original = await read_file("settings.txt")
+updated = original.replace('"old"', '"new"')
+await edit_file("settings.txt", old_text=original, new_text=updated)
+await read_file("settings.txt")
+""",
+    )
+
+    assert result == after.decode()
+    assert target.read_bytes() == after
+
+
+def test_numbered_read_is_not_an_edit_anchor(tmp_path: Path) -> None:
+    target = tmp_path / "settings.txt"
+    target.write_text('first\nsetting = "old"\n')
+
+    with pytest.raises(MontyRuntimeError, match="old_text not found"):
+        run_code(
+            tmp_path,
+            """
+numbered = await read_file("settings.txt", line_numbers=True)
+await edit_file("settings.txt", old_text=numbered, new_text="wrong")
+""",
+        )
+
+    assert target.read_text() == 'first\nsetting = "old"\n'
+
+
+def test_raw_read_caps_bytes_and_continues_by_offset(tmp_path: Path) -> None:
+    (tmp_path / "large.txt").write_text(("x" * 80 + "\n") * 4000)
+    first = run_code(tmp_path, "await read_file('large.txt')")
+    assert len(first.encode("utf-8")) <= 256 * 1024
+    assert "offset=3234" in first
+    rest = run_code(tmp_path, "await read_file('large.txt', offset=3234)")
+    assert rest == ("x" * 80 + "\n") * (4000 - 3234)
+    assert "capped" not in rest
+
+
+def test_raw_read_detects_binary_and_blocks_secret_symlinks(tmp_path: Path) -> None:
+    (tmp_path / "binary.bin").write_bytes(b"a\x00b")
+    assert "Binary file: 3 bytes" in run_code(tmp_path, "await read_file('binary.bin')")
+
+    (tmp_path / ".env").write_text("TOKEN=secret")
+    (tmp_path / "env-link").symlink_to(".env")
+    with pytest.raises(MontyRuntimeError, match="denied by pattern"):
+        run_code(tmp_path, "await read_file('env-link')")
 
 
 def test_broad_recursive_search_is_rejected(tmp_path: Path) -> None:

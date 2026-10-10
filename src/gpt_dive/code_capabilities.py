@@ -7,15 +7,12 @@ import gzip
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem._toolset import (
-    _RECOVERABLE_ERRORS,
-    ModelRetry,
-    _is_binary,
-)
 
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
+from .code_file_read import read_raw_file
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .command_runtime import (
     RuntimeRecord,
@@ -79,8 +76,9 @@ def build_code_registry(
     filesystem_toolset: Any = FileSystem(
         root_dir="/",
         denied_patterns=denied_patterns,
-        protected_patterns=[],
+        read_only_patterns=[],
     ).get_toolset()
+    workspace = LocalWorkspaceBackend(effective_cwd)
 
     def resolve_path(path: str) -> Path:
         expanded = Path(path).expanduser()
@@ -98,48 +96,32 @@ def build_code_registry(
     ) -> str:
         """Read a text file. Returns exact raw text content by default.
 
+        Raw output is capped at 256 KiB: use offset/limit to obtain exact
+        snippets for editing. A truncation notice is not file content.
+
         Relative paths use cwd; host reads are allowed anywhere except credential/secret paths.
         Set line_numbers=True (or raw=False) to include line numbers and metadata header for visual inspection.
         """
         show_line_numbers = line_numbers if raw is None else (not raw)
-        resolved_str = str(resolve_path(path))
+        resolved_path = resolve_path(path)
         if show_line_numbers:
             return await filesystem_toolset.read_file(
-                resolved_str, offset=offset, limit=limit
+                str(resolved_path), offset=offset, limit=limit, workspace=workspace
             )
-        try:
-            resolved = filesystem_toolset._safe_resolve(resolved_str)
-            if not resolved.is_file():
-                if resolved.is_dir():
-                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
-                raise FileNotFoundError(f"File not found: {path}")
-
-            raw_bytes = resolved.read_bytes()
-            if _is_binary(raw_bytes):
-                size = len(raw_bytes)
-                return (
-                    f"[Binary file: {size} bytes. Use a binary-aware tool to inspect.]"
-                )
-
-            text = raw_bytes.decode("utf-8", errors="replace")
-            lines = text.splitlines(keepends=True)
-            if offset < 0:
-                raise ValueError(f"Offset {offset} must be non-negative.")
-            if offset > len(lines):
-                raise ValueError(
-                    f"Offset {offset} exceeds file length ({len(lines)} lines)."
-                )
-
-            max_lines = getattr(filesystem_toolset, "_max_read_lines", 2000)
-            capped_limit = max_lines if limit is None else max(limit, 0)
-            end = min(len(lines), offset + capped_limit)
-            return "".join(lines[offset:end])
-        except _RECOVERABLE_ERRORS as e:
-            raise ModelRetry(str(e)) from e
+        return await read_raw_file(
+            resolved_path=resolved_path,
+            requested_path=path,
+            home=home,
+            workspace=workspace,
+            offset=offset,
+            limit=limit,
+        )
 
     async def list_directory(path: str = ".") -> str:
         """List a directory. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        return await filesystem_toolset.list_directory(str(resolve_path(path)))
+        return await filesystem_toolset.list_directory(
+            str(resolve_path(path)), workspace=workspace
+        )
 
     async def search_files(
         pattern: str, *, path: str = ".", include_glob: str | None = None
@@ -148,25 +130,32 @@ def build_code_registry(
         resolved = resolve_path(path)
         reject_broad_search_root(resolved, operation="search_files")
         return await filesystem_toolset.search_files(
-            pattern, path=str(resolved), include_glob=include_glob
+            pattern, path=str(resolved), include_glob=include_glob, workspace=workspace
         )
 
     async def find_files(pattern: str, *, path: str = ".") -> str:
         """Find files by glob. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
         resolved = resolve_path(path)
         reject_broad_search_root(resolved, operation="find_files")
-        return await filesystem_toolset.find_files(pattern, path=str(resolved))
+        return await filesystem_toolset.find_files(
+            pattern, path=str(resolved), workspace=workspace
+        )
 
     async def file_info(path: str) -> str:
         """Get file or directory metadata. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
-        return await filesystem_toolset.file_info(str(resolve_path(path)))
+        return await filesystem_toolset.file_info(
+            str(resolve_path(path)), workspace=workspace
+        )
 
     async def write_file(
         path: str, content: str, *, expected_hash: str | None = None
     ) -> str:
         """Create or overwrite a file with conflict detection. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
         return await filesystem_toolset.write_file(
-            str(resolve_path(path)), content, expected_hash=expected_hash
+            str(resolve_path(path)),
+            content,
+            expected_hash=expected_hash,
+            workspace=workspace,
         )
 
     async def edit_file(
@@ -178,12 +167,18 @@ def build_code_registry(
     ) -> str:
         """Edit a file by exact replacement with conflict detection. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
         return await filesystem_toolset.edit_file(
-            str(resolve_path(path)), old_text, new_text, expected_hash=expected_hash
+            str(resolve_path(path)),
+            old_text,
+            new_text,
+            expected_hash=expected_hash,
+            workspace=workspace,
         )
 
     async def create_directory(path: str) -> str:
         """Create a directory and parents. Host writes are allowed anywhere permitted by the OS except credential/secret paths."""
-        return await filesystem_toolset.create_directory(str(resolve_path(path)))
+        return await filesystem_toolset.create_directory(
+            str(resolve_path(path)), workspace=workspace
+        )
 
     async def agy_worker(
         *,
