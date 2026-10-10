@@ -50,12 +50,14 @@ from .wiki_bootstrap import (
     _wiki_path as _wiki_path,
 )
 
-_INLINE_WAIT_SECONDS = 54.0
-_INLINE_RESPONSE_DEADLINE_SECONDS = 57.0
-_TASK_LIST_LIMIT = 50
+_GPT_DIVE_OPENAI_MCP_TUNNEL_RESPONSE_TIMEOUT_BUDGET_SEC = 120.0
+_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC = (
+    _GPT_DIVE_OPENAI_MCP_TUNNEL_RESPONSE_TIMEOUT_BUDGET_SEC - 3.0
+)
+_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC = (
+    _GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC - 3.0
+)
 _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
-TRACKED_TASKS_LIMIT = 8
-TRACKED_TASKS_MAX_BYTES = 4096
 _RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
 _ERROR_DETAIL_MAX_CHARS = 4096
 _CODE_MODE_CAPABILITY_CATALOG = code_mode_capability_catalog()
@@ -290,8 +292,8 @@ mcp.middleware.append(normalize_tool_error_middleware)
 mcp.middleware.append(_periodic_reminder_middleware)
 
 
-def _task_list(*, limit: int | None = None) -> list[dict[str, Any]]:
-    return executions.tasks(limit=limit)
+def _task_list() -> list[dict[str, Any]]:
+    return executions.tasks()
 
 
 def _task_get(execution_id: str) -> dict[str, Any]:
@@ -498,9 +500,11 @@ class TrackedTaskView(_ClosedModel):
 
 _TRACKED_TASKS_GUIDANCE = (
     "Passive Task HUD: never task(get) merely because a Task is running; use tracked_tasks while "
-    "other work exists. Auto delivery cuts inline wait at 54s and responds by 57s (<~60s observed "
-    "transport boundary). If only waiting remains, task(get) ~50s apart. Terminal state -> get once "
-    "-> handle -> dismiss."
+    "other work exists. Auto delivery waits up to "
+    f"{_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC:g}s before publishing a Task; "
+    f"internal response handling budget is {_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC:g}s. "
+    "Neither guarantees ChatGPT receipt. If only waiting remains, task(get) ~50s apart. "
+    "Terminal state -> get once -> handle -> dismiss."
 )
 
 
@@ -722,8 +726,10 @@ def _discard_session_task(
 async def _tracked_tasks_snapshot(
     ctx: Context | ServerRequestContext[Any, Any] | None = None,
 ) -> list[TrackedTaskView]:
-    rows = await asyncio.to_thread(_task_list, limit=TRACKED_TASKS_LIMIT)
     session_ids = _session_published_task_ids(ctx)
+    if session_ids is not None and not session_ids:
+        return []
+    rows = await asyncio.to_thread(_task_list)
     if session_ids is not None:
         rows = [row for row in rows if str(row.get("execution_id")) in session_ids]
     return [
@@ -901,8 +907,12 @@ async def code_mode(
     )
 
     started_at = time.monotonic()
-    wait_deadline = started_at + _INLINE_WAIT_SECONDS
-    response_deadline = started_at + _INLINE_RESPONSE_DEADLINE_SECONDS
+    wait_deadline = (
+        started_at + _GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC
+    )
+    response_deadline = (
+        started_at + _GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC
+    )
 
     if clean_key:
         existing = await asyncio.to_thread(executions.store.find_dedupe, clean_key)
@@ -1410,7 +1420,7 @@ def _task_view(value: dict[str, Any]) -> TaskView:
 
 async def task(request: TaskRequest) -> TaskOutcome:
     if isinstance(request, TaskListRequest):
-        rows = await asyncio.to_thread(_task_list, limit=_TASK_LIST_LIMIT)
+        rows = await asyncio.to_thread(_task_list)
         return TaskListOutput(tasks=[_task_view(row) for row in rows])
 
     if isinstance(request, TaskGetRequest):

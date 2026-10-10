@@ -72,7 +72,7 @@ _피할 표현_: 작업 자체를 가리키는 foreground execution.
 
 ### TrackedTasks
 
-**TrackedTasks**는 publish됐고 아직 dismiss되지 않은 Task의 bounded compact projection이다. Web SOL이 보통의 tool activity 중 작업을 재발견하게 하되, 별도 manager나 persistence layer가 되지는 않는다.
+**TrackedTasks**는 publish됐고 아직 dismiss되지 않은 Task의 session-scoped compact projection이다. Web SOL이 보통의 tool activity 중 작업을 재발견하게 하되, 별도 manager나 persistence layer가 되지는 않는다.
 
 _피할 표현_: Job list; Execution list; Web-facing projection을 Task store 또는 registry라고 부르는 것.
 

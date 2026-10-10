@@ -319,14 +319,10 @@ class ExecutionStore:
             ).fetchall()
         return [self._record(row) for row in rows]
 
-    def list_tasks(self, *, limit: int | None = None) -> list[dict[str, Any]]:
-        if limit is not None and limit <= 0:
-            return []
-        limit_clause = " LIMIT ?" if limit is not None else ""
-        parameters: tuple[int, ...] = (limit,) if limit is not None else ()
+    def list_tasks(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                f"""
+                """
                 SELECT * FROM executions
                 WHERE published_at IS NOT NULL AND dismissed_at IS NULL
                   AND length(execution_id) = 6
@@ -334,9 +330,7 @@ class ExecutionStore:
                     CASE WHEN state IN ('accepted', 'running') THEN 0 ELSE 1 END,
                     published_at DESC,
                     execution_id
-                {limit_clause}
                 """,
-                parameters,
             ).fetchall()
         return [self._record(row) for row in rows]
 

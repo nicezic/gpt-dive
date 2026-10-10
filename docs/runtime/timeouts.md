@@ -6,12 +6,14 @@
 
 2026-09-22 실측: GPT Dive의 70초 auto 작업은 로컬에서 정상 완료됐으나 ChatGPT가 결과를 못 받았고 같은 명령이 새 Execution으로 다시 실행됐다. 별도 Conduit 경계 시험에서는 서버 작업 60.0초의 성공과 60.1초의 실패가 반복됐다. 이는 관찰값이며 OpenAI 내부 설정값이나 GPT Dive의 성공 보증값은 아니다. Runtime의 durable work lifetime은 transport 한도와 독립적이다.
 
+2026-10-10 재측정: `wsl_exec` 117초 작업은 Web 응답에 성공했고 124초 작업은 실패했다. OpenAI가 실제 전달하는 `response_timeout` 값은 아직 미확인이다. GPT Dive는 **120초를 운영상 가정한 응답 시간 예산**으로 사용하며, OpenAI가 보장하는 한도를 뜻하지 않는다.
+
 ```text
 t=0       accepted Execution commit
 │
-├─ 54s    auto-mode inline wait 종료
+├─ 114s    auto-mode inline wait 종료
 │          └─ 이미 완료됐더라도 cutoff 뒤에는 같은 실행을 Task로 publish
-├─ 57s    GPT Dive 내부 MCP response deadline
+├─ 117s    GPT Dive 내부 MCP response deadline
 │
 ├─ 43190s Execution work cutoff (12h - 10s)
 │          └─ TERM → KILL → drain/reap
@@ -21,21 +23,21 @@ t≈60s     2026-09-22 별도 Conduit 시험에서 관찰된 실패 경계
            └─ 외부 증거일 뿐 공식 OpenAI 한도나 Runtime clock이 아님
 ```
 
-54초와 57초 사이 3초는 GPT Dive 내부 Task 공개·응답 처리를 위한 여유이며, 터널 전송·ChatGPT 수신까지 보장하지 않는다. 43,190초 work cutoff 뒤 10초는 cleanup reserve이지 사용자 code에 주는 추가 시간이 아니다.
+114초와 117초 사이 3초는 GPT Dive 내부 Task 공개·응답 처리를 위한 여유다. 117초와 가정된 120초 예산 사이에도 3초를 남기지만, 이 여유가 있다고 해서 터널 전송·ChatGPT 수신까지 보장하지 않는다. 43,190초 work cutoff 뒤 10초는 cleanup reserve이지 사용자 code에 주는 추가 시간이 아니다.
 
 ## Inline delivery
 
 ```text
 delivery=auto
-├─ 54초 전에 결과 구성 완료 → completed/error, Task 없음
-├─ 54초에 inline 대기 만료   → 이미 terminal이어도 Task publish + 동일 execution_id 반환
+├─ 114초 전에 결과 구성 완료 → completed/error, Task 없음
+├─ 114초에 inline 대기 만료   → 이미 terminal이어도 Task publish + 동일 execution_id 반환
 └─ 관측된 waiter/transport cancel → Task publish, Execution 계속
 
 delivery=task
 └─ launch 시 publish하고 즉시 반환
 ```
 
-57초 response deadline은 GPT Dive 내부 acceptance, Worker launch, inline observation, Task publication, result shaping의 한도다. Wrapper의 TrackedTasks 조회·직렬화 및 tunnel 전달은 여기에 포함되지 않을 수 있어 ChatGPT 수신 시각을 보장하지 않는다. 상위 호출 실패가 Runtime cancellation으로 전달된다고 보장할 수도 없다. 같은 부작용 작업의 자동 재시도를 금지한다. 공개 cancellation은 명시적 `task(action="cancel")`뿐이다.
+117초 response deadline은 GPT Dive 내부 acceptance, Worker launch, inline observation, Task publication, result shaping의 한도다. Wrapper의 TrackedTasks 조회·직렬화 및 tunnel 전달은 여기에 포함되지 않을 수 있어 ChatGPT 수신 시각을 보장하지 않는다. 상위 호출 실패가 Runtime cancellation으로 전달된다고 보장할 수도 없다. 같은 부작용 작업의 자동 재시도를 금지한다. 공개 cancellation은 명시적 `task(action="cancel")`뿐이다.
 
 ## Execution lifetime
 
@@ -110,14 +112,14 @@ Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한�
 ## 첫 failure boundary 진단
 
 ```text
-약 54초에 Task 반환
+약 114초에 Task 반환
 └─ 정상 inline delivery 경계; Execution을 재시작하지 않고 동일 ID로 공개
 
 `Code Mode tool call timed out` 등 최상위 도구 오류
 └─ 실행 실패로 단정하지 않고 기존 Task/Execution 증거 확인. 같은 명령을 맹목적으로 재호출하지 않음
 
 오래된 `accepted` Execution
-└─ 기존 launch grace 경과 후 `launch_interrupted`로 복구; 54/57초 응답 설정과 무관
+└─ 기존 launch grace 경과 후 `launch_interrupted`로 복구; 114/117초 응답 설정과 무관
 
 failed(reason=deadline_exceeded)
 └─ Runtime work cutoff; partial output과 workload 크기 확인

@@ -348,8 +348,7 @@ def test_code_mode_error_guidance_distinguishes_retry_safety() -> None:
 
 
 def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
-    def detailed_tasks(*, limit=None):
-        assert limit == 50
+    def detailed_tasks():
         return [
             {
                 "execution_id": "abc123",
@@ -401,7 +400,7 @@ def test_model_visible_structured_content_has_no_outer_result(
         return app.CodeModeRunning(execution_id="abc123", state="running")
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(app, "_task_list", lambda: [])
     completed = asyncio.run(_call_tool("code_mode", {"label": "shape", "code": "1"}))
     assert completed.structured_content == {
         "status": "completed",
@@ -431,7 +430,7 @@ def test_code_mode_public_output_summarizes_run_command(
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(app, "_task_list", lambda: [])
     monkeypatch.setattr(
         app.executions.store,
         "list_run_command_evidence",
@@ -513,7 +512,7 @@ def test_code_mode_public_output_is_unchanged_without_run_command(
         return app.CodeModeCompleted(execution_id="abc123", result=42)
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(app, "_task_list", lambda: [])
     monkeypatch.setattr(
         app.executions.store, "list_run_command_evidence", lambda _execution_id: []
     )
@@ -610,7 +609,7 @@ def test_wsl_exec_model_visible_result_projects_current_tracked_tasks(
 
     monkeypatch.setattr(app, "wsl_exec", fake_wsl_exec)
     monkeypatch.setattr(
-        app, "_task_list", lambda *, limit=None: [_projected_task(elapsed_seconds=261)]
+        app, "_task_list", lambda: [_projected_task(elapsed_seconds=261)]
     )
 
     result = asyncio.run(
@@ -642,7 +641,7 @@ def test_ordinary_result_always_projects_latest_snapshot(monkeypatch) -> None:
 
     projected = [_projected_task()]
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: projected)
+    monkeypatch.setattr(app, "_task_list", lambda: projected)
 
     def call() -> CallToolResult:
         return asyncio.run(_call_tool("code_mode", {"label": "shape", "code": "1"}))
@@ -670,7 +669,7 @@ def test_projection_failure_does_not_masquerade_as_empty_snapshot(monkeypatch) -
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
         return app.CodeModeCompleted(execution_id="abc123", result=42)
 
-    def fail_tasks(*, limit=None):
+    def fail_tasks():
         raise RuntimeError("task db unavailable")
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
@@ -809,7 +808,7 @@ def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(app, "_task_list", lambda: [])
     monkeypatch.setattr(
         app.executions.store, "list_run_command_evidence", lambda _id: []
     )
@@ -840,7 +839,7 @@ def test_code_mode_output_preserves_structured_type_when_under_128k(
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
+    monkeypatch.setattr(app, "_task_list", lambda: [])
     monkeypatch.setattr(
         app.executions.store, "list_run_command_evidence", lambda _id: []
     )

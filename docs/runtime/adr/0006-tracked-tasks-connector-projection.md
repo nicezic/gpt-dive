@@ -1,7 +1,7 @@
 ---
 title: ADR 0006 — Automatic TrackedTasks Projection
 created: 2026-08-30
-updated: 2026-10-10
+updated: 2026-10-11
 type: decision
 status: accepted
 ---
@@ -28,6 +28,7 @@ start background Execution → Task published
 - Primary tool result는 그대로 유지한다. `tracked_tasks`는 출력의 **형제 필드**이지 중첩된 result나 원래 `output` 일부가 아니다.
 - SQLite Task publication이 유일한 awareness authority다. Conduit는 새 Task ID/DB를 만들지 않는다.
 - Snapshot은 compact하게 만들어 실행 label, identifier, lifecycle, elapsed 등 실제 선택에 필요한 정보만 실어야 한다. 구체 필드는 현재 Pydantic schema가 소유한다.
+- **YAGNI:** Task는 드물게 발생한다. 대량 발생을 가정한 개수 제한·복잡한 관리 로직은 만들지 않는다. 실제 필요 없는 방어 설계가 코드와 버그만 늘렸다.
 - Task가 없을 때 `tracked_tasks`를 항상 빈 배열로 전송하라는 초기 제안은 **현재 구현에서 대체**됐다. 선택 필드는 비어 있으면 생략될 수 있다.
 - `task(list)`는 상세 조회 도구로 남지만, AI가 완료를 알기 위해 주기적으로 호출해야 하는 계약이 아니다.
 - MCP transport 자체가 응답을 잃으면 awareness delivery를 보장하지 못한다. 기존 Execution은 별개로 살아 있을 수 있다.

@@ -79,11 +79,13 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
         }
         for index in range(12)
     ]
-    monkeypatch.setattr(app, "_task_list", lambda *, limit=None: raw_tasks[:limit])
+    monkeypatch.setattr(
+        app, "_task_list", lambda: list(raw_tasks)
+    )
 
-    # Unscoped projection (no ctx) returns up to TRACKED_TASKS_LIMIT (8)
+    # Unscoped projection (no ctx) returns all tasks
     all_views = asyncio.run(app._tracked_tasks_snapshot())
-    assert len(all_views) == app.TRACKED_TASKS_LIMIT
+    assert len(all_views) == len(raw_tasks)
     assert all(isinstance(v, app.TrackedTaskView) for v in all_views)
     assert all_views[0].execution_id == "e00000"
     assert all_views[0].elapsed_seconds == 0
@@ -94,9 +96,10 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
     )
     app._record_session_task(ctx1, "e00001")
     app._record_session_task(ctx1, "e00003")
+    app._record_session_task(ctx1, "e00011")
 
     scoped_views = asyncio.run(app._tracked_tasks_snapshot(ctx1))
-    assert [v.execution_id for v in scoped_views] == ["e00001", "e00003"]
+    assert [v.execution_id for v in scoped_views] == ["e00001", "e00003", "e00011"]
     assert scoped_views[0].label == "task-1"
     assert scoped_views[1].label == "task-3"
 
@@ -164,7 +167,8 @@ def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> N
     wait_ready(manager, str(completed["execution_id"]))
     running = manager.start("sleep 2", label="active", publish=True)
 
-    projected = manager.tasks(limit=1)
+    projected = manager.tasks()
 
+    assert len(projected) == 2
     assert projected[0]["execution_id"] == running["execution_id"]
     manager.cancel(str(running["execution_id"]))

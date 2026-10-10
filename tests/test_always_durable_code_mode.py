@@ -251,8 +251,12 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
-    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.05
+    )
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 1.0
+    )
 
     async def scenario() -> None:
         outcome = await app.code_mode(
@@ -439,8 +443,12 @@ def test_inline_cutoff_publishes_accepted_task_during_stalled_launch(
         release_launch.wait(timeout=0.3)
 
     monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
-    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.02)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.02
+    )
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 0.2
+    )
 
     async def scenario() -> None:
         started = time.monotonic()
@@ -476,8 +484,12 @@ def test_pre_acceptance_response_timeout_returns_structured_error(
 
     monkeypatch.setattr(app, "_start_code_mode_execution", stalled_start)
     monkeypatch.setattr(app, "_wait_for_acceptance", stalled_acceptance)
-    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.01)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.03)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.01
+    )
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 0.03
+    )
 
     try:
         outcome = asyncio.run(
@@ -505,8 +517,12 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         "Popen",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.08)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.05
+    )
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 0.08
+    )
 
     async def stalled_wait(
         _execution_id: str, *, wait_deadline: float
@@ -665,7 +681,9 @@ def test_launch_error_shaping_deadline_returns_structured_error(
         raise RuntimeError("launcher failed at deadline")
 
     monkeypatch.setattr(app, "_start_code_mode_execution", fail_before_store)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.0)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 0.0
+    )
 
     outcome = asyncio.run(app.code_mode(label="deadline failure", code="1 + 2"))
 
@@ -687,7 +705,9 @@ def test_immediate_task_delivery_uses_execution_id_as_handle(
         release_launch.wait(timeout=0.2)
 
     monkeypatch.setattr(execution_manager.subprocess, "Popen", stalled_popen)
-    monkeypatch.setattr(app, "_INLINE_RESPONSE_DEADLINE_SECONDS", 0.15)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 0.15
+    )
 
     async def scenario() -> None:
         started = time.monotonic()
@@ -813,7 +833,9 @@ def test_dedupe_hit_on_running_execution_returns_same_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
-    monkeypatch.setattr(app, "_INLINE_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.05
+    )
 
     async def scenario() -> None:
         first = await app.code_mode(

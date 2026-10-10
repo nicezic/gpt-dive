@@ -74,7 +74,7 @@ class ConduitRuntime:
 
     def snapshot(self) -> list[dict[str, object]]:
         tasks: list[dict[str, object]] = []
-        for projected in self.executions.tasks(limit=8):
+        for projected in self.executions.tasks():
             row: dict[str, object] = {
                 "id": str(projected["execution_id"]),
                 "label": str(projected["label"]),

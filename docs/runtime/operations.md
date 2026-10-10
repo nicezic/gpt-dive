@@ -115,7 +115,7 @@ Fresh ChatGPT session에서 다음 순서로 확인한다.
 2. live `code_mode`와 `task` schema를 확인한다.
 3. 필수 label이 있는 짧은 `code_mode`를 실행해 `status=completed`를 확인한다.
 4. `delivery=task`로 실행한 뒤 다른 일을 계속하고, `task(get)`을 두 번 호출해 비파괴 조회를 증명한다.
-5. 무해한 70초 `delivery=auto` 시험에서 약 54초에 Task ID를 받는지, 기존 단일 Execution이 완료되고 `task(get)`으로 결과를 회수하는지 확인한다. 오류 시 동일 명령을 즉시 재호출하지 않고 기존 실행부터 확인한다.
+5. 무해한 116초 `delivery=auto` 시험에서 약 114초에 Task ID를 받는지, 기존 단일 Execution이 완료되고 `task(get)`으로 결과를 회수하는지 확인한다. 오류 시 동일 명령을 즉시 재호출하지 않고 기존 실행부터 확인한다.
 6. Terminal Task를 dismiss하고 `task(list)`에서 사라졌는지 확인한다.
 7. `run_command`를 실행해 stdout/stderr whitespace와 structured field를 확인한다.
 8. Transport loss를 시험할 때는 inline waiter만 중단하고, Execution이 cancel되지 않고 Task로 나타나는지 확인한다.

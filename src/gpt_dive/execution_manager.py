@@ -407,9 +407,9 @@ class ExecutionManager:
             record = self._refresh(record)
             return self._public_task(record)
 
-    def tasks(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+    def tasks(self) -> list[dict[str, Any]]:
         with self._lock:
-            records = self.store.list_tasks(limit=limit)
+            records = self.store.list_tasks()
             refreshed = [self._refresh(record) for record in records]
             return [self._public_task(record) for record in refreshed]
 
