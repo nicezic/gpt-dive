@@ -1,6 +1,6 @@
 # Council Web SOL E2E Experiment
 
-> Historical feasibility experiment. Council v1 later promoted the proven input-only CDP + MCP/Git output pattern into `src/gpt_dive/council/`; current architecture lives in `docs/council/README.md`.
+> Historical feasibility experiment. Council v1 later promoted the proven input-only CDP + MCP/Git output pattern into `src/gpt_dive/conduit/room/`; current architecture lives in `docs/conduit/room/README.md`.
 
 This experiment proves the input/output transport boundary for the real ChatGPT Web SOL session.
 
@@ -34,7 +34,7 @@ A new CDP attachment can trigger an Edge approval prompt. Keeping the bridge per
 The bridge is intentionally an experiment, not a production daemon. Give it an explicit lifetime when launching it through GPT Dive; the normal async-job default of 600 seconds is too short for a long Council session.
 
 ```bash
-uv run experiments/council_web_sol_e2e/edge_bridge.py
+uv run experiments/conduit/room_web_sol_e2e/edge_bridge.py
 ```
 
 It listens locally on:
@@ -46,7 +46,7 @@ It listens locally on:
 ## Send one message
 
 ```bash
-uv run --python 3.14 python experiments/council_web_sol_e2e/send_to_web_sol.py \
+uv run --python 3.14 python experiments/conduit/room_web_sol_e2e/send_to_web_sol.py \
   --url '<exact ChatGPT conversation URL>' \
   --message '<Council message>'
 ```

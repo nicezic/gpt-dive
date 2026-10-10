@@ -21,7 +21,7 @@
   let draft = ''
   let selectedTarget: Target = 'SOL'
   let turns: Turn[] = []
-  let roomTitle = 'Council'
+  let roomTitle = 'Conduit Room'
   let bridgeStarted = false
   let loading = true
   let busy: Target | null = null
@@ -113,14 +113,14 @@
 </script>
 
 <svelte:head>
-  <meta name="description" content="GPT Dive Council shared room" />
-  <title>{roomTitle} · Council</title>
+  <meta name="description" content="GPT Dive Conduit shared room" />
+  <title>{roomTitle} · Conduit</title>
 </svelte:head>
 
 <div class="app-shell">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">C</span><span>Council <em>/</em> room</span></div>
-    <div class="session"><span class="live-dot"></span> Local Council</div>
+    <div class="brand"><span class="brand-mark">C</span><span>Conduit <em>/</em> room</span></div>
+    <div class="session"><span class="live-dot"></span> Conduit Room</div>
   </header>
 
   <main class="room">
@@ -134,11 +134,11 @@
     </section>
 
     <div class="workspace">
-      <section class="transcript-panel" aria-label="Council transcript">
+      <section class="transcript-panel" aria-label="Conduit room transcript">
         <div class="panel-label"><span>TRANSCRIPT</span><span class="turn-count">{turns.length} turns</span></div>
         <div class="transcript">
           {#if loading}
-            <p class="empty-state">Loading Council…</p>
+            <p class="empty-state">Loading room…</p>
           {:else if turns.length === 0}
             <p class="empty-state">No turns yet. Put the first question in the room.</p>
           {/if}
@@ -197,7 +197,7 @@
             {/if}
           </div>
         {/if}
-        <p class="safe-note">The transcript and participant cursors are stored in the local Council Git repository.</p>
+        <p class="safe-note">The transcript and participant cursors are stored in the local room Git repository.</p>
       </aside>
     </div>
 

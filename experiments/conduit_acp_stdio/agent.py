@@ -13,7 +13,7 @@ import redis
 from redis.exceptions import RedisError
 
 from gpt_dive.conduit.events import DEFAULT_REDIS_URL, DEFAULT_STREAM
-from gpt_dive.council.bridge import SolBridge
+from gpt_dive.conduit.room.bridge import SolBridge
 
 
 class ConduitAcpCanary:

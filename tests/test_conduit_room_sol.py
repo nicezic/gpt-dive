@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from gpt_dive.council import (
+from gpt_dive.conduit.room import (
     CouncilProtocolError,
     append_turn,
     context_commit,

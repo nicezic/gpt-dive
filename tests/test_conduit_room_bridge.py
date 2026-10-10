@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from gpt_dive.council.bridge import SolBridge, _send_script, _session_is_open
+from gpt_dive.conduit.room.bridge import SolBridge, _send_script, _session_is_open
 
 
 def test_session_is_open_matches_named_open_session_only() -> None:

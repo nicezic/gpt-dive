@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from gpt_dive.council import (
+from gpt_dive.conduit.room import (
     advance_context,
     append_turn,
     context_commit,
@@ -103,7 +103,7 @@ def test_opus_receives_prior_synchronized_context_plus_only_new_unread_suffix(
 
 
 def test_opus_retry_reuses_existing_unread_user_turn(tmp_path: Path) -> None:
-    from gpt_dive.council import retry_opus_turn
+    from gpt_dive.conduit.room import retry_opus_turn
 
     repo = tmp_path / "council"
     initialized = initialize_council(repo, "# Council")

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gpt_dive.council import (
+from gpt_dive.conduit.room import (
     CouncilProtocolError,
     advance_context,
     append_turn,

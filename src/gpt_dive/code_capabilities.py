@@ -22,7 +22,7 @@ from .command_runtime import (
 from .command_runtime import (
     run_command as run_runtime_command,
 )
-from .council import emit_sol_response
+from .conduit.room import emit_sol_response
 from .filesystem_policy import harness_denied_patterns
 from .model_call import invoke_model_call
 from .subagent_runtime import invoke_subagent
@@ -274,7 +274,7 @@ def build_code_registry(
         message: str,
         expected_head: str | None = None,
     ) -> dict[str, Any]:
-        """Persist one Web SOL Council response as an append-only Git event."""
+        """Persist one Conduit room SOL response using the legacy Git room protocol."""
         return await asyncio.to_thread(
             emit_sol_response, council_dir, message, expected_head
         )

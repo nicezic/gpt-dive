@@ -54,10 +54,10 @@ def _title_from_init(init_text: str) -> str:
             title = stripped[2:].strip()
             if title:
                 return title
-    return "Council"
+    return "Conduit Room"
 
 
-class CouncilRoom:
+class ConduitRoom:
     def __init__(
         self,
         council_dir: str | Path,
@@ -153,7 +153,7 @@ class CouncilRoom:
             raise ValueError(f"invalid target: {target}")
 
 
-def create_app(room: CouncilRoom, *, static_dir: str | Path | None = None) -> Starlette:
+def create_app(room: ConduitRoom, *, static_dir: str | Path | None = None) -> Starlette:
     async def api_state(_: Request) -> JSONResponse:
         return JSONResponse(room.state())
 
@@ -194,7 +194,7 @@ def create_app(room: CouncilRoom, *, static_dir: str | Path | None = None) -> St
     if static_dir is not None:
         static_path = Path(static_dir).expanduser().resolve()
         if not (static_path / "index.html").is_file():
-            raise ValueError(f"built Council UI not found: {static_path}")
+            raise ValueError(f"built Conduit room UI not found: {static_path}")
         routes.append(
             Mount("/", app=StaticFiles(directory=static_path, html=True), name="web")
         )
@@ -202,8 +202,12 @@ def create_app(room: CouncilRoom, *, static_dir: str | Path | None = None) -> St
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the local GPT Dive Council room.")
-    parser.add_argument("--council-dir", type=Path, required=True)
+    parser = argparse.ArgumentParser(
+        description="Run the local GPT Dive Conduit shared room."
+    )
+    parser.add_argument(
+        "--room-dir", "--council-dir", dest="room_dir", type=Path, required=True
+    )
     parser.add_argument(
         "--sol-url",
         required=True,
@@ -214,11 +218,11 @@ def main() -> None:
     parser.add_argument(
         "--static-dir",
         type=Path,
-        default=Path(__file__).resolve().parents[3] / "web" / "dist",
+        default=Path(__file__).resolve().parents[4] / "web" / "dist",
     )
     args = parser.parse_args()
 
-    room = CouncilRoom(args.council_dir, sol_url=args.sol_url)
+    room = ConduitRoom(args.room_dir, sol_url=args.sol_url)
     app = create_app(room, static_dir=args.static_dir)
     uvicorn.run(app, host=args.host, port=args.port)
 

@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from ..subagent_runtime import invoke_subagent
+from ...subagent_runtime import invoke_subagent
 from .repo import (
     advance_context,
     append_turn,

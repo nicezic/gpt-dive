@@ -25,7 +25,8 @@ dev = [
 gpt-dive = "gpt_dive.__main__:main"
 gpt-dive-conduit = "gpt_dive.conduit.__main__:main"
 gpt-dive-conduit-log = "gpt_dive.conduit.consumer:main"
-gpt-dive-council = "gpt_dive.council.server:main"
+gpt-dive-conduit-room = "gpt_dive.conduit.room.server:main"
+gpt-dive-council = "gpt_dive.conduit.room.server:main"
 
 [build-system]
 requires = ["hatchling"]

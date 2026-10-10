@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any
 
 from starlette.testclient import TestClient
 
-from gpt_dive.council import append_turn, initialize_council
-from gpt_dive.council.server import CouncilRoom, create_app
+from gpt_dive.conduit.room import append_turn, initialize_council
+from gpt_dive.conduit.room.server import ConduitRoom, create_app
 
 
 class FakeBridge:
@@ -32,7 +33,7 @@ def test_room_state_reads_git_backed_transcript(tmp_path: Path) -> None:
     repo = tmp_path / "council"
     initialize_council(repo, "# Architecture Review\n\nWhy")
     append_turn(repo, "USER", "Question")
-    room = CouncilRoom(repo, sol_url="https://chatgpt.com/c/test", bridge=FakeBridge())
+    room = ConduitRoom(repo, sol_url="https://chatgpt.com/c/test", bridge=FakeBridge())
 
     state = room.state()
 
@@ -59,7 +60,7 @@ def test_room_routes_opus_and_sol_and_starts_bridge_lazily(tmp_path: Path) -> No
         append_turn(council_dir, "SOL", "sol-ok")
         return {"ok": True, "participant": "SOL"}
 
-    room = CouncilRoom(
+    room = ConduitRoom(
         repo,
         sol_url="https://chatgpt.com/c/test",
         bridge=bridge,
@@ -89,7 +90,7 @@ def test_http_api_exposes_state_turn_and_retry(tmp_path: Path) -> None:
     async def opus_retry(council_dir: Path, **_: Any) -> dict[str, Any]:
         return {"ok": True, "participant": "OPUS", "retried": True}
 
-    room = CouncilRoom(
+    room = ConduitRoom(
         repo,
         sol_url="https://chatgpt.com/c/test",
         bridge=bridge,
@@ -116,14 +117,14 @@ def test_http_api_exposes_state_turn_and_retry(tmp_path: Path) -> None:
 def test_room_retry_reconciles_late_sol_commit_before_bridge_start(
     tmp_path: Path,
 ) -> None:
-    from gpt_dive.council import emit_sol_response
+    from gpt_dive.conduit.room import emit_sol_response
 
     repo = tmp_path / "council"
     initialized = initialize_council(repo, "# Council")
     bridge = FakeBridge()
     user = append_turn(repo, "USER", "Slow question")
     late = emit_sol_response(repo, "Late answer", expected_head=user["commit"])
-    room = CouncilRoom(repo, sol_url="https://chatgpt.com/c/test", bridge=bridge)
+    room = ConduitRoom(repo, sol_url="https://chatgpt.com/c/test", bridge=bridge)
 
     result = asyncio.run(room.retry("SOL"))
 
@@ -132,3 +133,36 @@ def test_room_retry_reconciles_late_sol_commit_before_bridge_start(
     assert result["response_commit"] == late["commit"]
     assert result["context_before"] == initialized["initial_commit"]
     assert bridge.start_count == 0
+
+
+def test_conduit_room_cli_defaults_to_existing_web_build(
+    monkeypatch,
+) -> None:
+    from gpt_dive.conduit.room import server
+
+    observed = {}
+
+    monkeypatch.setattr(server, "ConduitRoom", lambda *args, **kwargs: object())
+
+    def fake_create_app(room, *, static_dir=None):
+        observed["static_dir"] = static_dir
+        return object()
+
+    monkeypatch.setattr(server, "create_app", fake_create_app)
+    monkeypatch.setattr(server.uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gpt-dive-conduit-room",
+            "--room-dir",
+            "/tmp/room",
+            "--sol-url",
+            "https://chatgpt.com/c/demo",
+        ],
+    )
+    server.main()
+
+    assert observed["static_dir"] == (
+        Path(__file__).resolve().parents[1] / "web" / "dist"
+    )
