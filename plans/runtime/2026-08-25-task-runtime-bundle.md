@@ -1,6 +1,6 @@
 # TaskRuntime bundle — review-followups slice
 
-> Created 2026-08-25. Origin: 2026-08-24 code-review finding #4 (Data Clump across task-runtime signatures). History chain: v1 plan `plans/plan-260824-task-execution-awareness-v1.md` (verbatim record) → implementation record `plans/runtime/2026-08-24-task-execution-awareness-v1.md` (post-ship work log) → `.scratch/260824-night-sweep-report.md`. Working branch: `improve/260825-review-followups` (already carries `2f049ac` shared probe pool, `c251700` peer model label; this slice is NOT yet implemented).
+> Created 2026-08-25. Origin: 2026-08-24 code-review finding #4 (Data Clump across task-runtime signatures). History chain: v1 plan `plans/plan-260824-task-execution-awareness-v1.md` (verbatim record) → implementation record `plans/runtime/2026-08-24-task-execution-awareness-v1.md` (post-ship work log; scratch report retired). Working branch: `improve/260825-review-followups` (already carries `2f049ac` shared probe pool, `c251700` peer model label; this slice is NOT yet implemented).
 >
 > Notation: unfamiliar English terms are annotated as term(한글 발음, 뜻).
 
