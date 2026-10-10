@@ -20,23 +20,58 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp_types import CallToolResult, TextContent
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
-    RootModel,
-    TypeAdapter,
-    ValidationInfo,
-    computed_field,
-    field_validator,
 )
 
 from . import wiki_bootstrap
 from .code_capabilities import code_mode_capability_catalog
+from .code_mode_errors import category_for
+from .code_mode_errors import guidance_for as _code_mode_error_guidance
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
 from .execution_manager import ExecutionManager, ExecutionNotFoundError
-from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
+from .execution_store import generate_execution_id
+from .mcp_models import (
+    _CODE_MODE_RUNNING_GUIDANCE as _CODE_MODE_RUNNING_GUIDANCE,
+)
+from .mcp_models import (
+    CodeModeCompleted,
+    CodeModeErrorDetails,
+    CodeModeFailed,
+    CodeModeOutput,
+    CodeModeRunning,
+    TaskCancelOutput,
+    TaskCancelRequest,
+    TaskDismissOutput,
+    TaskDismissRequest,
+    TaskGetRequest,
+    TaskListOutput,
+    TaskListRequest,
+    TaskOutcome,
+    TaskRequest,
+    TrackedTaskView,
+    WslExecWorkOutput,
+    _bound_code_mode_result,
+    _code_mode_output,
+    _CodeModePublicOutput,
+    _task_action_failure,
+    _task_view,
+    _TaskPublicOutcome,
+)
+from .mcp_models import (
+    CodeModeOutcome as CodeModeOutcome,
+)
+from .mcp_models import (
+    ExecutionState as ExecutionState,
+)
+from .mcp_models import (
+    TaskActionFailed as TaskActionFailed,
+)
+from .mcp_models import (
+    TaskView as TaskView,
+)
 from .runtime_diagnostics import (
+    _request_id,
     normalize_tool_error_middleware,
     request_lifecycle_middleware,
 )
@@ -59,7 +94,6 @@ _GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC = (
 )
 _RUNTIME_FOLLOWUPS: set[asyncio.Task[None]] = set()
 _RUN_COMMAND_STDERR_PREVIEW_CHARS = 4000
-_ERROR_DETAIL_MAX_CHARS = 4096
 _CODE_MODE_CAPABILITY_CATALOG = code_mode_capability_catalog()
 
 # MCP 2.0.0's generated ArgModelBase otherwise ignores unknown arguments. Closing
@@ -74,36 +108,15 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "Direct ChatGPT Web -> WSL2 runtime. wsl_exec has a default-deny caller assertion guard; "
-        "it does not prove user-origin authorization. code_mode launches durable Executions and task "
-        "manages their lifecycle. Never guess "
-        "capability names, arguments, or return shapes: inspect the live contract first."
+        "GPT Dive provides access to the user's local WSL2 environment "
+        "through structured MCP tools."
     ),
     instructions=(
-        "GPT Dive operates the user's local WSL2 environment. Treat its filesystem, "
-        "processes, network state, and command results as belonging to the user's local "
-        "machine, not as a separate hosted or ChatGPT sandbox. Use bootstrap before structured "
-        "code_mode work in a fresh session. code_mode is the durable Monty/Python orchestration "
-        "path: prefer registered capabilities "
-        "that directly match the operation, await dependencies sequentially, and use asyncio.gather "
-        "for independent work. Every Web MCP code_mode call must provide a short label. When opaque "
-        "input is needed, pass payload as a string; serialize objects/lists to text and parse PAYLOAD "
-        "inside Code Mode. Never invent capability names, parameter names, optional arguments, or "
-        "return shapes from memory. Inspect the live MCP schema/CAPABILITIES contract first whenever "
-        "uncertain. On tool errors or assistant mistakes, report them immediately and inspect the "
-        "live contract plus local state before retrying. When an error carries a machine code or "
-        "boundary, preserve its machine code and boundary verbatim. MCP.SERVER.UNHANDLED means the "
-        "MCP server observed an unexpected tool failure; a top-level transport/502 with no "
-        "CodeModeFailed payload is outside the Code Mode application error contract. Use Web Search "
-        "only when the missing evidence is external and current. Use delivery='task' for immediate "
-        "Task awareness; otherwise code_mode "
-        "waits briefly and publishes the same continuing Execution only when inline delivery ends "
-        "first. Transport loss never cancels work. Every successful ordinary work result includes "
-        "tracked_tasks as compact passive awareness with elapsed_seconds, so background completion "
-        "is rediscovered without remembered polling. task(list) is explicit detailed inspection, "
-        "not polling; task(get) is non-destructive result pickup, and task(dismiss) removes terminal "
-        "awareness. Program output semantics stay separate from Task awareness. Results are retained "
-        "for 5 days."
+        "This server operates on the user's real WSL2 machine. "
+        "Call bootstrap before using code_mode in a new session. "
+        "Follow live tool schemas; never guess capability arguments. "
+        "Inspect error diagnostics and prior side effects before retrying. "
+        "Never use wsl_exec without explicit user authorization."
     ),
 )
 
@@ -186,32 +199,6 @@ def _bounded_stderr_preview(data: bytes) -> str:
     head = _RUN_COMMAND_STDERR_PREVIEW_CHARS // 2
     tail = _RUN_COMMAND_STDERR_PREVIEW_CHARS - head - len(marker)
     return text[:head] + marker + text[-tail:]
-
-
-_CODE_MODE_RESULT_MAX_BYTES = 128 * 1024  # 128 KiB
-
-
-def _bound_code_mode_result(result: Any, execution_id: str | None = None) -> Any:
-    if isinstance(result, str):
-        encoded = result.encode("utf-8", errors="replace")
-        if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
-            return result
-        prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-        marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-        return prefix + marker
-
-    try:
-        serialized = json.dumps(result, ensure_ascii=False)
-    except Exception:
-        return result
-
-    encoded = serialized.encode("utf-8", errors="replace")
-    if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
-        return result
-
-    prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-    marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-    return prefix + marker
 
 
 def _processed_output_text(output: Any) -> str:
@@ -481,211 +468,13 @@ async def _wait_for_execution(
     }
 
 
-ExecutionState = Literal[
-    "accepted", "running", "completed", "failed", "cancelled", "lost"
-]
-
-
-class _ClosedModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class TrackedTaskView(_ClosedModel):
-    execution_id: str
-    label: str
-    state: ExecutionState
-    reason: str | None
-    elapsed_seconds: int
-
-
 _TRACKED_TASKS_GUIDANCE = (
-    "Passive Task HUD: never task(get) merely because a Task is running; use tracked_tasks while "
-    "other work exists. Auto delivery waits up to "
-    f"{_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC:g}s before publishing a Task; "
-    f"internal response handling budget is {_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC:g}s. "
-    "Neither guarantees ChatGPT receipt. If only waiting remains, task(get) ~50s apart. "
-    "Terminal state -> get once -> handle -> dismiss."
+    "Passive Task HUD: while running, prioritize independent work, code self-review, and "
+    "next-step planning. Observe tracked_tasks in subsequent tool results; never loop task(get). "
+    "If only waiting remains, report the running state instead of polling. For a credible "
+    "ETA over 10 minutes, consider supported scheduled self-wake-up. "
+    "Terminal state -> get once -> verify -> dismiss."
 )
-
-
-class CodeModeCompleted(_ClosedModel):
-    status: Literal["completed"] = "completed"
-    execution_id: str
-    result: Any
-    tracked_tasks: list[TrackedTaskView] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    tracked_tasks_guidance: str | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-    @field_validator("result", mode="after")
-    @classmethod
-    def _validate_result(cls, v: Any, info: ValidationInfo) -> Any:
-        exec_id = info.data.get("execution_id") if info.data else None
-        return _bound_code_mode_result(v, exec_id)
-
-
-_CODE_MODE_RUNNING_GUIDANCE = (
-    "Execution has a published Task. If still running, it continues in background. "
-    "Use task(action='get', execution_id=...) to inspect status or retrieve result."
-)
-
-
-class CodeModeRunning(_ClosedModel):
-    status: Literal["running"] = "running"
-    execution_id: str
-    state: ExecutionState = "running"
-    elapsed_seconds: int = 0
-    guidance: str = _CODE_MODE_RUNNING_GUIDANCE
-    tracked_tasks: list[TrackedTaskView] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    tracked_tasks_guidance: str | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-
-_CODE_MODE_ERROR_GUIDANCE = (
-    "Treat error.code as the stable category, error.message as the summary, and "
-    "error.detail as the concrete cause. DO NOT invent fallbacks or assume tools are broken. "
-    "Follow ~/wiki/ERROR_CASE.md: stop and report the failure to the user with [FIX PREVIEW], "
-    "inspect existing execution evidence before retrying side-effectful work; retry only when duplicate execution is safe. "
-    "A top-level tool or transport failure with no CodeModeFailed payload is outside this "
-    "application error contract; do not label it a Code Mode failure without tunnel evidence."
-)
-
-
-# A next step must be tied to the observed failure class, not a generic retry.
-# In particular, an error after acceptance does not prove user code was stopped.
-_CODE_MODE_NEXT_STEPS: dict[str, str] = {
-    "execution_error": "Inspect error.detail and the submitted Monty code/capability result; check prior side effects before a corrected call.",
-    "non_json_result": "Return a JSON-safe final expression (string, number, list, or dict); inspect the returned value before correcting the code.",
-    "worker_protocol_error": "Inspect retained worker stderr/outcome for this execution_id; do not infer that the user code did not run.",
-    "launch_unobserved": "Verify the live input and Execution record; acceptance was not confirmed. Do not blindly repeat side-effectful work.",
-    "launch_interrupted": "Inspect the Execution record and launch diagnostics before deciding whether a new request is safe.",
-    "response_deadline_exceeded": "The response deadline is not a work deadline. Check task(list) and existing Execution evidence before any retry.",
-    "task_publication_failed": "Inspect the original Execution record and Task publication state; do not start a duplicate Execution.",
-    "result_retrieval_failed": "Inspect the retained result and store diagnostics for this execution_id before retrying the original work.",
-    "response_protocol_error": "Inspect error.detail and the live output schema; avoid rerunning the original side-effectful code.",
-    "deadline_exceeded": "Inspect the recorded work deadline and retained partial output; verify side effects before a new execution.",
-    "cancelled": "Confirm the explicit cancellation and retained artifacts; do not assume child side effects were rolled back.",
-    "lost": "The execution outcome is not observable. Inspect retained evidence; do not infer success or rerun side-effectful work.",
-}
-
-
-def _code_mode_error_guidance(code: str) -> str:
-    step = _CODE_MODE_NEXT_STEPS.get(
-        code,
-        "Inspect error.detail, the live contract, and retained Execution evidence before a corrected call.",
-    )
-    return (
-        f"Next: {step} "
-        "Preserve error.code/message/detail and execution_id in the user report. "
-        "Never treat a top-level transport error as proof of execution failure."
-    )
-
-
-RecoveryAction = Literal["inspect_first", "no_retry", "ask_user"]
-
-
-class CodeModeErrorDetails(_ClosedModel):
-    code: str
-    message: str
-    detail: str | None = None
-
-    @field_validator("detail")
-    @classmethod
-    def _bound_detail(cls, value: str | None) -> str | None:
-        if value is not None and len(value) > _ERROR_DETAIL_MAX_CHARS:
-            return value[: _ERROR_DETAIL_MAX_CHARS - 3] + "..."
-        return value
-
-    @computed_field
-    @property
-    def recovery(self) -> RecoveryAction:
-        if self.code in {"cancelled", "TASK.NOT_TERMINAL"}:
-            return "no_retry"
-        return "inspect_first"
-
-
-class CodeModeFailed(_ClosedModel):
-    status: Literal["failed"] = "failed"
-    execution_id: str
-    error: CodeModeErrorDetails
-    guidance: str = _CODE_MODE_ERROR_GUIDANCE
-    tracked_tasks: list[TrackedTaskView] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    tracked_tasks_guidance: str | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-
-CodeModeOutput = Annotated[
-    CodeModeCompleted | CodeModeRunning | CodeModeFailed,
-    Field(discriminator="status"),
-]
-
-CodeModeOutcome = CodeModeOutput
-
-
-class _CodeModePublicOutput(RootModel[CodeModeOutput]):
-    pass
-
-
-class WslExecWorkOutput(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    tracked_tasks: list[TrackedTaskView] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    tracked_tasks_guidance: str | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-
-_CODE_MODE_OUTPUT_ADAPTER = TypeAdapter(CodeModeOutput)
-
-
-def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
-    payload = dict(value)
-    if "status" not in payload and "kind" in payload:
-        kind = payload.pop("kind")
-        if kind == "error":
-            payload["status"] = "failed"
-        elif kind == "task":
-            payload["status"] = "running"
-        elif kind == "completed":
-            payload["status"] = "completed"
-
-    if payload.get("status") == "failed":
-        if "error" not in payload:
-            err = {
-                "code": payload.pop(
-                    "error_code", payload.pop("code", "execution_error")
-                ),
-                "message": payload.pop("message", "Code Mode Execution failed."),
-            }
-            if "detail" in payload:
-                err["detail"] = payload.pop("detail")
-            payload["error"] = err
-        if "guidance" not in payload:
-            payload["guidance"] = _code_mode_error_guidance(
-                str(payload["error"].get("code", "execution_error"))
-            )
-
-    if (
-        payload.get("status") == "completed"
-        and "result" not in payload
-        and "output" in payload
-    ):
-        payload["result"] = payload.pop("output")
-
-    if payload.get("status") == "running" and "guidance" not in payload:
-        payload["guidance"] = _CODE_MODE_RUNNING_GUIDANCE
-
-    return _CODE_MODE_OUTPUT_ADAPTER.validate_python(payload)
 
 
 _SESSION_TASKS_STATE_KEY = "published_task_ids"
@@ -880,6 +669,16 @@ async def _dedupe_outcome(
     return _code_mode_output(raw)
 
 
+def _invalid_code_mode_request(detail: str) -> CodeModeFailed:
+    # Validation rejected the request before any Execution was accepted.
+    return CodeModeFailed(
+        error=CodeModeErrorDetails(
+            code="invalid_request", message="Invalid Code Mode request.", detail=detail
+        ),
+        guidance=_code_mode_error_guidance("invalid_request"),
+    )
+
+
 async def code_mode(
     *,
     label: str,
@@ -893,15 +692,15 @@ async def code_mode(
     chosen_delivery = delivery or "auto"
     clean_label = label.strip()
     if not clean_label:
-        raise ValueError("label must not be empty")
+        return _invalid_code_mode_request("label must not be empty")
     if len(clean_label) > 80:
-        raise ValueError("label must be 80 characters or fewer")
+        return _invalid_code_mode_request("label must be 80 characters or fewer")
     if not code.strip():
-        raise ValueError("code must not be empty")
+        return _invalid_code_mode_request("code must not be empty")
 
     clean_key = (dedupe_key or "").strip()
     if len(clean_key) > 80:
-        raise ValueError("dedupe_key must be 80 characters or fewer")
+        return _invalid_code_mode_request("dedupe_key must be 80 characters or fewer")
     dedupe_hash = (
         _dedupe_fingerprint(code=code, payload=payload, cwd=cwd) if clean_key else None
     )
@@ -918,10 +717,10 @@ async def code_mode(
         existing = await asyncio.to_thread(executions.store.find_dedupe, clean_key)
         if existing is not None:
             if existing.get("dedupe_hash") != dedupe_hash:
-                raise ValueError(
+                return _invalid_code_mode_request(
                     f"dedupe_key {clean_key!r} is bound to a different request "
-                    f"(execution_id {existing['execution_id']}); use a new key "
-                    "or inspect that Execution first"
+                    f"(existing execution_id {existing['execution_id']}); "
+                    "use a new key or inspect the existing Execution first"
                 )
             return await _dedupe_outcome(
                 str(existing["execution_id"]),
@@ -1193,7 +992,7 @@ async def _mcp_wsl_exec(
                 {
                     "status": "failed",
                     "error": {
-                        "boundary": "policy",
+                        "category": category_for("POLICY.USER_AUTH_REQUIRED"),
                         "code": "POLICY.USER_AUTH_REQUIRED",
                         "message": "wsl_exec requires explicit user authorization.",
                     },
@@ -1225,13 +1024,16 @@ async def _mcp_wsl_exec(
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
         "a running status for the same continuing Execution; delivery='task' publishes that Task "
         "immediately. Returns status ('completed' | 'running' | 'failed') and result. On "
-        "status='failed', preserve and report error.code, error.message, and error.detail; "
+        "status='failed', preserve error.category, error.code, error.message, "
+        "and error.detail; "
         "execution_id is the diagnostic correlation handle. Ongoing background work appears "
         "in tracked_tasks as passive HUD without need for polling. "
         "Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
         "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "
-        "only for independent work.\n\n"
+        "only for independent work. The final JSON-safe expression is result; print() is ignored. "
+        "invalid_request means no Execution was accepted (no execution_id); "
+        "MontyTypingError means Monty rejected the code before execution; check diagnostics[].\n\n"
         "Available Monty capabilities (generated from the live callable contract):\n```python\n"
         + _CODE_MODE_CAPABILITY_CATALOG
         + "\n```"
@@ -1293,6 +1095,7 @@ async def _mcp_code_mode(
     ] = None,
     ctx: Context | None = None,
 ) -> _CodeModePublicOutput:
+    started = time.monotonic()
     primary = await code_mode(
         label=label,
         code=code,
@@ -1301,6 +1104,13 @@ async def _mcp_code_mode(
         delivery=delivery,
         dedupe_key=dedupe_key,
     )
+    if isinstance(primary, CodeModeFailed) and primary.execution_id is None:
+        await asyncio.to_thread(
+            executions.store.record_error_event,
+            None,
+            primary.error.model_dump(exclude_none=True),
+            request_id=_request_id(ctx),
+        )
     if isinstance(primary, CodeModeRunning):
         _record_session_task(ctx, primary.execution_id)
 
@@ -1321,101 +1131,15 @@ async def _mcp_code_mode(
         )
     else:
         _tracked_tasks_guidance(ctx, tracked_tasks)
-    return _CodeModePublicOutput(root=primary)
-
-
-class TaskListRequest(_ClosedModel):
-    action: Literal["list"]
-
-
-class TaskGetRequest(_ClosedModel):
-    action: Literal["get"]
-    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
-
-
-class TaskCancelRequest(_ClosedModel):
-    action: Literal["cancel"]
-    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
-
-
-class TaskDismissRequest(_ClosedModel):
-    action: Literal["dismiss"]
-    execution_id: Annotated[str, Field(pattern=EXECUTION_ID_PATTERN)]
-
-
-TaskRequest = Annotated[
-    TaskListRequest | TaskGetRequest | TaskCancelRequest | TaskDismissRequest,
-    Field(discriminator="action"),
-]
-
-
-class TaskView(_ClosedModel):
-    execution_id: str
-    label: str
-    state: ExecutionState
-    reason: str | None
-    accepted_at: str
-    finished_at: str | None
-    published_at: str
-    updated_at: str
-    elapsed_seconds: int
-
-
-class TaskListOutput(_ClosedModel):
-    action: Literal["list"] = "list"
-    tasks: list[TaskView]
-
-
-class TaskActionFailed(_ClosedModel):
-    status: Literal["failed"] = "failed"
-    action: Literal["get", "cancel", "dismiss"]
-    execution_id: str
-    error: CodeModeErrorDetails
-    guidance: str
-
-
-def _task_action_failure(
-    request: TaskGetRequest | TaskCancelRequest | TaskDismissRequest,
-    *,
-    code: str,
-    message: str,
-    guidance: str,
-) -> TaskActionFailed:
-    return TaskActionFailed(
-        action=request.action,
-        execution_id=request.execution_id,
-        error=CodeModeErrorDetails(code=code, message=message),
-        guidance=guidance,
+    logger.info(
+        "CODEMODE outcome=%s execution_id=%s request=%s error_code=%s elapsed_ms=%.1f",
+        primary.status,
+        primary.execution_id or "-",
+        _request_id(ctx),
+        primary.error.code if isinstance(primary, CodeModeFailed) else "-",
+        (time.monotonic() - started) * 1000,
     )
-
-
-class TaskCancelOutput(_ClosedModel):
-    action: Literal["cancel"] = "cancel"
-    task: TaskView
-
-
-class TaskDismissOutput(_ClosedModel):
-    action: Literal["dismiss"] = "dismiss"
-    execution_id: str
-    state: ExecutionState
-    dismissed: bool
-
-
-TaskOutcome = (
-    TaskListOutput
-    | CodeModeOutcome
-    | TaskCancelOutput
-    | TaskDismissOutput
-    | TaskActionFailed
-)
-
-
-class _TaskPublicOutcome(RootModel[TaskOutcome]):
-    pass
-
-
-def _task_view(value: dict[str, Any]) -> TaskView:
-    return TaskView.model_validate(value)
+    return _CodeModePublicOutput(root=primary)
 
 
 async def task(request: TaskRequest) -> TaskOutcome:

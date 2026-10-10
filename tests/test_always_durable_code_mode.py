@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -131,6 +132,90 @@ def test_public_outcome_models_lock_llm_contract_fields(
     assert outcome_type.model_config["extra"] == "forbid"
 
 
+@pytest.mark.parametrize(
+    ("label", "code", "expected_fragment"),
+    [
+        ("   ", "1", "label must not be empty"),
+        ("valid", "   ", "code must not be empty"),
+    ],
+)
+def test_invalid_code_mode_request_is_not_a_server_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    code: str,
+    expected_fragment: str,
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    outcome = asyncio.run(app.code_mode(label=label, code=code))
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.execution_id is None
+    assert outcome.error.code == "invalid_request"
+    assert outcome.error.category == "request"
+    assert outcome.error.recovery == "correct_input"
+    assert expected_fragment in (outcome.error.detail or "")
+    assert "execution_id" not in outcome.model_dump()
+    assert manager.store.list_executions() == []
+
+
+def test_type_check_rejection_provides_exact_declaration_before_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+    outcome = asyncio.run(
+        app.code_mode(
+            label="invalid Monty argument",
+            code="await read_file(path='README.md', surprise=True)",
+            cwd=str(tmp_path),
+        )
+    )
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "MontyTypingError"
+    assert outcome.error.category == "monty"
+    assert outcome.error.diagnostics is not None
+    assert outcome.error.diagnostics[0]["code"] == "unknown-argument"
+    assert outcome.error.diagnostics[0]["location"]["row"] == 1
+    assert outcome.error.recovery == "correct_input"
+    assert "Argument `surprise`" in (outcome.error.detail or "")
+    assert "read_file" in (outcome.error.detail or "")
+    assert "did not execute" in outcome.guidance
+
+
+def test_runtime_error_retains_side_effect_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_manager(monkeypatch, tmp_path / "executions")
+    outcome = asyncio.run(
+        app.code_mode(
+            label="failure after file write",
+            code="await write_file(path='already-written.txt', content='done')\nraise RuntimeError('later failure')",
+            cwd=str(tmp_path),
+        )
+    )
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "MontyRuntimeError"
+    assert outcome.error.category == "monty"
+    assert outcome.error.recovery == "inspect_first"
+    assert outcome.error.diagnostics is not None
+    assert outcome.error.diagnostics[0]["code"] == "RuntimeError"
+    assert outcome.error.diagnostics[0]["location"]["row"] == 2
+    assert (tmp_path / "already-written.txt").read_text() == "done"
+
+
+def test_reused_dedupe_key_rejected_without_second_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    first = asyncio.run(app.code_mode(label="first", code="1", dedupe_key="example"))
+    assert isinstance(first, app.CodeModeCompleted)
+    second = asyncio.run(app.code_mode(label="second", code="2", dedupe_key="example"))
+    assert isinstance(second, app.CodeModeFailed)
+    assert second.execution_id is None
+    assert second.error.code == "invalid_request"
+    assert str(first.execution_id) in (second.error.detail or "")
+    assert len(manager.store.list_executions()) == 1
+
+
 def test_inline_completion_returns_typed_output_without_publication_or_print_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -162,7 +247,6 @@ def test_inline_completion_returns_typed_output_without_publication_or_print_rep
         "v": CODE_MODE_WORKER_PROTOCOL,
         "ok": True,
         "result": expected,
-        "output": expected,
     }
 
 
@@ -204,6 +288,7 @@ def test_runtime_failure_exposes_compact_error_outcome_without_worker_startup(
             "code": code,
             "message": message,
             "detail": None,
+            "category": "execution",
             "recovery": "inspect_first",
         },
         "guidance": app._code_mode_error_guidance(code),
@@ -244,7 +329,7 @@ def test_task_get_bounds_worker_error_detail_on_public_surface(
     detail = result.structured_content["error"]["detail"]
     assert len(detail) == 4096
     assert detail.startswith("RuntimeError: ")
-    assert detail.endswith("...")
+    assert detail.endswith("... (detail truncated)")
 
 
 def test_inline_wait_expiry_publishes_same_continuing_execution(
@@ -369,7 +454,7 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
         envelope={
             "v": CODE_MODE_WORKER_PROTOCOL,
             "ok": True,
-            "output": {"answer": 3},
+            "result": {"answer": 3},
         },
         exit_code=0,
         publish=True,
@@ -392,6 +477,7 @@ def test_task_get_keeps_lost_execution_in_error_vocabulary(
                 "code": "lost",
                 "message": "Code Mode Execution outcome is no longer observable.",
                 "detail": None,
+                "category": "runtime",
                 "recovery": "inspect_first",
             },
             "guidance": app._code_mode_error_guidance("lost"),
@@ -543,6 +629,7 @@ def test_post_acceptance_response_timeout_returns_structured_error(
         assert time.monotonic() - started < 0.16
 
         assert isinstance(outcome, app.CodeModeFailed)
+        assert outcome.execution_id is not None
         assert outcome.model_dump() == {
             "status": "failed",
             "execution_id": outcome.execution_id,
@@ -553,6 +640,7 @@ def test_post_acceptance_response_timeout_returns_structured_error(
                     "finish before the response deadline."
                 ),
                 "detail": None,
+                "category": "delivery",
                 "recovery": "inspect_first",
             },
             "guidance": app._code_mode_error_guidance("response_deadline_exceeded"),
@@ -585,6 +673,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
     )
 
     assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.execution_id is not None
     assert outcome.model_dump() == {
         "status": "failed",
         "execution_id": outcome.execution_id,
@@ -592,6 +681,7 @@ def test_launcher_timeout_is_reported_as_launch_interrupted(
             "code": "launch_interrupted",
             "message": "Code Mode Worker could not be launched.",
             "detail": "TimeoutError: launcher response timed out",
+            "category": "runtime",
             "recovery": "inspect_first",
         },
         "guidance": app._code_mode_error_guidance("launch_interrupted"),
@@ -625,7 +715,7 @@ def test_result_retrieval_failure_returns_structured_error(
     assert outcome.error.detail is not None
     assert len(outcome.error.detail) == 4096
     assert outcome.error.detail.startswith("RuntimeError: result store unavailable ")
-    assert outcome.error.detail.endswith("...")
+    assert outcome.error.detail.endswith("... (detail truncated)")
 
 
 def test_response_protocol_failure_returns_structured_error(
@@ -775,9 +865,164 @@ def test_code_mode_output_discriminator_resolves_union_types() -> None:
     assert isinstance(failed, app.CodeModeFailed)
     assert failed.status == "failed"
     assert failed.error.code == "boom"
+    assert failed.error.category == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("code", "category"),
+    [
+        ("invalid_request", "request"),
+        ("execution_error", "execution"),
+        ("worker_protocol_error", "runtime"),
+        ("task_publication_failed", "delivery"),
+        ("TASK.NOT_AVAILABLE", "task"),
+        ("POLICY.USER_AUTH_REQUIRED", "policy"),
+        ("MCP.SERVER.UNHANDLED", "mcp_server"),
+        ("unexpected_code", "unknown"),
+    ],
+)
+def test_error_category_is_derived_from_code(code: str, category: str) -> None:
+    error = app.CodeModeErrorDetails(code=code, message="sample")
+    assert error.category == category
+    assert list(error.model_dump()) == ["category", "code", "message", "detail", "recovery"]
+    assert list(json.loads(error.model_dump_json())) == [
+        "category", "code", "message", "detail", "recovery"
+    ]
+    assert app.CodeModeErrorDetails(code=code, message="sample", category="wrong").category == "wrong"
+
+
+
+def test_legacy_code_mode_output_fields_are_not_accepted() -> None:
+    from pydantic import ValidationError
+
+    for payload in (
+        {"kind": "error", "code": "execution_error", "message": "old"},
+        {"status": "completed", "execution_id": "old001", "output": 3},
+    ):
+        with pytest.raises(ValidationError):
+            app._code_mode_output(payload)
+
+
+def test_http_status_is_public_without_allowing_arbitrary_provider_data() -> None:
+    from pydantic import ValidationError
+
+    payload = {
+        "status": "failed",
+        "execution_id": "http42",
+        "error": {
+            "category": "model",
+            "code": "ModelHTTPError",
+            "message": "Upstream model HTTP error.",
+            "recovery": "inspect_first",
+            "http_status": 429,
+        },
+    }
+    outcome = app._code_mode_output(payload)
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.http_status == 429
+    assert outcome.model_dump()["error"]["http_status"] == 429
+
+    payload["error"]["raw_response"] = "must not leak"
+    with pytest.raises(ValidationError):
+        app._code_mode_output(payload)
+
+
+def test_task_get_preserves_model_http_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    create_terminal_code_mode_record(
+        manager,
+        execution_id="http42",
+        cwd=tmp_path,
+        label="HTTP upstream error",
+        envelope={
+            "v": CODE_MODE_WORKER_PROTOCOL,
+            "ok": False,
+            "error": {
+                "category": "model",
+                "code": "ModelHTTPError",
+                "message": "Model request failed.",
+                "recovery": "inspect_first",
+                "http_status": 429,
+            },
+        },
+        exit_code=1,
+        publish=True,
+    )
+    result = asyncio.run(
+        app.mcp.call_tool(
+            "task",
+            {"request": {"action": "get", "execution_id": "http42"}},
+        )
+    )
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["http_status"] == 429
+    assert result.structured_content["error"]["code"] == "ModelHTTPError"
+
+
+def test_many_monty_diagnostics_keep_full_worker_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    program = "\n".join(f"v{i}: int = 'bad'" for i in range(12))
+    outcome = asyncio.run(
+        app.code_mode(label="many diagnostics", code=program, cwd=str(tmp_path))
+    )
+    assert isinstance(outcome, app.CodeModeFailed)
+    assert outcome.error.code == "MontyTypingError"
+    assert outcome.error.diagnostics_total == 12
+    assert len(outcome.error.diagnostics or []) == 8
+
+    record = manager.store.get(outcome.execution_id)
+    worker = json.loads(Path(record["stdout_path"]).read_text())
+    assert len(worker["error"]["diagnostics"]) == 12
+    assert worker["error"]["diagnostics"][0]["code"] == "invalid-assignment"
+    assert "url" in worker["error"]["diagnostics"][0]
+
+    for _ in range(2):
+        manager.result(outcome.execution_id)
+    with sqlite3.connect(manager.store.path) as conn:
+        rows = conn.execute(
+            "SELECT error_json FROM error_events WHERE execution_id=?",
+            (outcome.execution_id,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert len(json.loads(rows[0][0])["diagnostics"]) == 12
+
+
+def test_unrecognized_upstream_error_metadata_passes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = install_manager(monkeypatch, tmp_path / "executions")
+    create_terminal_code_mode_record(
+        manager, execution_id="fresh1", cwd=tmp_path, label="future error",
+        envelope={
+            "v": CODE_MODE_WORKER_PROTOCOL,
+            "ok": False,
+            "error": {
+                "category": "model",
+                "code": "NewUpstreamFailure",
+                "message": "provider rejected",
+                "recovery": "inspect_first",
+                "diagnostics": [{"code": "provider-rule", "message": "sample"}],
+            },
+        },
+        exit_code=1,
+    )
+    result = app._code_mode_output(manager.result("fresh1"))
+    assert isinstance(result, app.CodeModeFailed)
+    assert result.error.category == "model"
+    assert result.error.code == "NewUpstreamFailure"
+    assert result.error.diagnostics[0]["code"] == "provider-rule"
 
 
 def test_error_details_fill_recovery_from_code() -> None:
+    assert (
+        app.CodeModeErrorDetails(code="POLICY.USER_AUTH_REQUIRED", message="m").recovery
+        == "ask_user"
+    )
     assert (
         app.CodeModeErrorDetails(code="cancelled", message="m").recovery == "no_retry"
     )
@@ -818,15 +1063,18 @@ def test_dedupe_key_returns_existing_execution_instead_of_duplicate(
     assert second.execution_id == first.execution_id
     assert len(manager.store.list_executions()) == 1
 
-    with pytest.raises(ValueError, match="dedupe_key"):
-        asyncio.run(
-            app.code_mode(
-                label="different request",
-                code="2 + 2",
-                cwd=str(tmp_path),
-                dedupe_key="req-1",
-            )
+    rejected = asyncio.run(
+        app.code_mode(
+            label="different request",
+            code="2 + 2",
+            cwd=str(tmp_path),
+            dedupe_key="req-1",
         )
+    )
+    assert isinstance(rejected, app.CodeModeFailed)
+    assert rejected.execution_id is None
+    assert rejected.error.code == "invalid_request"
+    assert len(manager.store.list_executions()) == 1
 
 
 def test_dedupe_hit_on_running_execution_returns_same_task(

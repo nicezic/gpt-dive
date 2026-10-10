@@ -93,7 +93,7 @@ def test_wsl_exec_public_surface_requires_explicit_user_authorization(
     assert json.loads(str(caught.value)[len(prefix) :]) == {
         "status": "failed",
         "error": {
-            "boundary": "policy",
+            "category": "policy",
             "code": "POLICY.USER_AUTH_REQUIRED",
             "message": "wsl_exec requires explicit user authorization.",
         },
@@ -102,12 +102,12 @@ def test_wsl_exec_public_surface_requires_explicit_user_authorization(
     }
 
 
-def test_server_description_exposes_wsl_assertion_guard() -> None:
+def test_server_description_is_short_and_identifies_local_runtime() -> None:
     description = gpt_dive.mcp.description
     assert description is not None
-    assert "wsl_exec has a default-deny caller assertion guard" in description
-    assert "does not prove user-origin authorization" in description
-    assert "minimal raw-shell escape hatch" not in description
+    assert len(description) <= 120
+    assert "local WSL2 environment" in description
+    assert "structured MCP tools" in description
 
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
@@ -246,6 +246,29 @@ def test_task_schema_is_a_strict_lifecycle_union_with_one_id() -> None:
     assert task_list["properties"]["tasks"]["items"]["$ref"].endswith("/TaskView")
 
 
+def test_code_mode_bad_input_is_a_structured_mcp_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from gpt_dive.execution_manager import ExecutionManager
+
+    manager = ExecutionManager(tmp_path / "executions")
+    manager._systemd_available = False
+    monkeypatch.setattr(app, "executions", manager)
+
+    with caplog.at_level("INFO", logger="gpt_dive.runtime"):
+        response = asyncio.run(_call_tool("code_mode", {"label": "  ", "code": "1"}))
+
+    assert response.is_error is False
+    assert response.structured_content is not None
+    result = response.structured_content
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "invalid_request"
+    assert result["error"]["recovery"] == "correct_input"
+    assert "execution_id" not in result
+    assert manager.store.list_executions() == []
+    assert "CODEMODE outcome=failed execution_id=-" in caplog.text
+
+
 def test_code_mode_description_exposes_failed_error_contract() -> None:
     tools = {tool.name: tool for tool in asyncio.run(gpt_dive.mcp.list_tools())}
     description = tools["code_mode"].description
@@ -256,6 +279,9 @@ def test_code_mode_description_exposes_failed_error_contract() -> None:
     assert "error.message" in description
     assert "error.detail" in description
     assert "execution_id" in description
+    assert "print() is ignored" in description
+    assert "invalid_request" in description
+    assert "MontyTypingError" in description
 
 
 def test_unavailable_task_get_returns_actionable_structured_response(
@@ -538,24 +564,15 @@ def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> Non
         asyncio.run(_call_tool("task", {"request": {"action": "list", "extra": True}}))
 
 
-def test_server_instructions_keep_raw_wsl_out_of_structured_guidance() -> None:
+def test_server_instructions_keep_only_core_usage_rules() -> None:
     instructions = gpt_dive.mcp.instructions
     assert instructions is not None
-    assert "wsl_exec" not in instructions
-    assert (
-        "Use Web Search only when the missing evidence is external and current"
-        in instructions
-    )
-    assert "Never invent capability names" in instructions
-    assert "preserve its machine code and boundary verbatim" in instructions
-    assert "MCP.SERVER.UNHANDLED" in instructions
-    assert "top-level transport/502" in instructions
-    assert "ordinary work result includes tracked_tasks" in instructions
-    assert "compact passive awareness with elapsed_seconds" in instructions
-    assert "task(list) is explicit detailed inspection, not polling" in instructions
-    assert "task(get) is non-destructive" in instructions
-    assert "task(dismiss) removes terminal awareness" in instructions
-    assert "Program output semantics stay separate from Task awareness" in instructions
+    assert len(instructions) <= 350
+    assert "real WSL2 machine" in instructions
+    assert "Call bootstrap before using code_mode in a new session" in instructions
+    assert "Follow live tool schemas" in instructions
+    assert "prior side effects before retrying" in instructions
+    assert "Never use wsl_exec without explicit user authorization" in instructions
 
 
 def test_bootstrap_description_is_only_for_structured_harness() -> None:

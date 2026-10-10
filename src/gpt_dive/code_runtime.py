@@ -244,6 +244,7 @@ class MontyCodeRuntime:
                 AsyncMonty() as monty,
                 monty.checkout(
                     type_check=True,
+                    type_check_format="json",
                     type_check_stubs=registry.type_check_stubs(
                         include_payload=payload is not None
                     ),

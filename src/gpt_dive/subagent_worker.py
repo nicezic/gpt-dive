@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic_ai import Agent, UsageLimits
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import AgentRunError, ModelHTTPError
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.tool_output_limits import (
@@ -116,7 +117,14 @@ async def _run(payload: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> None:
     payload = json.loads(sys.stdin.read())
-    result = asyncio.run(_run(payload))
+    try:
+        result = asyncio.run(_run(payload))
+    except AgentRunError as exc:
+        error = {"category": "model", "code": type(exc).__name__,
+                 "message": "Subagent model run failed.", "recovery": "inspect_first"}
+        if isinstance(exc, ModelHTTPError):
+            error["http_status"] = exc.status_code
+        result = {"ok": False, "error": error}
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import signal
@@ -14,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .code_mode_errors import WORKER_ERROR_MESSAGES, category_for, recovery_for
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import remove_run_command_evidence_directory
 from .execution_store import (
@@ -26,6 +28,8 @@ from .execution_store import (
 )
 from .process_identity import process_matches
 
+logger = logging.getLogger("gpt_dive.runtime")
+
 RETENTION_DAYS = 5
 POLL_INTERVAL_MS = 1000
 DEFAULT_WORK_TIMEOUT_SECONDS = 43190.0
@@ -34,10 +38,6 @@ _ACCEPTED_LAUNCH_GRACE_SECONDS = 30.0
 _EXIT_MARKER_GRACE_SECONDS = 0.25
 _CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 _RUN_COMMAND_TMP_RETENTION = timedelta(hours=48)
-_CODE_MODE_ERROR_MESSAGES = {
-    "execution_error": "Code Mode Execution failed.",
-    "non_json_result": "Code Mode result is not strict JSON.",
-}
 
 
 class ExecutionNotFoundError(KeyError):
@@ -69,8 +69,10 @@ def _code_mode_error_result(
     detail: str | None = None,
 ) -> dict[str, Any]:
     err: dict[str, Any] = {
+        "category": category_for(code),
         "code": code,
         "message": message,
+        "recovery": recovery_for(code),
     }
     if detail:
         err["detail"] = detail
@@ -104,10 +106,10 @@ class ExecutionManager:
         cleanup_timeout_seconds: float = DEFAULT_CLEANUP_TIMEOUT_SECONDS,
     ) -> None:
         self.root = root or (
-            Path.home() / ".local" / "state" / "gpt-dive" / "executions-v2"
+            Path.home() / ".local" / "state" / "gpt-dive" / "executions"
         )
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.store = store or ExecutionStore(self.root.parent / "runtime-v2.sqlite3")
+        self.store = store or ExecutionStore(self.root.parent / "runtime.sqlite3")
         self.retention_days = retention_days
         self.work_timeout_seconds = work_timeout_seconds
         self.cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -248,7 +250,15 @@ class ExecutionManager:
                 with contextlib.suppress(Exception):
                     self.store.clear_request_path(identifier)
                 raise
-            return self._public_status(self.store.get(identifier))
+            record = self.store.get(identifier)
+            logger.info(
+                "EXECUTION accepted execution_id=%s kind=%s backend=%s published=%s",
+                identifier,
+                kind,
+                backend,
+                publish,
+            )
+            return self._public_status(record)
 
     def status(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
@@ -266,7 +276,7 @@ class ExecutionManager:
             if state == "lost":
                 payload["ready"] = False
                 payload["unavailable"] = True
-                return self._code_mode_projection(record, payload)
+                return self._record_result(record, payload)
 
             stdout_path = Path(str(record["stdout_path"]))
             stderr_path = Path(str(record["stderr_path"]))
@@ -276,17 +286,27 @@ class ExecutionManager:
                 )
                 if known_without_artifacts:
                     payload.update({"ready": True, "stdout": "", "stderr": ""})
-                    return self._code_mode_projection(record, payload)
+                    return self._record_result(record, payload)
                 record = self.store.mark_lost(
                     execution_id, reason="retained_result_missing"
                 )
                 payload = self._public_status(record)
                 payload.update({"ready": False, "unavailable": True})
-                return self._code_mode_projection(record, payload)
+                return self._record_result(record, payload)
             payload["ready"] = True
             payload["stdout"] = stdout_path.read_text(errors="replace")
             payload["stderr"] = stderr_path.read_text(errors="replace")
-            return self._code_mode_projection(record, payload)
+            return self._record_result(record, payload)
+
+    def _record_result(
+        self, record: dict[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = self._code_mode_projection(record, payload)
+        if result.get("status") == "failed":
+            self.store.record_error_event(
+                str(payload["execution_id"]), result["error"]
+            )
+        return result
 
     @staticmethod
     def _code_mode_projection(
@@ -330,13 +350,13 @@ class ExecutionManager:
                 message="Code Mode Worker produced no valid result envelope.",
             )
         if envelope["ok"] is True and state == "completed":
-            if "result" not in envelope and "output" not in envelope:
+            if "result" not in envelope:
                 return _code_mode_error_result(
                     payload,
                     code="worker_protocol_error",
                     message="Code Mode Worker produced no valid result envelope.",
                 )
-            result = envelope.get("result", envelope.get("output"))
+            result = envelope["result"]
             return {
                 "status": "completed",
                 "execution_id": str(payload["execution_id"]),
@@ -344,41 +364,38 @@ class ExecutionManager:
             }
 
         error = envelope.get("error")
-        detail = None
-        if isinstance(error, dict):
-            raw_code = str(error.get("code") or "")
-            detail = error.get("detail")
-            if raw_code in _CODE_MODE_ERROR_MESSAGES:
-                code = raw_code
-                message = _CODE_MODE_ERROR_MESSAGES[raw_code]
-            else:
-                code = "worker_protocol_error"
-                message = "Code Mode Worker exited without a valid error envelope."
-        else:
-            code = "worker_protocol_error"
-            message = "Code Mode Worker exited without a valid error envelope."
-
-        if not detail and payload.get("stderr"):
-            err_lines = [
-                line.strip()
-                for line in str(payload["stderr"]).splitlines()
-                if line.strip()
-            ]
-            if err_lines:
-                detail = "\n".join(err_lines[-3:])
-
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            return {
+                "status": "failed",
+                "execution_id": str(payload["execution_id"]),
+                "error": {
+                    **error,
+                    "message": error.get("message")
+                    or WORKER_ERROR_MESSAGES.get(
+                        error["code"], "Code Mode Execution failed."
+                    ),
+                },
+            }
         return _code_mode_error_result(
-            payload, code=code, message=message, detail=detail
+            payload,
+            code="worker_protocol_error",
+            message="Code Mode Worker exited without a valid error envelope.",
         )
 
     def publish(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
             record = self.store.publish(execution_id)
+            logger.info(
+                "TASK publish execution_id=%s state=%s", execution_id, record["state"]
+            )
             return self._public_task(record)
 
     def dismiss(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
             record = self.store.dismiss(execution_id)
+            logger.info(
+                "TASK dismiss execution_id=%s state=%s", execution_id, record["state"]
+            )
             return {
                 "execution_id": execution_id,
                 "state": record["state"],
@@ -388,6 +405,9 @@ class ExecutionManager:
     def cancel(self, execution_id: str) -> dict[str, Any]:
         with self._lock:
             record = self.store.request_cancel(execution_id)
+            logger.info(
+                "TASK cancel execution_id=%s state=%s", execution_id, record["state"]
+            )
             self._signal_execution(record)
             deadline = time.monotonic() + self.cleanup_timeout_seconds
             while (

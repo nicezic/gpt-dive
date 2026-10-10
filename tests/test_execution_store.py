@@ -40,87 +40,128 @@ def create_execution(
     )
 
 
-def test_store_removes_obsolete_run_command_schema(tmp_path: Path) -> None:
-    path = tmp_path / "runtime.sqlite3"
-    ExecutionStore(path)
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "ALTER TABLE executions ADD COLUMN "
-            "run_command_next_ordinal INTEGER NOT NULL DEFAULT 1"
-        )
-        connection.execute("DROP TABLE run_command_evidence")
-        connection.execute(
-            """
-            CREATE TABLE run_command_evidence (
-                execution_id TEXT NOT NULL,
-                run_ordinal INTEGER NOT NULL,
-                stdout BLOB NOT NULL,
-                stderr BLOB NOT NULL,
-                stdout_overflow INTEGER NOT NULL,
-                stderr_overflow INTEGER NOT NULL,
-                outcome TEXT NOT NULL,
-                exit_code INTEGER,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (execution_id, run_ordinal)
-            )
-            """
-        )
-
-    ExecutionStore(path)
-
-    with sqlite3.connect(path) as connection:
-        execution_columns = {
-            str(row[1]) for row in connection.execute("PRAGMA table_info(executions)")
-        }
-        evidence_columns = {
-            str(row[1])
-            for row in connection.execute("PRAGMA table_info(run_command_evidence)")
-        }
-    assert "run_command_next_ordinal" not in execution_columns
-    assert evidence_columns == {
-        "execution_id",
-        "run_ordinal",
-        "stdout",
-        "stderr",
-        "stdout_overflow",
-        "stderr_overflow",
-        "exit_code",
-        "duration_ms",
-    }
-
-
-def test_store_migrates_current_evidence_schema_without_dropping_rows(
+def test_fresh_store_records_unique_error_events_and_groups_ty_codes(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "runtime.sqlite3"
     store = ExecutionStore(path)
-    create_execution(store, tmp_path)
+    error = {
+        "category": "monty",
+        "code": "MontyTypingError",
+        "detail": "sensitive path not retained",
+        "diagnostics": [
+            {"code": "unknown-argument", "message": "sensitive input"},
+            {"code": "invalid-syntax", "message": "sensitive input"},
+        ],
+    }
+    store.record_error_event("aaaaaa", error)
+    store.record_error_event("aaaaaa", error)
+    store.record_error_event("bbbbbb", error)
+
     with sqlite3.connect(path) as connection:
-        connection.execute("DROP TABLE run_command_evidence")
-        connection.execute(
+        rows = connection.execute(
+            "SELECT error_json FROM error_events ORDER BY event_id"
+        ).fetchall()
+        categories = connection.execute(
             """
-            CREATE TABLE run_command_evidence (
-                execution_id TEXT NOT NULL,
-                run_ordinal INTEGER NOT NULL,
-                stdout BLOB NOT NULL,
-                stderr BLOB NOT NULL,
-                stdout_overflow INTEGER NOT NULL,
-                stderr_overflow INTEGER NOT NULL,
-                PRIMARY KEY (execution_id, run_ordinal)
-            )
+            SELECT json_extract(error_json, '$.category'),
+                   json_extract(error_json, '$.code'), COUNT(*)
+            FROM error_events GROUP BY 1, 2
             """
-        )
-        connection.execute(
-            "INSERT INTO run_command_evidence VALUES (?, ?, ?, ?, ?, ?)",
-            ("aaaaaa", 1, b"stdout", b"stderr", 0, 0),
-        )
+        ).fetchall()
+        diagnostic_counts = connection.execute(
+            """
+            SELECT json_extract(d.value, '$.code'), COUNT(*)
+            FROM error_events e, json_each(e.error_json, '$.diagnostics') d
+            GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
 
-    migrated = ExecutionStore(path).get_run_command_evidence("aaaaaa", 1)
+    assert len(rows) == 2
+    assert "sensitive" not in str(rows)
+    assert categories == [("monty", "MontyTypingError", 2)]
+    assert diagnostic_counts == [("invalid-syntax", 2), ("unknown-argument", 2)]
 
-    assert migrated["stdout"] == b"stdout"
-    assert migrated["stderr"] == b"stderr"
-    assert migrated["exit_code"] is None
-    assert migrated["duration_ms"] is None
+
+@pytest.mark.parametrize(
+    ("transition", "expected_code"),
+    [
+        ("cancel_accepted", "cancelled"),
+        ("cancel_running", "cancelled"),
+        ("lost", "lost"),
+        ("launch_interrupted", "launch_interrupted"),
+        ("deadline_exceeded", "deadline_exceeded"),
+        ("worker_failed", "execution_error"),
+    ],
+)
+def test_terminal_error_is_recorded_without_result_read(
+    tmp_path: Path, transition: str, expected_code: str
+) -> None:
+    store = ExecutionStore(tmp_path / "runtime.sqlite3")
+    create_execution(store, tmp_path)
+    if transition != "cancel_accepted" and transition != "launch_interrupted":
+        assert store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
+    if transition == "cancel_accepted":
+        store.request_cancel("a" * 6)
+    elif transition == "cancel_running":
+        store.request_cancel("a" * 6)
+        store.finish("a" * 6, exit_code=0)
+    elif transition == "lost":
+        store.mark_lost("a" * 6, reason="worker_disappeared")
+    elif transition == "launch_interrupted":
+        store.fail_accepted("a" * 6, reason="launch_interrupted")
+    elif transition == "deadline_exceeded":
+        store.finish("a" * 6, exit_code=None, deadline_exceeded=True)
+    else:
+        store.finish("a" * 6, exit_code=1)
+    with sqlite3.connect(store.path) as conn:
+        row = conn.execute("SELECT error_json FROM error_events").fetchone()
+        assert conn.execute("SELECT COUNT(*) FROM error_events").fetchone()[0] == 1
+    assert json.loads(row[0])["code"] == expected_code
+
+
+def test_upstream_worker_error_wins_over_runtime_fallback(tmp_path: Path) -> None:
+    store = ExecutionStore(tmp_path / "runtime.sqlite3")
+    create_execution(store, tmp_path)
+    store.record_error_event(
+        "a" * 6, {"category": "monty", "code": "MontyTypingError"}
+    )
+    store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
+    store.finish("a" * 6, exit_code=1)
+    with sqlite3.connect(store.path) as conn:
+        events = conn.execute("SELECT error_json FROM error_events").fetchall()
+    assert len(events) == 1
+    assert json.loads(events[0][0])["code"] == "MontyTypingError"
+
+
+def test_event_storage_failure_does_not_break_error_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gpt_dive.code_mode_worker import _emit_error
+    from gpt_dive.execution_manager import ExecutionManager
+
+    store = ExecutionStore(tmp_path / "runtime.sqlite3")
+    manager = ExecutionManager(tmp_path / "executions", store=store)
+
+    def locked_db() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "_connect", locked_db)
+    result = manager._record_result(
+        {"kind": "code_mode"},
+        {"execution_id": "aaaaaa", "state": "cancelled", "reason": "cancelled"},
+    )
+    assert result["error"]["code"] == "cancelled"
+
+    _emit_error(
+        "MontyTypingError", "typed error", category="monty",
+        store=store, execution_id="aaaaaa",
+    )
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "MontyTypingError"
+    assert "ERROR_EVENT persistence failed" in caplog.text
 
 
 def test_execution_and_task_share_one_identity_but_not_one_lifecycle(

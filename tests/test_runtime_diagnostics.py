@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -48,13 +49,13 @@ def test_tool_error_normalizer_rewrites_sdk_generic_unexpected_failure(
     assert payload == {
         "status": "failed",
         "error": {
-            "boundary": "mcp_server",
+            "category": "mcp_server",
             "code": "MCP.SERVER.UNHANDLED",
             "message": "The MCP server observed an unexpected tool failure.",
         },
         "request_id": "req-9",
         "tool": "boom",
-        "recovery": "inspect_boundary",
+        "recovery": "inspect_first",
         "guidance": (
             "Match request_id and tool in GPT Dive server diagnostics; the cause is "
             "not known from this payload. Check whether the original execution "
@@ -131,6 +132,51 @@ def test_request_lifecycle_logs_and_reraises_cancellation(
 
     assert "MCP REQUEST CANCEL" in caplog.text
     assert "request=req-cancel" in caplog.text
+
+
+def test_default_log_directory_is_repo_logs() -> None:
+    from gpt_dive.runtime_diagnostics import LOG_DIRECTORY
+
+    assert Path.home() / "gpt-dive" / "logs" == LOG_DIRECTORY
+
+
+def test_runtime_file_logging_is_bounded_and_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from logging.handlers import RotatingFileHandler
+
+    from gpt_dive.runtime_diagnostics import configure_runtime_logging
+
+    monkeypatch.setenv("GPT_DIVE_LOG_LEVEL", "DEBUG")
+    runtime_logger = logging.getLogger("gpt_dive.runtime")
+    previous_level = runtime_logger.level
+    filename = (tmp_path / "gpt-dive.log").resolve()
+    handler: RotatingFileHandler | None = None
+    try:
+        configure_runtime_logging(tmp_path)
+        configure_runtime_logging(tmp_path)
+        matching = [
+            h
+            for h in runtime_logger.handlers
+            if isinstance(h, RotatingFileHandler) and Path(h.baseFilename) == filename
+        ]
+        assert len(matching) == 1
+        handler = matching[0]
+        assert handler.maxBytes == 5 * 1024 * 1024
+        assert handler.backupCount == 3
+        assert handler.level == logging.DEBUG
+        assert filename.stat().st_mode & 0o777 == 0o600
+        handler.maxBytes = 160
+        for i in range(15):
+            runtime_logger.info("ROLLING event=%d", i)
+        assert filename.is_file()
+        assert (tmp_path / "gpt-dive.log.1").is_file()
+        assert len(list(tmp_path.glob("gpt-dive.log*"))) <= 4
+    finally:
+        if handler is not None:
+            runtime_logger.removeHandler(handler)
+            handler.close()
+        runtime_logger.setLevel(previous_level)
 
 
 def test_run_mcp_server_logs_start_versions_and_exception_tree(

@@ -3,14 +3,50 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import traceback
 from importlib.metadata import PackageNotFoundError, version
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 from mcp_types import CallToolResult, TextContent
 
+from .code_mode_errors import category_for
+
 logger = logging.getLogger("gpt_dive.runtime")
+
+
+LOG_DIRECTORY = Path.home() / "gpt-dive" / "logs"
+
+
+def configure_runtime_logging(log_dir: Path | None = None) -> None:
+    """Keep MCP server diagnostics in one private, bounded rolling file."""
+    directory = log_dir or LOG_DIRECTORY
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    filename = (directory / "gpt-dive.log").resolve()
+    if any(
+        isinstance(handler, RotatingFileHandler)
+        and Path(handler.baseFilename) == filename
+        for handler in logger.handlers
+    ):
+        return
+
+    level = getattr(
+        logging, os.getenv("GPT_DIVE_LOG_LEVEL", "INFO").upper(), logging.INFO
+    )
+    handler = RotatingFileHandler(
+        filename, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    filename.chmod(0o600)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname).1s] %(name)s: %(message)s")
+    )
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+
 
 _RUNTIME_PACKAGES = (
     ("gpt-dive", "gpt-dive"),
@@ -83,13 +119,13 @@ async def normalize_tool_error_middleware(ctx: Any, call_next: Any) -> Any:
     payload = {
         "status": "failed",
         "error": {
-            "boundary": "mcp_server",
+            "category": category_for("MCP.SERVER.UNHANDLED"),
             "code": "MCP.SERVER.UNHANDLED",
             "message": "The MCP server observed an unexpected tool failure.",
         },
         "request_id": request_id,
         "tool": tool,
-        "recovery": "inspect_boundary",
+        "recovery": "inspect_first",
         "guidance": (
             "Match request_id and tool in GPT Dive server diagnostics; the cause is "
             "not known from this payload. Check whether the original execution "

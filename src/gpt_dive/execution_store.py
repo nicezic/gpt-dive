@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -7,6 +9,10 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from .code_mode_errors import category_for
+
+logger = logging.getLogger("gpt_dive.runtime")
 
 EXECUTION_ID_PATTERN = r"^[A-Za-z0-9_-]{6}$"
 EXECUTION_ID_REGEX = re.compile(EXECUTION_ID_PATTERN)
@@ -46,7 +52,7 @@ class ExecutionStore:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (
-            Path.home() / ".local" / "state" / "gpt-dive" / "runtime-v2.sqlite3"
+            Path.home() / ".local" / "state" / "gpt-dive" / "runtime.sqlite3"
         )
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._ensure_schema()
@@ -103,51 +109,12 @@ class ExecutionStore:
                 )
                 """
             )
-            execution_columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(executions)")
-            }
-            if "run_command_next_ordinal" in execution_columns:
-                connection.execute(
-                    "ALTER TABLE executions DROP COLUMN run_command_next_ordinal"
-                )
-            for column in ("dedupe_key", "dedupe_hash"):
-                if column not in execution_columns:
-                    connection.execute(
-                        f"ALTER TABLE executions ADD COLUMN {column} TEXT"
-                    )
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS executions_dedupe_key
                 ON executions (dedupe_key) WHERE dedupe_key IS NOT NULL
                 """
             )
-
-            legacy_evidence_columns = {
-                "execution_id",
-                "run_ordinal",
-                "stdout",
-                "stderr",
-                "stdout_overflow",
-                "stderr_overflow",
-            }
-            expected_evidence_columns = legacy_evidence_columns | {
-                "exit_code",
-                "duration_ms",
-            }
-            evidence_columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(run_command_evidence)")
-            }
-            if evidence_columns == legacy_evidence_columns:
-                connection.execute(
-                    "ALTER TABLE run_command_evidence ADD COLUMN exit_code INTEGER"
-                )
-                connection.execute(
-                    "ALTER TABLE run_command_evidence ADD COLUMN duration_ms INTEGER"
-                )
-            elif evidence_columns and evidence_columns != expected_evidence_columns:
-                connection.execute("DROP TABLE run_command_evidence")
 
             connection.execute(
                 """
@@ -180,13 +147,62 @@ class ExecutionStore:
                 )
                 """
             )
-            connection.execute("DELETE FROM executions WHERE length(execution_id) != 6")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS error_events (
+                    event_id INTEGER PRIMARY KEY,
+                    execution_id TEXT UNIQUE,
+                    request_id TEXT,
+                    occurred_at TEXT NOT NULL,
+                    error_json TEXT NOT NULL CHECK (json_valid(error_json))
+                )
+                """
+            )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> dict[str, Any]:
         record = dict(row)
         record["cancel_requested"] = bool(record["cancel_requested"])
         return record
+
+    def record_error_event(
+        self,
+        execution_id: str | None,
+        error: dict[str, Any],
+        *,
+        request_id: str | None = None,
+    ) -> None:
+        """Store one bounded, non-sensitive classification per Execution."""
+        try:
+            summary: dict[str, Any] = {
+                "category": error.get("category", "unknown"),
+                "code": error.get("code", "unknown"),
+            }
+            if isinstance(error.get("diagnostics"), list):
+                summary["diagnostics"] = [
+                    {"code": item["code"]}
+                    for item in error["diagnostics"]
+                    if isinstance(item, dict) and isinstance(item.get("code"), str)
+                ]
+            for key in ("http_status", "provider"):
+                if key in error:
+                    summary[key] = error[key]
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO error_events
+                        (execution_id, request_id, occurred_at, error_json)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        execution_id,
+                        request_id,
+                        iso_time(),
+                        json.dumps(summary, separators=(",", ":")),
+                    ),
+                )
+        except Exception:
+            logger.exception("ERROR_EVENT persistence failed execution_id=%s", execution_id)
 
     @staticmethod
     def _validate_label(label: str) -> str:
@@ -196,6 +212,23 @@ class ExecutionStore:
         if len(clean) > 80:
             raise ValueError("label must be 80 characters or fewer")
         return clean
+
+    def _record_terminal_error(self, record: dict[str, Any]) -> None:
+        if record["kind"] != "code_mode" or record["state"] == "completed":
+            return
+        state = str(record["state"])
+        reason = str(record["reason"] or "")
+        code = (
+            state
+            if state in {"cancelled", "lost"}
+            else reason
+            if reason in {"deadline_exceeded", "launch_interrupted"}
+            else "execution_error"
+        )
+        self.record_error_event(
+            str(record["execution_id"]),
+            {"category": category_for(code), "code": code},
+        )
 
     def create(
         self,
@@ -429,7 +462,10 @@ class ExecutionStore:
                 """,
                 (now, now, execution_id),
             )
-        return self.get(execution_id)
+        record = self.get(execution_id)
+        if record["state"] == "cancelled":
+            self._record_terminal_error(record)
+        return record
 
     def _transition_to_terminal(
         self,
@@ -478,7 +514,9 @@ class ExecutionStore:
                     *entry_states,
                 ),
             )
-        return self.get(execution_id)
+        record = self.get(execution_id)
+        self._record_terminal_error(record)
+        return record
 
     def finish(
         self,
