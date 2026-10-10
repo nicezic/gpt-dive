@@ -5,8 +5,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import os
-import re
 import shlex
 import sqlite3
 import sys
@@ -30,9 +28,9 @@ from pydantic import (
     ValidationInfo,
     computed_field,
     field_validator,
-    model_serializer,
 )
 
+from . import wiki_bootstrap
 from .code_capabilities import code_mode_capability_catalog
 from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .command_runtime import WSL_EXEC_TIMEOUT_SECONDS, run_wsl_command
@@ -41,6 +39,15 @@ from .execution_store import EXECUTION_ID_PATTERN, generate_execution_id
 from .runtime_diagnostics import (
     normalize_tool_error_middleware,
     request_lifecycle_middleware,
+)
+from .wiki_bootstrap import (
+    _parse_preload_files as _parse_preload_files,
+)
+from .wiki_bootstrap import (
+    _parse_reminder_config as _parse_reminder_config,
+)
+from .wiki_bootstrap import (
+    _wiki_path as _wiki_path,
 )
 
 _INLINE_WAIT_SECONDS = 54.0
@@ -99,233 +106,41 @@ mcp = MCPServer(
 )
 
 
-def _expand_env_path(value: str) -> Path:
-    """Expand shell-style $HOME variables and ~ without invoking a shell."""
-    return Path(os.path.expandvars(value)).expanduser()
-
-
-def _wiki_path() -> Path:
-    """Resolve the trusted wiki path used by Hermes, with ~/wiki fallback."""
-    configured = os.environ.get("WIKI_PATH", "").strip()
-    if not configured:
-        hermes_env = Path.home() / ".hermes" / ".env"
-        if hermes_env.is_file():
-            for raw_line in hermes_env.read_text(errors="replace").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                if key.strip() == "WIKI_PATH":
-                    configured = value.strip().strip('"').strip("'")
-                    break
-    return _expand_env_path(configured or "$HOME/wiki").resolve()
-
-
-def _parse_preload_files(preload_text: str) -> list[str]:
-    """Extract preload file paths from JSON configuration."""
-    try:
-        data = json.loads(preload_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"malformed bootstrap preload JSON: {exc}") from exc
-
-    if not isinstance(data, dict):
-        raise TypeError("bootstrap preload JSON must be an object")
-
-    paths = data.get("preload_files")
-    if paths is None:
-        raise ValueError("bootstrap preload JSON missing 'preload_files' field")
-    if not isinstance(paths, list):
-        raise TypeError("bootstrap preload JSON 'preload_files' field must be a list")
-    if not paths:
-        raise ValueError(
-            "bootstrap preload JSON 'preload_files' list must not be empty"
-        )
-
-    for path in paths:
-        if not isinstance(path, str):
-            raise TypeError("preload_files entries must be strings")
-        if not path.strip():
-            raise ValueError("preload_files entries must not be empty strings")
-
-    return paths
+_PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
 
 
 def _read_bootstrap_packet() -> dict[str, Any]:
-    """Assemble compact fresh-session orientation from the trusted Wiki preload map."""
-    wiki = _wiki_path()
-    preload = wiki / "bootstrap" / "preload.json"
-    if not preload.is_file():
-        raise FileNotFoundError(f"bootstrap preload map not found: {preload}")
-
-    preload_text = preload.read_text(errors="replace")
-    preload_files = _parse_preload_files(preload_text)
-    documents: list[dict[str, str]] = []
-    warnings: list[str] = []
-
-    for relative in preload_files:
-        candidate = (wiki / relative).resolve()
-        try:
-            candidate.relative_to(wiki)
-        except ValueError as exc:
-            raise ValueError(
-                f"bootstrap path escapes trusted wiki: {relative}"
-            ) from exc
-
-        if not candidate.is_file():
-            warnings.append(f"missing preload document: {relative}")
-            continue
-        documents.append(
-            {
-                "path": relative,
-                "content": candidate.read_text(errors="replace"),
-            }
-        )
-
-    if not documents:
-        raise RuntimeError(
-            "bootstrap preload map resolved no readable preload documents"
-        )
-
-    preloaded_files = [doc["path"] for doc in documents]
-    bootstrap_reminders = _read_reminder_sections(exclude_paths=set(preloaded_files))
-    chunks: list[str] = [f"$HOME = {Path.home()}"]
-    for doc in documents:
-        source = _display_source_path(wiki / doc["path"])
-        chunks.append(f"---\n`$ cat {source}`\n\n{doc['content'].rstrip()}")
-    if bootstrap_reminders:
-        chunks.append(_format_reminder_sections(bootstrap_reminders))
-
-    result: dict[str, Any] = {
-        "wiki_path": str(wiki),
-        "preload_path": str(preload),
-        "preloaded_files": preloaded_files,
-        "bootstrap_reminders": [
-            {key: value for key, value in item.items() if key != "content"}
-            for item in bootstrap_reminders
-        ],
-        "stdout": "\n\n".join(chunks) + "\n",
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
-
-
-_PERIODIC_REMINDER_STATE_KEY = "gpt_dive_periodic_reminder_calls"
-_PERIODIC_REMINDER_CONFIG = "bootstrap/reminder.json"
-
-
-def _parse_reminder_config(
-    reminder_text: str,
-) -> tuple[int, list[tuple[str, str | None]]]:
-    """Parse reminder cadence plus ordered whole-file or Markdown section sources."""
-    try:
-        data = json.loads(reminder_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"malformed reminder JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise TypeError("reminder JSON must be an object")
-
-    interval = data.get("interval")
-    if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
-        raise ValueError("reminder interval must be a positive integer")
-
-    raw_files = data.get("reminder_files")
-    if not isinstance(raw_files, list) or not raw_files:
-        raise ValueError("reminder_files must be a non-empty list")
-
-    files: list[tuple[str, str | None]] = []
-    for item in raw_files:
-        if not isinstance(item, dict):
-            raise TypeError("reminder_files entries must be objects")
-        path = item.get("path")
-        section = item.get("section")
-        if not isinstance(path, str) or not path.strip():
-            raise ValueError("reminder file path must be a non-empty string")
-        if section is not None and (
-            not isinstance(section, str) or not section.strip()
-        ):
-            raise ValueError(
-                "reminder section must be a non-empty string when provided"
-            )
-        files.append((path, section))
-    return interval, files
+    return wiki_bootstrap.read_bootstrap_packet(_wiki_path())
 
 
 def _read_periodic_reminder_config() -> tuple[int, list[tuple[str, str | None]]]:
-    path = _wiki_path() / _PERIODIC_REMINDER_CONFIG
-    return _parse_reminder_config(path.read_text(errors="replace"))
-
-
-def _read_reminder_sections(
-    *, exclude_paths: set[str] | None = None
-) -> list[dict[str, str]]:
-    """Read reminder sources in config order, optionally skipping whole source files."""
-    wiki = _wiki_path()
-    _, files = _read_periodic_reminder_config()
-    excluded = exclude_paths or set()
-    sections: list[dict[str, str]] = []
-    for relative, heading in files:
-        if relative in excluded:
-            continue
-        candidate = (wiki / relative).resolve()
-        try:
-            candidate.relative_to(wiki)
-        except ValueError as exc:
-            raise ValueError(f"reminder path escapes trusted wiki: {relative}") from exc
-        text = candidate.read_text(errors="replace")
-        if heading is None:
-            sections.append({"path": relative, "content": text.rstrip()})
-            continue
-        match = re.search(
-            rf"^## {re.escape(heading)}\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
-            text,
-            flags=re.MULTILINE | re.DOTALL,
-        )
-        if not match:
-            raise ValueError(f"{relative} missing reminder section: {heading}")
-        sections.append(
-            {
-                "path": relative,
-                "section": heading,
-                "content": f"## {heading}\n{match.group('body').rstrip()}",
-            }
-        )
-    return sections
-
-
-def _display_source_path(path: Path) -> str:
-    """Render paths under the current home directory with a ~/ prefix."""
-    resolved = path.resolve()
-    home = Path.home().resolve()
-    try:
-        return f"~/{resolved.relative_to(home).as_posix()}"
-    except ValueError:
-        return str(resolved)
-
-
-def _format_reminder_sections(sections: list[dict[str, str]]) -> str:
-    """Format reminder sections with one source-file marker per consecutive file group."""
-    wiki = _wiki_path()
-    chunks: list[str] = []
-    previous_path: str | None = None
-    for item in sections:
-        if item["path"] != previous_path:
-            source = _display_source_path(wiki / item["path"])
-            chunks.append(f"---\n`$ cat {source}`")
-            previous_path = item["path"]
-        chunks.append(item["content"])
-    return "\n\n".join(chunks)
+    return wiki_bootstrap.read_periodic_reminder_config(_wiki_path())
 
 
 def _read_periodic_reminder() -> str:
-    """Read every configured whole-file or section reminder in order."""
-    return _format_reminder_sections(_read_reminder_sections())
+    return wiki_bootstrap.read_periodic_reminder(_wiki_path())
+
+
+def _session_state(
+    ctx: Context | ServerRequestContext[Any, Any] | None,
+) -> dict[str, Any] | None:
+    if ctx is None:
+        return None
+    session = getattr(ctx, "session", None)
+    if session is None:
+        session = getattr(getattr(ctx, "request_context", None), "session", None)
+    if session is None:
+        return None
+    connection = getattr(session, "_connection", None)
+    state = getattr(connection, "state", None)
+    if isinstance(state, dict):
+        return state
+    return None
 
 
 def _periodic_reminder_state(ctx: ServerRequestContext[Any, Any]) -> dict[str, Any]:
-    connection = getattr(ctx.session, "_connection", None)
-    state = getattr(connection, "state", None)
-    if not isinstance(state, dict):
+    state = _session_state(ctx)
+    if state is None:
         raise TypeError("MCP connection state is unavailable")
     return state
 
@@ -672,17 +487,6 @@ ExecutionState = Literal[
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    @model_serializer(mode="wrap")
-    def _serialize_omit_none(self, handler: Any) -> Any:
-        dump = handler(self)
-        if isinstance(dump, dict):
-            return {
-                k: v
-                for k, v in dump.items()
-                if not (k in {"tracked_tasks", "tracked_tasks_guidance"} and v is None)
-            }
-        return dump
-
 
 class TrackedTaskView(_ClosedModel):
     execution_id: str
@@ -693,8 +497,10 @@ class TrackedTaskView(_ClosedModel):
 
 
 _TRACKED_TASKS_GUIDANCE = (
-    "Passive background HUD. Continue current turn without polling. "
-    "When ready or completed, retrieve via task(action='get', execution_id=...) and dismiss."
+    "Passive Task HUD: never task(get) merely because a Task is running; use tracked_tasks while "
+    "other work exists. Auto delivery cuts inline wait at 54s and responds by 57s (<~60s observed "
+    "transport boundary). If only waiting remains, task(get) ~50s apart. Terminal state -> get once "
+    "-> handle -> dismiss."
 )
 
 
@@ -702,8 +508,12 @@ class CodeModeCompleted(_ClosedModel):
     status: Literal["completed"] = "completed"
     execution_id: str
     result: Any
-    tracked_tasks: list[TrackedTaskView] | None = None
-    tracked_tasks_guidance: str | None = None
+    tracked_tasks: list[TrackedTaskView] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    tracked_tasks_guidance: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("result", mode="after")
     @classmethod
@@ -724,8 +534,12 @@ class CodeModeRunning(_ClosedModel):
     state: ExecutionState = "running"
     elapsed_seconds: int = 0
     guidance: str = _CODE_MODE_RUNNING_GUIDANCE
-    tracked_tasks: list[TrackedTaskView] | None = None
-    tracked_tasks_guidance: str | None = None
+    tracked_tasks: list[TrackedTaskView] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    tracked_tasks_guidance: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 _CODE_MODE_ERROR_GUIDANCE = (
@@ -796,8 +610,12 @@ class CodeModeFailed(_ClosedModel):
     execution_id: str
     error: CodeModeErrorDetails
     guidance: str = _CODE_MODE_ERROR_GUIDANCE
-    tracked_tasks: list[TrackedTaskView] | None = None
-    tracked_tasks_guidance: str | None = None
+    tracked_tasks: list[TrackedTaskView] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    tracked_tasks_guidance: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 CodeModeOutput = Annotated[
@@ -815,19 +633,12 @@ class _CodeModePublicOutput(RootModel[CodeModeOutput]):
 class WslExecWorkOutput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    tracked_tasks: list[TrackedTaskView] | None = None
-    tracked_tasks_guidance: str | None = None
-
-    @model_serializer(mode="wrap")
-    def _serialize_omit_none(self, handler: Any) -> Any:
-        dump = handler(self)
-        if isinstance(dump, dict):
-            return {
-                k: v
-                for k, v in dump.items()
-                if not (k in {"tracked_tasks", "tracked_tasks_guidance"} and v is None)
-            }
-        return dump
+    tracked_tasks: list[TrackedTaskView] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    tracked_tasks_guidance: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 _CODE_MODE_OUTPUT_ADAPTER = TypeAdapter(CodeModeOutput)
@@ -874,23 +685,9 @@ def _code_mode_output(value: dict[str, Any]) -> CodeModeOutput:
 
 
 _SESSION_TASKS_STATE_KEY = "published_task_ids"
-
-
-def _session_state(
-    ctx: Context | ServerRequestContext[Any, Any] | None,
-) -> dict[str, Any] | None:
-    if ctx is None:
-        return None
-    session = getattr(ctx, "session", None)
-    if session is None and hasattr(ctx, "request_context"):
-        session = getattr(ctx.request_context, "session", None)
-    if session is None:
-        return None
-    connection = getattr(session, "_connection", None)
-    state = getattr(connection, "state", None)
-    if isinstance(state, dict):
-        return state
-    return None
+_SESSION_TASK_GUIDANCE_COUNT_KEY = "tracked_tasks_guidance_count"
+_SESSION_TASK_GUIDANCE_IDS_KEY = "tracked_tasks_guidance_ids"
+_TRACKED_TASKS_GUIDANCE_INTERVAL = 9
 
 
 def _session_published_task_ids(
@@ -943,17 +740,45 @@ async def _tracked_tasks_snapshot(
     ]
 
 
+def _tracked_tasks_guidance(
+    ctx: Context | ServerRequestContext[Any, Any] | None,
+    tracked_tasks: list[TrackedTaskView],
+) -> str | None:
+    state = _session_state(ctx)
+    if state is None:
+        return _TRACKED_TASKS_GUIDANCE if tracked_tasks else None
+
+    if not tracked_tasks:
+        state.pop(_SESSION_TASK_GUIDANCE_COUNT_KEY, None)
+        state.pop(_SESSION_TASK_GUIDANCE_IDS_KEY, None)
+        return None
+
+    task_ids = tuple(sorted(task.execution_id for task in tracked_tasks))
+    if state.get(_SESSION_TASK_GUIDANCE_IDS_KEY) != task_ids:
+        state[_SESSION_TASK_GUIDANCE_IDS_KEY] = task_ids
+        state[_SESSION_TASK_GUIDANCE_COUNT_KEY] = 0
+        return _TRACKED_TASKS_GUIDANCE
+
+    calls = int(state.get(_SESSION_TASK_GUIDANCE_COUNT_KEY, 0)) + 1
+    if calls < _TRACKED_TASKS_GUIDANCE_INTERVAL:
+        state[_SESSION_TASK_GUIDANCE_COUNT_KEY] = calls
+        return None
+
+    state[_SESSION_TASK_GUIDANCE_COUNT_KEY] = 0
+    return _TRACKED_TASKS_GUIDANCE
+
+
 def _code_mode_work_outcome(
-    primary: CodeModeOutput, tracked_tasks: list[TrackedTaskView]
+    primary: CodeModeOutput,
+    tracked_tasks: list[TrackedTaskView],
+    tracked_tasks_guidance: str | None,
 ) -> CodeModeOutput:
     if not tracked_tasks:
         return primary
-    return primary.model_copy(
-        update={
-            "tracked_tasks": tracked_tasks,
-            "tracked_tasks_guidance": _TRACKED_TASKS_GUIDANCE,
-        }
-    )
+    update: dict[str, Any] = {"tracked_tasks": tracked_tasks}
+    if tracked_tasks_guidance is not None:
+        update["tracked_tasks_guidance"] = tracked_tasks_guidance
+    return primary.model_copy(update=update)
 
 
 def _exception_detail(exc: BaseException) -> str:
@@ -1374,7 +1199,11 @@ async def _mcp_wsl_exec(
     res_dict = dict(primary)
     if tracked_tasks:
         res_dict["tracked_tasks"] = tracked_tasks
-        res_dict["tracked_tasks_guidance"] = _TRACKED_TASKS_GUIDANCE
+        guidance = _tracked_tasks_guidance(ctx, tracked_tasks)
+        if guidance is not None:
+            res_dict["tracked_tasks_guidance"] = guidance
+    else:
+        _tracked_tasks_guidance(ctx, tracked_tasks)
     return WslExecWorkOutput.model_validate(res_dict)
 
 
@@ -1475,12 +1304,13 @@ async def _mcp_code_mode(
         )
     tracked_tasks = await _tracked_tasks_snapshot(ctx=ctx)
     if tracked_tasks:
-        primary = primary.model_copy(
-            update={
-                "tracked_tasks": tracked_tasks,
-                "tracked_tasks_guidance": _TRACKED_TASKS_GUIDANCE,
-            }
+        primary = _code_mode_work_outcome(
+            primary,
+            tracked_tasks,
+            _tracked_tasks_guidance(ctx, tracked_tasks),
         )
+    else:
+        _tracked_tasks_guidance(ctx, tracked_tasks)
     return _CodeModePublicOutput(root=primary)
 
 

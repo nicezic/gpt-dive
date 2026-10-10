@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -87,7 +89,7 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
     assert all_views[0].elapsed_seconds == 0
 
     # Session-scoped projection only returns tasks published within that session
-    ctx1 = SimpleNamespace(
+    ctx1: Any = SimpleNamespace(
         session=SimpleNamespace(_connection=SimpleNamespace(state={}))
     )
     app._record_session_task(ctx1, "e00001")
@@ -99,11 +101,61 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
     assert scoped_views[1].label == "task-3"
 
     # Other session with no published tasks gets empty projection
-    ctx2 = SimpleNamespace(
+    ctx2: Any = SimpleNamespace(
         session=SimpleNamespace(_connection=SimpleNamespace(state={}))
     )
     empty_views = asyncio.run(app._tracked_tasks_snapshot(ctx2))
     assert empty_views == []
+
+
+def test_tracked_tasks_guidance_is_first_then_every_ninth_followup() -> None:
+    ctx: Any = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
+    task = app.TrackedTaskView(
+        execution_id="abc123",
+        label="build",
+        state="running",
+        reason=None,
+        elapsed_seconds=1,
+    )
+
+    outputs = [app._tracked_tasks_guidance(ctx, [task]) for _ in range(19)]
+
+    assert outputs[0] == app._TRACKED_TASKS_GUIDANCE
+    assert all(value is None for value in outputs[1:9])
+    assert outputs[9] == app._TRACKED_TASKS_GUIDANCE
+    assert all(value is None for value in outputs[10:18])
+    assert outputs[18] == app._TRACKED_TASKS_GUIDANCE
+
+
+def test_tracked_tasks_guidance_resets_when_tasks_disappear_or_change() -> None:
+    ctx: Any = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
+    first = app.TrackedTaskView(
+        execution_id="abc123",
+        label="build",
+        state="running",
+        reason=None,
+        elapsed_seconds=1,
+    )
+    second = app.TrackedTaskView(
+        execution_id="def456",
+        label="tests",
+        state="running",
+        reason=None,
+        elapsed_seconds=1,
+    )
+
+    assert app._tracked_tasks_guidance(ctx, [first]) == app._TRACKED_TASKS_GUIDANCE
+    assert app._tracked_tasks_guidance(ctx, [first]) is None
+    assert (
+        app._tracked_tasks_guidance(ctx, [first, second]) == app._TRACKED_TASKS_GUIDANCE
+    )
+    assert app._tracked_tasks_guidance(ctx, [second, first]) is None
+    assert app._tracked_tasks_guidance(ctx, []) is None
+    assert app._tracked_tasks_guidance(ctx, [first]) == app._TRACKED_TASKS_GUIDANCE
 
 
 def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> None:

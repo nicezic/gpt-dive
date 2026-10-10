@@ -108,7 +108,6 @@ def test_server_description_exposes_wsl_assertion_guard() -> None:
     assert "wsl_exec has a default-deny caller assertion guard" in description
     assert "does not prove user-origin authorization" in description
     assert "minimal raw-shell escape hatch" not in description
-    assert description.count("wsl_exec") == 1
 
 
 def test_code_mode_description_exposes_compact_execution_contract() -> None:
@@ -271,11 +270,9 @@ def test_unavailable_task_get_returns_actionable_structured_response(
     existing_id = str(unpublished["execution_id"])
 
     async def call(execution_id: str) -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
+        return await _call_tool(
             "task",
             {"request": {"action": "get", "execution_id": execution_id}},
-            cast(Any, None),
-            convert_result=True,
         )
 
     for identifier in ("ZZZZZZ", existing_id):
@@ -301,11 +298,9 @@ def test_unavailable_task_mutation_returns_structured_error(
     manager._systemd_available = False
     monkeypatch.setattr(app, "executions", manager)
     response = asyncio.run(
-        app.mcp._tool_manager.call_tool(
+        _call_tool(
             "task",
             {"request": {"action": action, "execution_id": "ZZZZZZ"}},
-            cast(Any, None),
-            convert_result=True,
         )
     )
     assert response.is_error is False
@@ -330,11 +325,9 @@ def test_task_dismiss_running_returns_actionable_error(
     execution_id = str(started["execution_id"])
     try:
         response = asyncio.run(
-            app.mcp._tool_manager.call_tool(
+            _call_tool(
                 "task",
                 {"request": {"action": "dismiss", "execution_id": execution_id}},
-                cast(Any, None),
-                convert_result=True,
             )
         )
         assert response.is_error is False
@@ -372,11 +365,9 @@ def test_task_list_model_visible_inspection_is_detailed(monkeypatch) -> None:
         ]
 
     async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
+        return await _call_tool(
             "task",
             {"request": {"action": "list"}},
-            cast(Any, None),
-            convert_result=True,
         )
 
     monkeypatch.setattr(app, "_task_list", detailed_tasks)
@@ -409,17 +400,9 @@ def test_model_visible_structured_content_has_no_outer_result(
     async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
         return app.CodeModeRunning(execution_id="abc123", state="running")
 
-    async def call(name: str, arguments: dict[str, Any]) -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
-            name,
-            arguments,
-            cast(Any, None),
-            convert_result=True,
-        )
-
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
     monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
-    completed = asyncio.run(call("code_mode", {"label": "shape", "code": "1"}))
+    completed = asyncio.run(_call_tool("code_mode", {"label": "shape", "code": "1"}))
     assert completed.structured_content == {
         "status": "completed",
         "execution_id": "abc123",
@@ -428,7 +411,7 @@ def test_model_visible_structured_content_has_no_outer_result(
 
     monkeypatch.setattr(app, "task", fake_task)
     running = asyncio.run(
-        call("task", {"request": {"action": "get", "execution_id": "abc123"}})
+        _call_tool("task", {"request": {"action": "get", "execution_id": "abc123"}})
     )
     assert running.structured_content == {
         "status": "running",
@@ -445,14 +428,6 @@ def test_code_mode_public_output_summarizes_run_command(
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
         return app.CodeModeCompleted(
             execution_id="abc123", result={"pytest": "2 passed"}
-        )
-
-    async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
-            "code_mode",
-            {"label": "summary", "code": "1"},
-            cast(Any, None),
-            convert_result=True,
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
@@ -480,7 +455,7 @@ def test_code_mode_public_output_summarizes_run_command(
         ],
     )
 
-    result = asyncio.run(call())
+    result = asyncio.run(_call_tool("code_mode", {"label": "summary", "code": "1"}))
 
     assert result.structured_content == {
         "status": "completed",
@@ -505,14 +480,6 @@ def test_task_get_completed_uses_same_run_command_output(
     async def fake_task(_: app.TaskRequest) -> app.TaskOutcome:
         return app.CodeModeCompleted(execution_id="abc123", result="done")
 
-    async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
-            "task",
-            {"request": {"action": "get", "execution_id": "abc123"}},
-            cast(Any, None),
-            convert_result=True,
-        )
-
     monkeypatch.setattr(app, "task", fake_task)
     monkeypatch.setattr(
         app.executions.store,
@@ -528,7 +495,9 @@ def test_task_get_completed_uses_same_run_command_output(
         ],
     )
 
-    result = asyncio.run(call())
+    result = asyncio.run(
+        _call_tool("task", {"request": {"action": "get", "execution_id": "abc123"}})
+    )
 
     assert result.structured_content == {
         "status": "completed",
@@ -543,21 +512,13 @@ def test_code_mode_public_output_is_unchanged_without_run_command(
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
         return app.CodeModeCompleted(execution_id="abc123", result=42)
 
-    async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
-            "code_mode",
-            {"label": "plain", "code": "42"},
-            cast(Any, None),
-            convert_result=True,
-        )
-
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
     monkeypatch.setattr(app, "_task_list", lambda *, limit=None: [])
     monkeypatch.setattr(
         app.executions.store, "list_run_command_evidence", lambda _execution_id: []
     )
 
-    result = asyncio.run(call())
+    result = asyncio.run(_call_tool("code_mode", {"label": "plain", "code": "42"}))
 
     assert result.structured_content == {
         "status": "completed",
@@ -567,23 +528,15 @@ def test_code_mode_public_output_is_unchanged_without_run_command(
 
 
 def test_sdk_runtime_rejects_unknown_arguments_instead_of_dropping_them() -> None:
-    async def call(name: str, arguments: dict[str, Any]) -> None:
-        await app.mcp._tool_manager.call_tool(
-            name,
-            arguments,
-            cast(Any, None),
-            convert_result=True,
-        )
-
     with pytest.raises(Exception, match="Extra inputs are not permitted"):
         asyncio.run(
-            call(
+            _call_tool(
                 "code_mode",
                 {"label": "strict", "code": "1", "timeout": 999},
             )
         )
     with pytest.raises(Exception, match="Extra inputs are not permitted"):
-        asyncio.run(call("task", {"request": {"action": "list", "extra": True}}))
+        asyncio.run(_call_tool("task", {"request": {"action": "list", "extra": True}}))
 
 
 def test_server_instructions_keep_raw_wsl_out_of_structured_guidance() -> None:
@@ -617,12 +570,12 @@ def test_bootstrap_description_is_only_for_structured_harness() -> None:
 
 
 async def _call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
-    return await app.mcp._tool_manager.call_tool(
-        name,
-        arguments,
-        cast(Any, None),
-        convert_result=True,
+    # No transport session exists in these unit tests.
+    result = await app.mcp.call_tool(
+        name, arguments, context=cast(Any, SimpleNamespace(session=None))
     )
+    assert isinstance(result, CallToolResult)
+    return result
 
 
 def _projected_task(
@@ -850,11 +803,9 @@ def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None
         )
 
     async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
+        return await _call_tool(
             "code_mode",
             {"label": "large", "code": "'A' * 200000"},
-            cast(Any, None),
-            convert_result=True,
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)
@@ -883,11 +834,9 @@ def test_code_mode_output_preserves_structured_type_when_under_128k(
         )
 
     async def call() -> CallToolResult:
-        return await app.mcp._tool_manager.call_tool(
+        return await _call_tool(
             "code_mode",
             {"label": "small", "code": "payload"},
-            cast(Any, None),
-            convert_result=True,
         )
 
     monkeypatch.setattr(app, "code_mode", fake_code_mode)

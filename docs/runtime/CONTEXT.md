@@ -84,7 +84,7 @@ _피할 표현_: Job list; Execution list; Web-facing projection을 Task store �
 - `status="running"`: 백그라운드 진행 중. `state="running"`, `elapsed_seconds`, 그리고 `task(get)`을 안내하는 `guidance` 제공.
 - `status="failed"`: 실행 실패. `error: {code, message, detail}`과 `guidance` 제공.
 
-현재 세션에 active한 백그라운드 Task가 있을 때만 `tracked_tasks` 및 `tracked_tasks_guidance`가 포함되며, 없으면 필드 자체가 생략된다.
+현재 세션에 active한 백그라운드 Task가 있을 때 `tracked_tasks`가 포함된다. `tracked_tasks_guidance`는 같은 Task 집합이 처음 보일 때와 이후 9개 응답마다만 재출력하며, Task가 없으면 둘 다 생략된다.
 
 ### Lost
 

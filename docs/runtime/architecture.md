@@ -99,7 +99,7 @@ Runtime 시작 시 non-terminal row를 Worker와 outcome evidence에 맞춰 reco
 
 ## Code Mode
 
-각 Execution은 fresh Pydantic Monty program을 실행한다. 환경에는 `CWD`, live `CAPABILITIES` metadata, 그리고 caller가 제공했을 때만 `PAYLOAD`가 들어간다.
+각 Execution은 fresh Pydantic Monty program을 실행한다. 환경에는 `CWD`, live `CAPABILITIES` metadata, 그리고 caller가 제공했을 때만 `PAYLOAD`가 들어간다. `CallableRegistry`는 Pydantic AI의 **공개 `Tool` API**로 capability 입력 스키마와 validator를 생성하고, 동일한 정의에서 Monty 타입 스텁과 model-facing 선언문을 만든다. Agent 내부의 Harness `CodeMode`와 별개인 독립 Monty 실행 경계는 유지한다.
 
 ```text
 FileSystem 8
@@ -125,7 +125,7 @@ Other 4
 
 ### Filesystem 경계
 
-Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다. `read_file`은 기본적으로 원문 텍스트(`line_numbers=False`)를 반환하여 `json.loads` 및 `edit_file`과 즉시 호환되며, 프롬프트용 줄번호 점검이 필요할 때만 `line_numbers=True`를 명시한다(ADR 0011).
+Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다. `read_file`은 기본적으로 헤더·줄번호 없는 원문 텍스트(`line_numbers=False`)를 반환해 `json.loads`와 `edit_file(old_text=...)`에 그대로 전달할 수 있다(ADR 0011). `code_file_read.py`의 raw adapter가 Harness와 동일한 공개 `WorkspaceBackend.read_bytes()`를 사용하고, 실제 `edit_file`·`write_file` 및 충돌 방지용 `expected_hash`는 Harness가 담당한다. 줄번호가 필요할 때만 `line_numbers=True`를 사용한다(이 결과는 `old_text`에 사용할 수 없음). `offset`은 **0-based 줄 오프셋**이며, 256 KiB를 넘는 raw 결과의 절단 안내문은 파일 내용이 아니므로 `offset`/`limit`으로 실제 편집 구간을 다시 읽어야 한다.
 
 ### Direct command 경계
 
@@ -169,6 +169,9 @@ Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한�
 ```text
 src/gpt_dive/
 ├─ app.py                 MCP tools, strict schemas, inline delivery, middleware
+├─ wiki_bootstrap.py      Wiki preload, reminder loading, path validation
+├─ model_registry.py      User aliases and Pydantic AI provider connections
+├─ worker_subprocess.py   Shared worker launch, JSON response, process cleanup
 ├─ execution_store.py     SQLite lifecycle and awareness transitions
 ├─ execution_manager.py   launch, observe, cancel, recover, retain
 │                         Code Mode result normalization (envelope projection)
