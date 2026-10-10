@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import Any
 
-from .model_registry import model_catalog, resolve_model
-from .runtime_env import build_runtime_path
-from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CREDS = Path.home() / ".local" / "bin" / "creds"
-UV = Path.home() / ".local" / "bin" / "uv"
-
-# Backward-compatible derived view. ModelAlias remains the SSOT.
-MODEL_SPECS = model_catalog()
+from .model_registry import resolve_model
+from .worker_subprocess import (
+    credentialed_python_worker,
+    parse_worker_json,
+    run_bounded_worker,
+    stderr_tail,
+    worker_failure,
+)
 
 
 def _validate_call(
@@ -53,29 +49,12 @@ async def invoke_subagent(
         ensure_ascii=False,
     ).encode()
 
-    command = [
-        str(CREDS),
-        "run",
-        "ai",
-        "--",
-        str(UV),
-        "run",
-        "--project",
-        str(PROJECT_ROOT),
-        "--python",
-        "3.14",
-        "python",
-        "-m",
-        "gpt_dive.subagent_worker",
-    ]
-
-    child_env = os.environ.copy()
-    child_env["PATH"] = build_runtime_path(inherited=child_env.get("PATH"))
+    command, env = credentialed_python_worker("gpt_dive.subagent_worker")
 
     outcome = await run_bounded_worker(
         command,
         stdin_payload=payload,
-        env=child_env,
+        env=env,
         timeout=timeout,
         log_label="SUBAGENT",
     )
@@ -94,7 +73,7 @@ async def invoke_subagent(
     stdout_text = outcome.stdout_text
     stderr_text = outcome.stderr_text
     try:
-        result = json.loads(stdout_text)
+        result = parse_worker_json(outcome)
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
@@ -109,6 +88,4 @@ async def invoke_subagent(
             "stderr": stderr_tail(stderr_text),
         }
 
-    if stderr_text:
-        result["worker_stderr"] = stderr_tail(stderr_text)
     return result

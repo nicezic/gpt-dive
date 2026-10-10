@@ -48,7 +48,7 @@ def test_opus_success_commits_response_and_advances_only_opus_cursor(
     assert (repo / "chat.md").read_text(encoding="utf-8") == (
         "# USER\n\nQuestion\n\n---\n# OPUS\n\nIndependent response\n\n---\n"
     )
-    assert captured["alias"] == "opus5"
+    assert captured["alias"] == "opus-5-micu"
     assert captured["workspace_dir"] is None
     assert "# USER\n\nQuestion" in captured["task"]
     assert "# Why\n\nDecide carefully" in captured["task"]

@@ -26,7 +26,4 @@ def build_runtime_path(*prefixes: str | Path, inherited: str | None = None) -> s
     if tail:
         ordered.extend(tail.split(":"))
 
-    seen: set[str] = set()
-    return ":".join(
-        path for path in ordered if path and not (path in seen or seen.add(path))
-    )
+    return ":".join(dict.fromkeys(path for path in ordered if path))

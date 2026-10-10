@@ -1,84 +1,33 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent, CachePoint, UsageLimits
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai_harness import CodeMode, FileSystem
-from pydantic_ai_harness.filesystem import FileSystemToolset
 
 from .filesystem_policy import harness_denied_patterns, is_secret_path
 from .model_registry import (
     PROVIDER_ROUTES,
-    build_model,
-    build_provider_model,
-    model_output_tokens_limit,
+    get_model,
     resolve_model,
     verify_provider_model,
 )
-from .runtime_env import build_runtime_path
-from .worker_subprocess import run_bounded_worker, stderr_tail, worker_failure
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CREDS = Path.home() / ".local" / "bin" / "creds"
-UV = Path.home() / ".local" / "bin" / "uv"
+from .worker_subprocess import (
+    credentialed_python_worker,
+    parse_worker_json,
+    run_bounded_worker,
+    stderr_tail,
+    worker_failure,
+)
 
 _PEER_CACHE_BREAK = "\n<!-- GPT_DIVE_PEER_CACHE_BREAK -->\n"
-_PEER_DEFAULT_OUTPUT_TOKENS_LIMIT = 8_192
 _PEER_READ_OUTPUT_BYTES = 256 * 1024
 
 _EMPTY_PROMPT_ERROR = "prompt must not be empty"
-
-
-class _PeerFileSystemToolset(FileSystemToolset[Any]):
-    async def read_file(
-        self, path: str, *, offset: int = 0, limit: int | None = None
-    ) -> str:
-        # A formatted source line costs at least 8 bytes (line number + tab + newline),
-        # so this default line bound cannot fire before the 256 KiB output bound.
-        if limit is None:
-            limit = _PEER_READ_OUTPUT_BYTES // 8
-        text = await super().read_file(path, offset=offset, limit=limit)
-        encoded = text.encode("utf-8")
-        if len(encoded) <= _PEER_READ_OUTPUT_BYTES:
-            return text
-
-        reserve = 128
-        prefix = encoded[: _PEER_READ_OUTPUT_BYTES - reserve].decode(
-            "utf-8", errors="ignore"
-        )
-        header_end = prefix.find("\n")
-        last_newline = prefix.rfind("\n")
-        if last_newline > header_end:
-            prefix = prefix[: last_newline + 1]
-            last_line = prefix.rstrip("\n").rsplit("\n", 1)[-1]
-            line_number = last_line.split("\t", 1)[0].strip()
-            if line_number.isdigit():
-                return (
-                    prefix + f"... (read_file output capped at 256 KiB. "
-                    f"Use offset={line_number} to continue reading.)\n"
-                )
-        return (
-            prefix
-            + "\n... (read_file output capped at 256 KiB; narrow with offset/limit.)\n"
-        )
-
-
-class _PeerFileSystem(FileSystem):
-    def get_toolset(self) -> FileSystemToolset[Any]:
-        return _PeerFileSystemToolset(
-            root_dir=Path(self.root_dir),
-            allowed_patterns=self.allowed_patterns,
-            denied_patterns=self.denied_patterns,
-            protected_patterns=self.protected_patterns,
-            max_read_lines=self.max_read_lines,
-            max_list_results=self.max_list_results,
-            max_search_results=self.max_search_results,
-            max_find_results=self.max_find_results,
-        )
 
 
 _PEER_REVIEW_INSTRUCTIONS = (
@@ -102,10 +51,16 @@ def _build_peer_review_capabilities(workspace_dir: str) -> list[Any]:
         raise ValueError(f"workspace_dir is a credential/secret path: {workspace}")
     denied_patterns = harness_denied_patterns(root=workspace, home=home)
     return [
-        _PeerFileSystem(
+        LocalWorkspace(workspace),
+        FileSystem(
             root_dir=workspace,
-            read_only=False,
             denied_patterns=denied_patterns,
+            max_read_chars=_PEER_READ_OUTPUT_BYTES,
+            # ponytail: line bound neutralized (a line is >=1 char, so it can
+            # never bind before the char cap); single output bound by design.
+            # Ceiling: chars, not bytes (~3x bytes for CJK); restore a byte
+            # slice if CJK-heavy reads blow the cost guard.
+            max_read_lines=_PEER_READ_OUTPUT_BYTES,
         ),
         CodeMode(),
     ]
@@ -134,6 +89,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     prompt = str(payload["prompt"])
     workspace_dir = payload.get("workspace_dir")
     anthropic_thinking = payload.get("anthropic_thinking")
+
+    raw_limit = payload.get("output_tokens_limit")
+    output_tokens_limit = int(raw_limit) if raw_limit is not None else None
 
     if peer_review:
         provider = str(payload["provider"])
@@ -181,26 +139,16 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
                     "available_models": sorted(verification["available"]),
                 }
 
-        output_tokens_limit = (
-            model_output_tokens_limit(model_name) or _PEER_DEFAULT_OUTPUT_TOKENS_LIMIT
-        )
         agent = Agent(
-            build_provider_model(provider, model_name),
+            get_model(model_name, provider=provider),
             instructions=_PEER_REVIEW_INSTRUCTIONS,
             capabilities=_build_peer_review_capabilities(str(workspace_dir)),
-            model_settings=AnthropicModelSettings(max_tokens=output_tokens_limit),
         )
     else:
         raw_model = str(
             payload.get("alias") or payload.get("model_alias") or payload.get("model")
         )
         provider, model_name = resolve_model(raw_model)
-        raw_limit = payload.get("output_tokens_limit")
-        output_tokens_limit = (
-            int(raw_limit)
-            if raw_limit is not None
-            else model_output_tokens_limit(model_name)
-        )
         route = PROVIDER_ROUTES.get(provider)
         transport = (
             "codex-subscription"
@@ -222,9 +170,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             else None
         )
         agent = (
-            Agent(build_model(raw_model), model_settings=model_settings)
+            Agent(get_model(raw_model), model_settings=model_settings)
             if model_settings
-            else Agent(build_model(raw_model))
+            else Agent(get_model(raw_model))
         )
 
     run_prompt: str | list[Any] = prompt
@@ -319,24 +267,8 @@ async def invoke_model_call(
         ensure_ascii=False,
     ).encode()
 
-    command = [
-        str(CREDS),
-        "run",
-        "ai",
-        "--",
-        str(UV),
-        "run",
-        "--project",
-        str(PROJECT_ROOT),
-        "--python",
-        "3.14",
-        "python",
-        "-m",
-        "gpt_dive.model_call_worker",
-        "--worker",
-    ]
-    env = os.environ.copy()
-    env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
+    command, env = credentialed_python_worker("gpt_dive.model_call_worker")
+    command.append("--worker")
 
     outcome = await run_bounded_worker(
         command,
@@ -361,7 +293,7 @@ async def invoke_model_call(
     stdout_text = outcome.stdout_text
     stderr_text = outcome.stderr_text
     try:
-        result = json.loads(stdout_text)
+        result = parse_worker_json(outcome)
     except json.JSONDecodeError as exc:
         return {
             "ok": False,
@@ -377,6 +309,4 @@ async def invoke_model_call(
             "stderr": stderr_tail(stderr_text),
         }
 
-    if stderr_text:
-        result["worker_stderr"] = stderr_tail(stderr_text)
     return result

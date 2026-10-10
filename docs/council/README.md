@@ -39,7 +39,7 @@ Council UI (Svelte 5)
        │    -> code_mode -> council_emit
        │
        └─ To OPUS
-            -> Pydantic AI `opus5`
+            -> Pydantic AI `opus-5-micu`
 
 Both paths
    -> append-only chat.md
@@ -100,7 +100,7 @@ Output from SOL: Web SOL -> MCP/code_mode -> council_emit -> Git
 
 ## Opus Boundary
 
-OPUS is invoked through the local Pydantic path. Current Council uses model alias `opus5`; provider routing remains owned by GPT Dive's model registry.
+OPUS is invoked through the local Pydantic path. Current Council uses model alias `opus-5-micu`; provider routing remains owned by GPT Dive's model registry.
 
 The peer is valuable because it brings independent judgment, not because it is forced to disagree. Earlier Council experience showed that a strong reviewer can challenge the wrong problem when causal context is incomplete. This is why startup context quality matters.
 

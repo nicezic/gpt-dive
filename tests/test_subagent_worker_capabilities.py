@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.tool_output_limits import (
@@ -21,13 +25,15 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
 
     capabilities = _build_worker_capabilities(str(tmp_path))
     assert [type(cap) for cap in capabilities] == [
+        LocalWorkspace,
         FileSystem,
         Shell,
         RepoContext,
         ToolOutputLimits,
     ]
 
-    filesystem = capabilities[0]
+    assert str(capabilities[0].working_dir) == str(tmp_path)
+    filesystem = capabilities[1]
     assert Path(filesystem.root_dir).resolve() == tmp_path.resolve()
     assert set(filesystem.get_toolset().tools) == {
         "read_file",
@@ -40,8 +46,9 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
         "file_info",
     }
 
-    shell = capabilities[1]
-    assert Path(shell.cwd).resolve() == tmp_path.resolve()
+    shell = capabilities[2]
+    assert shell.cwd is None
+    assert capabilities[3].workspace_dir is None
     assert set(shell.get_toolset().tools) == {
         "run_command",
         "start_command",
@@ -54,7 +61,7 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
     path_entries = shell.env["PATH"].split(":")
     assert path_entries[0].endswith("gpt_dive/guard-bin")
 
-    output_limits = capabilities[3]
+    output_limits = capabilities[4]
     assert len(output_limits.bands) == 1
     band = output_limits.bands[0]
     assert band.over == 8_000
@@ -66,8 +73,15 @@ def test_worker_capability_bundle(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_worker_filesystem_keeps_sensitive_defaults_protected(tmp_path: Path) -> None:
-    filesystem = _build_worker_capabilities(str(tmp_path))[0]
-    protected = set(filesystem.protected_patterns)
-    assert ".git/*" in protected
-    assert ".env" in protected
+    filesystem = _build_worker_capabilities(str(tmp_path))[1]
+    protected = set(filesystem.read_only_patterns)
+    assert "**/.git/*" in protected
+    assert "**/.env" in protected
     assert "*.key" in protected
+
+
+def test_worker_workspace_attached_for_real_agent(tmp_path: Path) -> None:
+    capabilities = _build_worker_capabilities(str(tmp_path))
+    asyncio.run(
+        Agent(TestModel(call_tools=[]), capabilities=capabilities).run("offline")
+    )

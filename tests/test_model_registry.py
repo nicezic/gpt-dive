@@ -4,24 +4,58 @@ import asyncio
 
 import pytest
 
-from gpt_dive.model_registry import build_model, verify_provider_model
+from gpt_dive.model_registry import get_model, resolve_model, verify_provider_model
 
 
-def test_codex_alias_uses_upstream_pydantic_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import pydantic_ai.models.openai_codex as codex_model
+def test_registered_aliases_resolve_to_valid_providers() -> None:
+    from gpt_dive.model_registry import MODEL_ALIASES, PROVIDER_ROUTES
 
-    captured: dict[str, str] = {}
+    # User-selected aliases and exact models are the contract, not inferred names.
+    expected = {
+        "astra6": ("openai-codex", "gpt-6-astra"),
+        "sol6": ("openai-codex", "gpt-6.1-sol"),
+        "terra5": ("openai-codex", "gpt-5.6-terra"),
+        "luna6": ("openai-codex", "gpt-6-luna"),
+        "opus-5-micu": ("micu", "claude-opus-5"),
+        "ds": ("micu-ds", "deepseek-v4-pro-0813"),
+        "kimi": ("micu-kimi", "kimi-k3"),
+        "glm": ("micu-glm", "glm-5.3"),
+        "grok": ("micu-grok", "grok-4.6"),
+        "vip4": ("micu-vip4", "deepseek-v4-pro-0813"),
+        "m3": ("minimax", "MiniMax-M3"),
+        "muse-free": ("opencode-zen", "muse-spark-1.3-contributor-free"),
+    }
+    assert expected == MODEL_ALIASES
+    assert PROVIDER_ROUTES["micu"] == PROVIDER_ROUTES["micu-opus"]
+    for alias, (provider, model_name) in expected.items():
+        assert resolve_model(alias) == (provider, model_name)
+        assert provider in PROVIDER_ROUTES
 
-    class _FakeCodexModel:
-        def __init__(self, model_name: str) -> None:
-            captured["model_name"] = model_name
 
-    monkeypatch.setattr(codex_model, "OpenAICodexModel", _FakeCodexModel)
+def test_resolve_model_falls_back_to_provider_default_model() -> None:
+    from gpt_dive.model_registry import PROVIDER_ROUTES, resolve_model
 
-    build_model("sol")
-    assert captured == {"model_name": "gpt-5.6-sol"}
+    assert resolve_model("micu") == (
+        "micu",
+        PROVIDER_ROUTES["micu"].default_model,
+    )
+    assert resolve_model("m3") == ("minimax", "MiniMax-M3")
+
+
+def test_unknown_model_rejected_before_process_launch() -> None:
+    from gpt_dive.subagent_runtime import invoke_subagent
+
+    with pytest.raises(ValueError, match="unknown model alias"):
+        asyncio.run(invoke_subagent(alias="nope", task="x", timeout=30.0))
+
+
+def test_codex_aliases_use_upstream_pydantic_model() -> None:
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+
+    for alias in ("astra6", "sol6", "terra5", "luna6"):
+        model = get_model(alias)
+        assert isinstance(model, OpenAICodexModel)
+        assert model.model_name == resolve_model(alias)[1]
 
 
 def test_verify_provider_model_reports_missing_model(monkeypatch) -> None:
@@ -73,33 +107,24 @@ def test_verify_provider_model_soft_skips_on_listing_failure(monkeypatch) -> Non
     assert result == {"checked": False, "exists": False, "available": []}
 
 
-def test_verify_provider_model_skips_unknown_provider() -> None:
-    from gpt_dive.model_registry import verify_provider_model
-
-    result = asyncio.run(verify_provider_model("not-a-provider", "x"))
-    assert result == {"checked": False, "exists": False, "available": []}
-
-
-def test_verify_provider_model_skips_unlisted_codex_provider() -> None:
-    result = asyncio.run(verify_provider_model("openai-codex", "gpt-6-astra"))
-    assert result == {"checked": False, "exists": False, "available": []}
+def test_verify_provider_model_skips_unsupported_providers() -> None:
+    for provider, name in (("not-a-provider", "x"), ("openai-codex", "gpt-6-astra")):
+        result = asyncio.run(verify_provider_model(provider, name))
+        assert result == {"checked": False, "exists": False, "available": []}
 
 
-def test_opencode_aliases_use_native_openai_interfaces(
+def test_opencode_zen_free_alias_uses_native_responses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
 
     from gpt_dive.model_registry import PROVIDER_ROUTES
 
     monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-opencode-key")
 
-    glm = build_model("glm-5.3-flash")
-    muse = build_model("muse-free")
+    muse = get_model("muse-free")
 
-    assert isinstance(glm, OpenAIChatModel)
-    assert glm.model_name == "glm-5.3-flash"
-    assert PROVIDER_ROUTES["opencode-go"].base_url == "https://opencode.ai/zen/go/v1"
     assert isinstance(muse, OpenAIResponsesModel)
     assert muse.model_name == "muse-spark-1.3-contributor-free"
     assert PROVIDER_ROUTES["opencode-zen"].base_url == "https://opencode.ai/zen/v1"
+    assert "opencode-go" not in PROVIDER_ROUTES

@@ -1,7 +1,7 @@
 # GPT Dive Peer Review
 
 > Status: **Draft / experimental**
-> Updated: 2026-08-28
+> Updated: 2026-10-08
 > Scope: GPT Dive implementation contract. Workflow policy SSOT is `~/wiki/skills/web/peer-review.md`.
 
 ## Purpose
@@ -57,14 +57,14 @@ Normal path:
 ```text
 host local read peer_packet.md
         ↓
-peer_review(alias=<approved provider or alias[:model]>, prompt=<complete packet>)
+peer_review(alias=<approved registry alias | provider:model | provider-default>, prompt=<complete packet>)
         ↓
 peer final review text
         ↓
 host local write peer_answer.md
 ```
 
-Local packet reads and answer writes add **zero provider round-trips**. Use `await read_file(...)` (raw by default per ADR 0011) or direct `Path.read_text()` for raw packet transport. Only use `read_file(..., line_numbers=True)` when formatted line-number inspection is explicitly required.
+Local packet reads and answer writes add **zero provider round-trips**. In Monty, use `await read_file(...)` (raw by default per ADR 0011) for packet transport. Do not use `Path.read_text()`, `open()`, or other CPython filesystem APIs. Only use `read_file(..., line_numbers=True)` when formatted line-number inspection is explicitly required.
 
 For another round:
 
@@ -110,35 +110,17 @@ result             correctly updated judgment after requirement changed to price
 
 This is the current acceptance evidence for the two-file transport.
 
-## Output-token limit
+## Token settings
 
-Peer review does not accept a caller-supplied `output_tokens_limit` through outer `peer_review(...)`.
+Peer review does not set a default `max_tokens` or `UsageLimits.output_tokens_limit`: the Pydantic AI model and provider determine request defaults. The outer `peer_review(...)` capability does not expose a caller-supplied token limit.
 
-```text
-selected alias
-   ↓
-model_registry model_name metadata
-   ↓
-output_tokens_limit
-   ├─ provider max_tokens
-   └─ Pydantic UsageLimits.output_tokens_limit
-```
-
-Current metadata includes:
-
-```text
-claude-opus-5      128000
-claude-sonnet-5    128000
-claude-haiku-4-5-20251001    64000
-```
-
-If peer-review mode selects a model without output-limit metadata, fail instead of silently falling back to an arbitrary value.
+Other model call interfaces may pass an explicit `output_tokens_limit` to Pydantic AI `UsageLimits`; no model-specific limit is automatically injected.
 
 ## Current peer aliases
 
 ## Reviewer selection boundary
 
-The user chooses the provider and model. SOL resolves that choice to the provider's exact current model ID before approval. Peer-review runtime receives `provider + exact model ID` directly; it does not select another model, add an alias for the choice, or repeat provider-catalog lookup inside inference.
+The user chooses the provider and model. SOL resolves that choice before approval without substitution. The current outer capability accepts one `alias` argument: a registry alias, `provider:model`, or provider default. For exact user-selected routes, prefer `provider:model`. Anthropic-compatible routes may soft-check `/v1/models`; OpenAI Codex uses Pydantic AI's official subscription provider contract.
 
 ## Cache
 
@@ -155,24 +137,21 @@ The two-file workflow stays the same either way. Current provider economics belo
 The Wiki skill owns the full commented sample. Implementation shape is:
 
 ```python
-from pathlib import Path
-
-packet = (Path(CWD) / "peer_packet.md").read_text()
+packet = await read_file(path="peer_packet.md")
 if not packet.strip():
     raise RuntimeError("peer_packet.md is empty")
 
+# The Wiki workflow re-checks the recorded packet identity before this call.
 result = await peer_review(
-    provider=review_provider,
-    model=review_model,
+    alias="provider:model",  # or an explicitly approved registered alias
     prompt=packet,
     cwd=CWD,
 )
 
-if result.get("ok"):
-    await write_file(path="peer_answer.md", content=result["output"])
+# Persist outside the paid call after inspecting the returned result shape.
 ```
 
-The actual paid route runs only in an outer `code_mode(label="Peer review: …", delivery="task")` call after the skill's provider/model preflight and explicit user approval gate. The outer call returns the Execution's single `execution_id`; Web SOL continues its own work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. `task(get)` reads the result non-destructively, `task(cancel)` is the explicit cancellation path, and `task(dismiss)` removes terminal awareness after handling. No peer-review-specific tracker or execution runtime is added. `peer_review` has no model-supplied timeout: Runtime clamps its underlying worker to the lesser of the 600-second capability policy and the remaining Execution work budget.
+The actual paid route runs only in an outer `code_mode(label="Peer review: …", delivery="task")` call after the skill's provider/model preflight and explicit user approval gate. The outer call returns the Execution's single `execution_id`; Web SOL continues its own work and ordinary GPT Dive traffic surfaces the review through TrackedTasks. `task(get)` reads the result non-destructively, `task(cancel)` is the explicit cancellation path, and `task(dismiss)` removes terminal awareness after handling. No peer-review-specific tracker or execution runtime is added. `peer_review` has no caller-supplied timeout; exact capability ceilings and child budgets are Runtime-owned and must be read from the current live contract rather than copied into workflow docs.
 
 ## Failure semantics
 

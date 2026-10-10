@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 
-from pydantic_ai import CachePoint, UsageLimits
+import pytest
+from pydantic_ai import Agent, CachePoint, UsageLimits
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import CodeMode, FileSystem
 
 import gpt_dive.model_call as model_call_module
@@ -34,14 +40,42 @@ class _FakeAgent:
         return _FakeResult()
 
 
-def test_resolve_model_falls_back_to_provider_default_model() -> None:
-    from gpt_dive.model_registry import PROVIDER_ROUTES, resolve_model
+def test_credentialed_workers_keep_launch_and_response_contract(monkeypatch) -> None:
+    from gpt_dive import subagent_runtime
+    from gpt_dive.worker_subprocess import WorkerOutcome
 
-    assert resolve_model("micu") == (
-        "micu",
-        PROVIDER_ROUTES["micu"].default_model,
+    observed = []
+
+    async def fake_worker(command, *, stdin_payload, env, timeout, log_label):
+        observed.append((command, json.loads(stdin_payload), env, timeout, log_label))
+        return WorkerOutcome(0, '{"ok": true}', "worker diagnostics", False, True)
+
+    monkeypatch.setattr(model_call_module, "run_bounded_worker", fake_worker)
+    monkeypatch.setattr(subagent_runtime, "run_bounded_worker", fake_worker)
+
+    peer = asyncio.run(
+        model_call_module.invoke_model_call(
+            alias="terra5", prompt="review", timeout=12.0, peer_review=True
+        )
     )
-    assert resolve_model("m3") == ("minimax", "MiniMax-M3")
+    subagent = asyncio.run(
+        subagent_runtime.invoke_subagent(alias="terra5", task="code", timeout=12.0)
+    )
+    assert peer["worker_stderr"] == subagent["worker_stderr"] == "worker diagnostics"
+    assert [call[4] for call in observed] == ["MODEL_CALL", "SUBAGENT"]
+    assert [
+        call[1]["model"] if "model" in call[1] else call[1]["model_name"]
+        for call in observed
+    ] == [
+        "gpt-5.6-terra",
+        "gpt-5.6-terra",
+    ]
+    for command, _, env, timeout, _ in observed:
+        assert command[1:4] == ["run", "ai", "--"]
+        assert command[command.index("-m") + 1].startswith("gpt_dive.")
+        assert env["PATH"]
+        assert timeout == 12.0
+    assert observed[0][0][-1] == "--worker"
 
 
 def test_model_call_worker_builds_agent_without_tools_or_capabilities(
@@ -49,12 +83,12 @@ def test_model_call_worker_builds_agent_without_tools_or_capabilities(
 ) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_model", lambda alias: sentinel_model)
+    monkeypatch.setattr(model_call_module, "get_model", lambda alias: sentinel_model)
 
     result = asyncio.run(
         model_call_module._run_worker(
             {
-                "model": "opus5",
+                "model": "opus-5-micu",
                 "prompt": "review this",
                 "output_tokens_limit": 123,
             }
@@ -64,8 +98,10 @@ def test_model_call_worker_builds_agent_without_tools_or_capabilities(
     assert _FakeAgent.init_args == (sentinel_model,)
     assert _FakeAgent.init_kwargs == {}
     assert _FakeAgent.run_prompt == "review this"
+    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
+    assert usage_limits.output_tokens_limit == 123
     assert result["ok"] is True
-    assert result["model"] == "opus5"
+    assert result["model"] == "opus-5-micu"
     assert result["output"] == "BARE_WORKER_OK"
     assert result["mode"] == "model-call"
 
@@ -73,7 +109,7 @@ def test_model_call_worker_builds_agent_without_tools_or_capabilities(
 def test_model_call_worker_can_disable_anthropic_thinking(monkeypatch) -> None:
     sentinel_model = object()
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(model_call_module, "build_model", lambda alias: sentinel_model)
+    monkeypatch.setattr(model_call_module, "get_model", lambda alias: sentinel_model)
 
     result = asyncio.run(
         model_call_module._run_worker(
@@ -98,8 +134,8 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(
         model_call_module,
-        "build_provider_model",
-        lambda provider, model: sentinel_model,
+        "get_model",
+        lambda model, provider=None: sentinel_model,
     )
 
     result = asyncio.run(
@@ -123,9 +159,8 @@ def test_peer_review_uses_provider_and_exact_model(monkeypatch, tmp_path) -> Non
     assert fs.read_only is False
     assert "**/.env" in fs.denied_patterns
     assert any(isinstance(cap, CodeMode) for cap in capabilities)
-    assert _FakeAgent.init_kwargs["model_settings"] == {"max_tokens": 128_000}
-    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
-    assert usage_limits.output_tokens_limit == 128_000
+    assert "model_settings" not in _FakeAgent.init_kwargs
+    assert _FakeAgent.run_kwargs["usage_limits"] is None
     assert _FakeAgent.run_prompt == "review this"
     assert result["ok"] is True
     assert result["mode"] == "peer-review"
@@ -138,8 +173,8 @@ def test_micu_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) ->
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(
         model_call_module,
-        "build_provider_model",
-        lambda provider, model: sentinel_model,
+        "get_model",
+        lambda model, provider=None: sentinel_model,
     )
 
     prompt = "STABLE BASE" + model_call_module._PEER_CACHE_BREAK + "ROUND 2 DELTA"
@@ -161,10 +196,6 @@ def test_micu_peer_review_inserts_explicit_cache_point(monkeypatch, tmp_path) ->
     assert isinstance(run_prompt[1], CachePoint)
     assert run_prompt[1].ttl == "5m"
     assert run_prompt[2] == "ROUND 2 DELTA"
-    model_settings = _FakeAgent.init_kwargs["model_settings"]
-    assert model_settings == {"max_tokens": 128_000}
-    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
-    assert usage_limits.output_tokens_limit == 128_000
     assert result["model"] == "claude-opus-5"
     assert result["provider"] == "micu"
     assert result["finish_reason"] == "stop"
@@ -177,8 +208,8 @@ def test_peer_review_marks_length_finish_as_truncated(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(
         model_call_module,
-        "build_provider_model",
-        lambda provider, model: sentinel_model,
+        "get_model",
+        lambda model, provider=None: sentinel_model,
     )
     original_response = _FakeResult.response
     _FakeResult.response = SimpleNamespace(
@@ -251,8 +282,8 @@ def test_peer_review_worker_resolves_provider_default_model(
     monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
     monkeypatch.setattr(
         model_call_module,
-        "build_provider_model",
-        lambda provider, model: sentinel_model,
+        "get_model",
+        lambda model, provider=None: sentinel_model,
     )
     monkeypatch.setattr(model_call_module, "verify_provider_model", _fail_verify)
 
@@ -271,34 +302,6 @@ def test_peer_review_worker_resolves_provider_default_model(
     assert result["ok"] is True
     assert result["model_name"] == "claude-opus-5"
     assert listing_calls == []
-
-
-def test_peer_review_worker_falls_back_to_default_output_tokens_limit(
-    monkeypatch, tmp_path
-) -> None:
-    sentinel_model = object()
-    monkeypatch.setattr(model_call_module, "Agent", _FakeAgent)
-    monkeypatch.setattr(
-        model_call_module,
-        "build_provider_model",
-        lambda provider, model: sentinel_model,
-    )
-
-    result = asyncio.run(
-        model_call_module._run_worker(
-            {
-                "peer_review": True,
-                "provider": "micu",
-                "model": "brand-new-model-1",
-                "prompt": "review this",
-                "workspace_dir": str(tmp_path),
-            }
-        )
-    )
-
-    assert result["ok"] is True
-    usage_limits = cast(UsageLimits, _FakeAgent.run_kwargs["usage_limits"])
-    assert usage_limits.output_tokens_limit == 8_192
 
 
 def test_peer_review_worker_rejects_unknown_provider(tmp_path) -> None:
@@ -345,6 +348,8 @@ def test_peer_review_supports_openai_codex_exact_model(monkeypatch, tmp_path) ->
     model = _FakeAgent.init_args[0]
     assert isinstance(model, OpenAICodexModel)
     assert model.model_name == "gpt-6-astra"
+    assert "model_settings" not in _FakeAgent.init_kwargs
+    assert _FakeAgent.run_kwargs["usage_limits"] is None
     assert result["ok"] is True
 
 
@@ -365,14 +370,33 @@ def test_openai_codex_peer_review_requires_exact_model(tmp_path) -> None:
     assert "model is required" in result["error"]
 
 
-def test_peer_review_file_read_is_bounded_by_output_bytes(tmp_path) -> None:
+def test_peer_review_read_is_bounded_by_output_bytes(tmp_path) -> None:
     (tmp_path / "large.txt").write_text(("x" * 80 + "\n") * 4000)
     capabilities = model_call_module._build_peer_review_capabilities(str(tmp_path))
     filesystem = next(cap for cap in capabilities if isinstance(cap, FileSystem))
     toolset = cast(Any, filesystem.get_toolset())
 
-    result = asyncio.run(toolset.read_file("large.txt"))
+    result = asyncio.run(
+        toolset.read_file("large.txt", workspace=LocalWorkspaceBackend(tmp_path))
+    )
 
-    assert "  2001\t" in result
-    assert len(result.encode("utf-8")) <= 256 * 1024
-    assert "Use offset=" in result
+    assert "[large.txt | 4000 lines" in result
+    assert "to continue reading" in result
+    # header + notice ride above the body budget
+    assert len(result.encode("utf-8")) <= 256 * 1024 + 1024
+
+
+def test_peer_review_workspace_attached_for_real_agent(tmp_path) -> None:
+    capabilities = model_call_module._build_peer_review_capabilities(str(tmp_path))
+    assert isinstance(capabilities[0], LocalWorkspace)
+    assert str(capabilities[0].working_dir) == str(tmp_path)
+    asyncio.run(
+        Agent(TestModel(call_tools=[]), capabilities=capabilities).run("offline")
+    )
+    (tmp_path / ".env").write_text("secret")
+    filesystem = next(cap for cap in capabilities if isinstance(cap, FileSystem))
+    toolset = cast(Any, filesystem.get_toolset())
+    with pytest.raises(ModelRetry, match="denied by pattern"):
+        asyncio.run(
+            toolset.read_file(".env", workspace=LocalWorkspaceBackend(tmp_path))
+        )

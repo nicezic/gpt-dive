@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal
+from pathlib import Path
 from typing import Any, NamedTuple
+
+from .runtime_env import build_runtime_path
 
 logger = logging.getLogger("gpt_dive.runtime")
 
@@ -89,6 +93,38 @@ async def _cancel_and_drain_task(
 def stderr_tail(stderr_text: str) -> str:
     """Best-effort diagnostics tail shared by every worker caller."""
     return stderr_text[-_STDERR_TAIL_CHARS:]
+
+
+def credentialed_python_worker(module: str) -> tuple[list[str], dict[str, str]]:
+    """Launch an AI worker under the existing creds scope, with the shared PATH."""
+    home_bin = Path.home() / ".local" / "bin"
+    project = Path(__file__).resolve().parents[2]
+    command = [
+        str(home_bin / "creds"),
+        "run",
+        "ai",
+        "--",
+        str(home_bin / "uv"),
+        "run",
+        "--project",
+        str(project),
+        "--python",
+        "3.14",
+        "python",
+        "-m",
+        module,
+    ]
+    env = os.environ.copy()
+    env["PATH"] = build_runtime_path(inherited=env.get("PATH"))
+    return command, env
+
+
+def parse_worker_json(outcome: WorkerOutcome) -> dict[str, Any]:
+    """Decode one successful worker response, preserving its stderr evidence."""
+    result = json.loads(outcome.stdout_text)
+    if outcome.stderr_text:
+        result["worker_stderr"] = stderr_tail(outcome.stderr_text)
+    return result
 
 
 def worker_failure(

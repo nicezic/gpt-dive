@@ -65,7 +65,7 @@ async def _complete_opus_turn(
     )
 
     result = await invoke(
-        alias="opus5",
+        alias="opus-5-micu",
         task=task,
         timeout=timeout,
         output_tokens_limit=output_tokens_limit,
