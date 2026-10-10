@@ -75,7 +75,7 @@ Playwright is deliberately **input-only**. It does not scrape assistant output, 
 
 The E2E probe passed. A persistent CDP connection also removed the repeated approval prompt seen with one-shot browser attachments.
 
-Evidence: `../../plans/council/2026-08-11-web-sol-e2e.md`.
+Evidence: `../../plans/conduit/room/2026-08-11-web-sol-e2e.md`.
 
 ## 5. Private Lanes Were Considered and Rejected as the Default
 
@@ -187,7 +187,7 @@ Council v1 implemented:
 - Starlette/Uvicorn REST backend;
 - failure-safe retry without duplicate USER turns.
 
-Final acceptance passed Python, frontend, repo-protocol, real OPUS, real UI, and real Web SOL E2E checks. The implementation/decision SSOT is `../../specs/council.md`.
+Final acceptance passed Python, frontend, repo-protocol, real OPUS, real UI, and real Web SOL E2E checks. The implementation/decision SSOT is `spec.md`.
 
 ## 10. Post-v1 — Startup Friction Becomes the Next Problem
 

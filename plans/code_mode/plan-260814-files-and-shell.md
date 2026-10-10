@@ -137,7 +137,7 @@ Validation:
 - `uv run ruff check src/gpt_dive/code_runtime.py src/gpt_dive/app.py tests/test_code_runtime.py` -> PASS.
 - `uv run ruff format --check src/gpt_dive/code_runtime.py tests/test_code_runtime.py` -> PASS.
 - `git diff --check` -> PASS.
-- Repository-wide Ruff lint/format are not clean because of pre-existing unrelated dirty work (`experiments/council_web_sol_e2e/edge_bridge.py` lint; bootstrap/description and other unrelated formatting hunks). Those files/hunks were deliberately not modified for this change.
+- Repository-wide Ruff lint/format are not clean because of pre-existing unrelated dirty work (`experiments/conduit/room_web_sol_e2e/edge_bridge.py` lint; bootstrap/description and other unrelated formatting hunks). Those files/hunks were deliberately not modified for this change.
 
 Fresh-session live acceptance (2026-08-14):
 

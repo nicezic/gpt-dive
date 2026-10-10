@@ -107,7 +107,7 @@ Renewal은 의도적으로 clean break를 택했다.
 - `agy_worker`, `subagent_call`, `peer_review` contract 통합 없음
 - 새 `Job` domain term 없음
 
-Council은 `docs/council/` 아래의 별도 human-steered multi-model concern으로 남는다. Conduit는 Runtime Execution/Task 모델을 사용하지만 conversation과 Redis event 경계는 스스로 소유한다.
+기존 Council은 단일 Conduit 제품의 `Room` 기능으로 정리되어 `docs/conduit/room/`에서 문서화한다. Conduit는 Runtime Execution/Task를 재사용하면서 대화/이벤트를 소유하고, Room은 Git 대화 기록을 소유한다.
 
 ## 참고 문서
 

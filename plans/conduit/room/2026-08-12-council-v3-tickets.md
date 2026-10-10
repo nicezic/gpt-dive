@@ -1,6 +1,6 @@
 # Council v3 — Implementation Tickets
 
-> Parent spec: `specs/council.md`
+> Parent spec: `docs/conduit/room/spec.md`
 > Status: COMPLETE — T1/T2/T3/T4 PASS
 > Created: 2026-08-12
 
@@ -13,7 +13,7 @@ Build the Git-backed Council protocol that both participant turn flows depend on
 None.
 
 ### Exact Boundary
-Own Council repository initialization, append-only USER/SOL/OPUS turn commits, participant context refs, snapshot-based unread suffix extraction, and protocol validation. Keep this logic under `gpt_dive.council` and preserve `council_emit` compatibility. Do not implement browser transport, Pydantic Opus calls, or Web UI.
+Own Council repository initialization, append-only USER/SOL/OPUS turn commits, participant context refs, snapshot-based unread suffix extraction, and protocol validation. Keep this logic under `gpt_dive.conduit.room` and preserve `council_emit` compatibility. Do not implement browser transport, Pydantic Opus calls, or Web UI.
 
 ### Implementation Guidance
 Promote the current experimental `council.py` seam into a small package if useful. Git is the synchronization SSOT. `chat.md` remains human-readable and append-only. Use `refs/council/context/sol` and `refs/council/context/opus` as participant cursors. Cursor movement is explicit and occurs only after the participant response commit succeeds.

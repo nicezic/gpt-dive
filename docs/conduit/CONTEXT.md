@@ -18,6 +18,12 @@ _Avoid_: Conduit task list, Conduit-owned tracking when referring to the shared 
 **Opportunistic Evidence Pickup (OEP)**:
 The workflow in which Web SOL launches Task-backed asynchronous work without waiting, continues its own reasoning, later notices completion through TrackedTasks during ordinary tool activity, and inspects the result only when useful. Worker output is candidate evidence rather than authority, so pickup may end in discard, deduplication, or selective use.
 
+**Conduit Room**:
+Human-steered USER / SOL / OPUS shared conversation feature, originally
+named Council. Its authoritative Git transcript and participant cursors
+are distinct from Conduit's Redis event stream. Legacy Git ref names and
+`council_emit` preserve existing room compatibility.
+
 **Conduit Action**:
 One strict `@c` request variant: `start`, `sync`, `get`, `cancel`, `dismiss`, or `emit`. Runtime lifecycle actions use the shared `execution_id`; Conduit does not translate it into a second Task identity.
 _Avoid_: collect/ack when referring to the current get/dismiss contract; `task_id`.

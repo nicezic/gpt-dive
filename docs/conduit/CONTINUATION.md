@@ -1,4 +1,22 @@
-# Conduit — Current Continuation
+# Conduit — Consolidation handoff (2026-10-10)
+
+Conduit is one product: conversation/event transport in
+`src/gpt_dive/conduit/` and a Git-backed shared Room in
+`src/gpt_dive/conduit/room/`. Documentation now lives in
+`docs/conduit/`, with the Room specifics under `docs/conduit/room/`.
+The existing Svelte UI remains in `web/`.
+
+This change consolidates source, documentation, test layout and UI branding.
+It keeps the existing room Git refs, `council_emit`, and legacy CLI spelling
+for compatibility. **Room UI and `@c` Redis event transport have not been
+combined into one live frontend.**
+
+Remaining work: the unified frontend, Room start/reopen ergonomics,
+and current ChatGPT Web live acceptance. Current source/tests are the
+authority; the dated historical handoff below is not a current-state claim.
+
+## Historical handoff (2026-08-28)
+
 
 > Updated: 2026-08-28. Stable background is in `bootstrap.md`; Runtime language is owned by `../runtime/CONTEXT.md`.
 
@@ -37,7 +55,7 @@ Repository tests cover shared visibility, non-destructive get, explicit cancel, 
 
 ## Next Conduit work
 
-Runtime stabilization and live acceptance come first. After that, resume the planned Council/Conduit product work without reopening Runtime terminology or building a second lifecycle manager.
+Runtime stabilization and live acceptance come first. After that, resume the planned shared-room and event-transport integration without reopening Runtime terminology or building a second lifecycle manager.
 
 ## References
 

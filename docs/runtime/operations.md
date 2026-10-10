@@ -170,7 +170,7 @@ Execution terminal artifact와 SQLite `run_command` evidence는 5일 보존한�
 
 ## Council 참고
 
-Council은 Playwright Extension을 통해 SOL input을 보내고 `code_mode → council_emit` 경로로 SOL output을 받는다. Browser/session 운영은 `docs/council/`이 소유하며 Runtime Execution/Task 의미를 바꾸지 않는다.
+Conduit Room(옛 Council)은 Playwright Extension을 통해 SOL input을 보내고 기존 `code_mode → council_emit` 계약으로 SOL output을 받는다. Browser/session 운영은 `docs/conduit/room/`이 소유하며 Runtime Execution/Task 의미를 바꾸지 않는다.
 
 ## 참고 문서
 

@@ -150,7 +150,7 @@ systemd-run --user --unit=gd-detached-<name> --collect \
 
 ## Conduit
 
-Conduit는 같은 `ExecutionManager`와 Task projection을 사용한다.
+Conduit는 같은 `ExecutionManager`와 Task projection을 사용한다. Conduit의 전송 계층은 `src/gpt_dive/conduit/`, 기존 Council에서 통합된 공동 대화방 기능은 `src/gpt_dive/conduit/room/`가 담당한다. 둘은 하나의 Conduit 제품이며 독립 Runtime을 만들지 않는다.
 
 ```text
 @dive code_mode ─┐

@@ -1,68 +1,79 @@
 # Conduit
 
-Conduit is GPT Dive's conversation and task transport subproject for ChatGPT Web.
+**Conduit is GPT Dive's conversation and collaboration layer.** It unifies two stages of the same product direction:
 
-Its purpose is to keep the Web-facing interaction small while letting ChatGPT Web SOL hand off conversation output and asynchronous work through a local `@c` MCP surface while reusing GPT Dive Runtime. Both `@c` snapshots and ordinary `@dive` traffic now consume the same Runtime-owned TrackedTasks projection.
+- **Room** (originally Council, implemented first): the human-steered USER / SOL / OPUS Git discussion room and Svelte UI.
+- **Transport** (later named Conduit): the `@c` MCP surface for conversation events, Redis fan-out, and Runtime-backed asynchronous work.
 
-```text
-ChatGPT Web SOL
-      |
-     @c
-      |
-   Conduit
-      |
-      +-- Runtime start/get/cancel/dismiss
-      +-- Redis event fan-out
-             |
-             +-- /tmp logging
-             +-- custom Web UI
-             +-- durable storage
-             +-- GBrain / later consumers
-```
+These are **features of one product**, not independent applications with their own job lifecycles. The old Council name survives inside the Git room protocol and the `council_emit` capability for compatibility.
 
-Conduit does not replace GPT Dive's execution runtime. GPT Dive remains the owner of Execution, Task, TrackedTasks, deadlines, recovery, and local capabilities. Conduit adds a conversation/event plane over those components and uses the same single `execution_id`; it has no Task store of its own.
+## Architecture
 
-```text
-@c start(label, command)
-        │
-        ▼
-Runtime Execution + published Task
-        │
-        ├─ @c get / cancel / dismiss
-        └─ shared TrackedTasks snapshot
-```
+~~~text
+                         ChatGPT Web SOL
+                            │
+                 ┌──────────┴──────────┐
+                 ▼                     ▼
+             @c Conduit            Code Mode
+           conversation             council_emit
+           + Task actions               │
+                 │                      ▼
+         Redis event stream       Conduit Room (Git)
+                 │                ├─ USER moderator
+        NDJSON / consumers        ├─ SOL via input-only Edge
+                                 └─ OPUS via Pydantic AI
+                                      │
+                                 Svelte UI
+
+             Both reuse GPT Dive Runtime
+        Execution / Task / TrackedTasks / SQLite
+~~~
+
+**Currently implemented:** `@c` actions with Redis event publication, and a Git-backed Room with SOL/OPUS delivery and local UI. A single web interface integrating the Room with the `@c` event stream is **not yet implemented**. Room Git history, Redis events, and Runtime SQLite state remain separate authorities.
+
+**Room design invariant:** automate transport, not judgment. USER chooses each turn; SOL and OPUS may share context and disagree. Preserve the causes, constraints, and evidence behind decisions.
+
+## Run and develop
+
+~~~bash
+# Local Conduit conversation/task MCP server
+uv run --locked --no-sync python -m gpt_dive.conduit
+
+# Build the shared room UI (Svelte/Vite)
+cd web && pnpm run check && pnpm run build
+
+# Serve a Git-backed room using the existing ChatGPT Web conversation
+uv run --locked --no-sync python -m gpt_dive.conduit.room.server \
+  --room-dir /path/to/existing/git-room \
+  --sol-url '<exact ChatGPT Web conversation URL>'
+~~~
+
+The installed CLI name is `gpt-dive-conduit-room`. The older `gpt-dive-council` command and `--council-dir` argument remain accepted. Live `@c` and `council_emit` signatures are unchanged. Production operations and service restart instructions belong to [Runtime operations](../runtime/operations.md).
+
+## Ownership
+
+| Owner | Owns |
+|---|---|
+| GPT Dive Runtime | Execution, Task, SQLite state, TrackedTasks, deadlines and recovery |
+| Conduit transport | `@c` conversation/task interface, Redis publication, event envelopes |
+| Conduit Room | Shared USER/SOL/OPUS turns, Git transcript, context cursors, local UI |
+| Redis / downstream consumers | Event fan-out and independent downstream storage |
+
+Conduit does not duplicate Runtime's Task store. Git is authoritative for Room transcript content; SQLite owns Execution/Task lifecycle; Redis carries events.
 
 ## Documentation
 
-| Path | Role | Update when |
-|---|---|---|
-| `README.md` | Stable entry point. Short project description, document map, and ownership boundaries. | The meaning or document structure of Conduit changes. |
-| `bootstrap.md` | Causal context packet for a fresh ChatGPT Web session or peer reviewer. Keeps the Why, user economics, ChatGPT Web constraints, proven infrastructure, settled design, and assumptions that still require live validation. | Background or a consequential design assumption changes. |
-| `CONTEXT.md` | Canonical Conduit domain language maintained actively during design. Glossary only; no implementation detail. | A Conduit-specific term is resolved, split, merged, or renamed. |
-| `CONTINUATION.md` | Current handoff state. Records the immediate objective, settled decisions relevant to the active work, current validation state, and next action. | `/handoff`, session change, or active implementation state changes. |
-| `runtime/` | Reconstructable Conduit tunnel/systemd templates. Runtime sockets and secrets never belong here. | The deployed Conduit tunnel/service contract changes. |
-| `adr/` | Rare Architecture Decision Records. Files prefixed `0_` are explicitly **pre-ADR brainstorm/design drafts**, not settled decisions. | A durable, consequential trade-off is settled, or an active design draft needs a temporary home before promotion. |
+| Purpose | Source |
+|---|---|
+| Room behavior, command, protocol | [Room README](room/README.md) |
+| Room implementation record | [Room v1 spec](room/spec.md) (historical snapshot) |
+| Council → Conduit design history | [Room history](room/history.md) |
+| Room start/reopen UX direction | [Room startup](room/startup.md) (not fully implemented) |
+| Conduit vocabulary and ownership | [CONTEXT](CONTEXT.md) |
+| Original constraints, economics, proven components | [Bootstrap](bootstrap.md) |
+| Conduit decisions | [Conduit ADRs](adr/) |
+| Dated handoff and next product work | [CONTINUATION](CONTINUATION.md) |
+| Redis/NDJSON event format | [NDJSON reference](ndjson-ref.md) |
+| Tunnel and consumer service templates | [Runtime templates](runtime/) |
 
-Detailed protocol and runtime documents should be added only after the corresponding behavior exists or becomes stable enough to deserve its own SSOT. Do not create speculative documentation layers merely to fill out the tree.
-
-## Ownership boundaries
-
-```text
-Conduit
-  owns: conversation protocol, event envelope, Redis publication
-
-GPT Dive runtime
-  owns: Execution/Task lifecycle, TrackedTasks projection, deadlines, local capabilities
-
-Redis
-  owns: event transport / fan-out
-  does not own: Conduit domain semantics
-
-Custom Web UI
-  owns: user-facing rendering and interaction
-
-GBrain / storage consumers
-  own: downstream indexing, analysis, and persistence policy
-```
-
-The governing design bias is to keep the primary path small. Do not add fallback paths just because they are technically possible; only resilience mechanisms whose value clearly outweighs their complexity should enter the design.
+Current source and tests override historical plans and specs. Room code is in `src/gpt_dive/conduit/room/`; transport code is in `src/gpt_dive/conduit/`; the existing Room frontend stays in `web/`. Experiments and implementation history are grouped under `experiments/conduit/` and `plans/conduit/`.
