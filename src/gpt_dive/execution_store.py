@@ -202,7 +202,9 @@ class ExecutionStore:
                     ),
                 )
         except Exception:
-            logger.exception("ERROR_EVENT persistence failed execution_id=%s", execution_id)
+            logger.exception(
+                "ERROR_EVENT persistence failed execution_id=%s", execution_id
+            )
 
     @staticmethod
     def _validate_label(label: str) -> str:

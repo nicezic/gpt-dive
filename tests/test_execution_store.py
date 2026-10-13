@@ -123,9 +123,7 @@ def test_terminal_error_is_recorded_without_result_read(
 def test_upstream_worker_error_wins_over_runtime_fallback(tmp_path: Path) -> None:
     store = ExecutionStore(tmp_path / "runtime.sqlite3")
     create_execution(store, tmp_path)
-    store.record_error_event(
-        "a" * 6, {"category": "monty", "code": "MontyTypingError"}
-    )
+    store.record_error_event("a" * 6, {"category": "monty", "code": "MontyTypingError"})
     store.claim("a" * 6, worker_pid=123, worker_start_ticks=456)
     store.finish("a" * 6, exit_code=1)
     with sqlite3.connect(store.path) as conn:
@@ -157,8 +155,11 @@ def test_event_storage_failure_does_not_break_error_result(
     assert result["error"]["code"] == "cancelled"
 
     _emit_error(
-        "MontyTypingError", "typed error", category="monty",
-        store=store, execution_id="aaaaaa",
+        "MontyTypingError",
+        "typed error",
+        category="monty",
+        store=store,
+        execution_id="aaaaaa",
     )
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "MontyTypingError"
     assert "ERROR_EVENT persistence failed" in caplog.text

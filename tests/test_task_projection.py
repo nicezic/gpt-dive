@@ -79,9 +79,7 @@ def test_active_tracked_tasks_projects_structured_views_with_session_scoping(
         }
         for index in range(12)
     ]
-    monkeypatch.setattr(
-        app, "_task_list", lambda: list(raw_tasks)
-    )
+    monkeypatch.setattr(app, "_task_list", lambda: list(raw_tasks))
 
     # Unscoped projection (no ctx) returns all tasks
     all_views = asyncio.run(app._tracked_tasks_snapshot())

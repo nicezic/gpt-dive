@@ -884,12 +884,24 @@ def test_code_mode_output_discriminator_resolves_union_types() -> None:
 def test_error_category_is_derived_from_code(code: str, category: str) -> None:
     error = app.CodeModeErrorDetails(code=code, message="sample")
     assert error.category == category
-    assert list(error.model_dump()) == ["category", "code", "message", "detail", "recovery"]
-    assert list(json.loads(error.model_dump_json())) == [
-        "category", "code", "message", "detail", "recovery"
+    assert list(error.model_dump()) == [
+        "category",
+        "code",
+        "message",
+        "detail",
+        "recovery",
     ]
-    assert app.CodeModeErrorDetails(code=code, message="sample", category="wrong").category == "wrong"
-
+    assert list(json.loads(error.model_dump_json())) == [
+        "category",
+        "code",
+        "message",
+        "detail",
+        "recovery",
+    ]
+    assert (
+        app.CodeModeErrorDetails(code=code, message="sample", category="wrong").category
+        == "wrong"
+    )
 
 
 def test_legacy_code_mode_output_fields_are_not_accepted() -> None:
@@ -997,7 +1009,10 @@ def test_unrecognized_upstream_error_metadata_passes_through(
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
     create_terminal_code_mode_record(
-        manager, execution_id="fresh1", cwd=tmp_path, label="future error",
+        manager,
+        execution_id="fresh1",
+        cwd=tmp_path,
+        label="future error",
         envelope={
             "v": CODE_MODE_WORKER_PROTOCOL,
             "ok": False,

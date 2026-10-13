@@ -303,9 +303,7 @@ class ExecutionManager:
     ) -> dict[str, Any]:
         result = self._code_mode_projection(record, payload)
         if result.get("status") == "failed":
-            self.store.record_error_event(
-                str(payload["execution_id"]), result["error"]
-            )
+            self.store.record_error_event(str(payload["execution_id"]), result["error"])
         return result
 
     @staticmethod

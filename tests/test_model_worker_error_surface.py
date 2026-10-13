@@ -17,12 +17,15 @@ import gpt_dive.subagent_worker as subagent_worker
     [(model_call_worker, "_run_worker"), (subagent_worker, "_run")],
 )
 def test_model_http_error_survives_worker_boundary(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-    module: object, function: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    module: object,
+    function: str,
 ) -> None:
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"alias":"test"}'))
     monkeypatch.setattr(
-        module, function,
+        module,
+        function,
         AsyncMock(side_effect=ModelHTTPError(429, "test-model")),
     )
     module.main()
