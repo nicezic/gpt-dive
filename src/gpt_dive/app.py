@@ -108,14 +108,13 @@ mcp = MCPServer(
     name="gpt-dive",
     title="GPT Dive",
     description=(
-        "GPT Dive provides access to the user's local WSL2 environment "
-        "through structured MCP tools."
+        "GPT Dive: structured MCP tools for the user's real local WSL2 environment."
     ),
     instructions=(
-        "This server operates on the user's real WSL2 machine. "
-        "Call bootstrap before using code_mode in a new session. "
-        "Follow live tool schemas; never guess capability arguments. "
-        "Inspect error diagnostics and prior side effects before retrying. "
+        "User's real WSL2 machine. "
+        "CRITICAL: gz64 ONLY on explicit user request; NEVER self-approve, auto-fallback, or bypass safety checks. "
+        "Call bootstrap before using code_mode in a new session; repeat on drift/mistakes. "
+        "Follow live tool schemas; check prior side effects before retrying. "
         "Never use wsl_exec without explicit user authorization."
     ),
 )
@@ -1020,18 +1019,24 @@ async def _mcp_wsl_exec(
     name="code_mode",
     title="Pydantic Monty Code Mode",
     description=(
-        "Launch one always-durable Pydantic Monty Execution. label and code are required. "
+        "Execute Pydantic Monty through the registered capabilities below. "
+        "Work is tracked by an always-durable Execution; label and code are required. "
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
         "a running status for the same continuing Execution; delivery='task' publishes that Task "
         "immediately. Returns status ('completed' | 'running' | 'failed') and result. On "
         "status='failed', preserve error.category, error.code, error.message, "
         "and error.detail; "
-        "execution_id is the diagnostic correlation handle. Ongoing background work appears "
-        "in tracked_tasks as passive HUD without need for polling. "
+        "execution_id identifies the existing work. Published Tasks may appear as tracked_tasks "
+        "snapshots on subsequent code_mode replies, not as live notifications; use the separate "
+        "task tool to retrieve results when needed. "
         "Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
-        "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data, and use asyncio.gather "
-        "only for independent work. The final JSON-safe expression is result; print() is ignored. "
+        "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data. Batch independent "
+        "operations for one decision (asyncio.gather only for independent work). Inspect "
+        "results before a result-dependent next call. The final JSON-safe expression is result; "
+        "print() is ignored. "
+        "On tool-use errors, separate confirmed facts from unknowns, identify suspect assumptions, "
+        "and explain the proposed correction before retrying. "
         "invalid_request means no Execution was accepted (no execution_id); "
         "MontyTypingError means Monty rejected the code before execution; check diagnostics[].\n\n"
         "Available Monty capabilities (generated from the live callable contract):\n```python\n"
@@ -1239,9 +1244,14 @@ async def _mcp_task(
 @mcp.tool(
     title="Bootstrap from Local WSL2 Wiki",
     description=(
-        "Call `bootstrap` before `code_mode` in a fresh ChatGPT Web session when using the "
-        "structured GPT Dive harness. It loads the compact, model-visible preload map plus "
-        "foundational orientation from the trusted local Wiki."
+        "Call `bootstrap` before `code_mode` in a fresh ChatGPT Web session. "
+        "This is a standalone MCP tool, not a Monty capability. Call once at the start; "
+        "call again if context becomes unreliable or tool-use mistakes occur, not per message. "
+        "ChatGPT tool-dispatch example: `text(await tools.mcp__dive__bootstrap({}));` "
+        "Pass through the complete result: stdout contains Wiki instructions; "
+        "preloaded_files contains filenames only. "
+        "Flow: ChatGPT dispatcher -> MCP tunnel -> bootstrap -> Wiki. "
+        "code_mode separately creates a durable Monty Execution."
     ),
 )
 def bootstrap() -> dict[str, Any]:

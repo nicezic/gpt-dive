@@ -337,7 +337,7 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
 ) -> None:
     manager = install_manager(monkeypatch, tmp_path / "executions")
     monkeypatch.setattr(
-        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.05
+        app, "_GPT_DIVE_CODE_MODE_AUTO_INLINE_WAIT_BEFORE_TASK_PUBLICATION_SEC", 0.0
     )
     monkeypatch.setattr(
         app, "_GPT_DIVE_CODE_MODE_MCP_RESPONSE_INTERNAL_PROCESSING_BUDGET_SEC", 1.0
@@ -345,8 +345,8 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
 
     async def scenario() -> None:
         outcome = await app.code_mode(
-            label="slow arithmetic",
-            code="await run_command('sleep 0.12; printf SLOW')",
+            label="auto wait expiration",
+            code="'SLOW'",
             cwd=str(tmp_path),
         )
         assert isinstance(outcome, app.CodeModeRunning)
@@ -368,7 +368,7 @@ def test_inline_wait_expiry_publishes_same_continuing_execution(
         assert isinstance(second, app.CodeModeCompleted)
         assert first.model_dump() == second.model_dump()
         assert first.execution_id == execution_id
-        assert first.result["stdout"] == "SLOW"
+        assert first.result == "SLOW"
         assert set(first.model_dump()) == {"status", "execution_id", "result"}
 
         dismissed = await app.task(
