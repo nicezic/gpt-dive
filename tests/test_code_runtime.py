@@ -384,22 +384,13 @@ def test_council_emit_uses_explicit_capability_seam(
     assert council["message"] == "round"
 
 
-def test_gz64_capability_round_trip(tmp_path: Path) -> None:
-    import base64
-    import gzip
-
+def test_gz64_rejects_unapproved_permission(tmp_path: Path) -> None:
     registry = registry_for_test(tmp_path)
-    runtime = code_runtime
-    command = "echo 'gz64_verified'"
-    compressed = gzip.compress(command.encode("utf-8"))
-    payload = base64.b64encode(compressed).decode("utf-8")
-
-    result = asyncio.run(
-        runtime.run(
-            "res = await gz64(payload=PAYLOAD)\nres",
-            registry,
-            payload=payload,
+    assert "user_permission" in registry.describe()["gz64"]["signature"]
+    with pytest.raises(MontyRuntimeError, match="exact user_permission"):
+        asyncio.run(
+            code_runtime.run(
+                "await gz64(payload='!', user_permission='unapproved')",
+                registry,
+            )
         )
-    )
-    assert result["exit_code"] == 0
-    assert result["stdout"].strip() == "gz64_verified"
