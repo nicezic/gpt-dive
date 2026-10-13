@@ -120,8 +120,12 @@ def main() -> None:
     try:
         result = asyncio.run(_run(payload))
     except AgentRunError as exc:
-        error = {"category": "model", "code": type(exc).__name__,
-                 "message": "Subagent model run failed.", "recovery": "inspect_first"}
+        error: dict[str, str | int] = {
+            "category": "model",
+            "code": type(exc).__name__,
+            "message": "Subagent model run failed.",
+            "recovery": "inspect_first",
+        }
         if isinstance(exc, ModelHTTPError):
             error["http_status"] = exc.status_code
         result = {"ok": False, "error": error}

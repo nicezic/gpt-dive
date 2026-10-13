@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from pydantic_monty import MontyError, MontyTypingError
+from pydantic_monty import MontyError, MontyRuntimeError, MontyTypingError
 
 from .code_capabilities import build_code_registry, code_runtime
 from .code_mode_errors import WORKER_ERROR_MESSAGES, category_for, recovery_for
@@ -129,7 +129,7 @@ def main() -> None:
     except MontyTypingError as exc:
         try:
             diagnostics = _typing_diagnostics(exc)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             diagnostics = []
         _emit_error(
             "MontyTypingError",
@@ -148,17 +148,19 @@ def main() -> None:
             "code": type(inner).__name__,
             "message": str(inner),
         }
-        if hasattr(exc, "traceback"):
+        if isinstance(exc, MontyRuntimeError):
             frames = exc.traceback()
             if frames:
                 frame = frames[-1].dict()
-                diagnostic["location"] = {
-                    "row": max(1, frame["line"] - 1),
-                    "column": frame["column"],
-                }
+                line, column = frame["line"], frame["column"]
+                if isinstance(line, int) and isinstance(column, int):
+                    diagnostic["location"] = {
+                        "row": max(1, line - 1),
+                        "column": column,
+                    }
         _emit_error(
             type(exc).__name__,
-            exc.display() if hasattr(exc, "display") else str(exc),
+            exc.display() if isinstance(exc, MontyRuntimeError) else str(exc),
             category="monty",
             recovery="inspect_first",
             message=str(exc),
