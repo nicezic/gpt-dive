@@ -32,6 +32,10 @@ Keep elsewhere:
 - `adr/README.md` — ADR admission rule and scope boundary.
 - `adr/0004-code-mode-host-filesystem-policy.md` — Code Mode host filesystem policy: broad non-secret reads/writes across the host, with shared credential/secret denial.
 
+## Upstream source references
+
+Pydantic AI/Harness의 upstream 소스·문서 clone은 `~/ref/` 아래에 둔다. Python 런타임 의존성은 각 프로젝트의 `uv`/가상환경이 소유하며, clone은 구현·호환성 조사용 참조다. 참조 경로만을 정한 구 ADR 0002의 기록은 Git 이력에 남긴다.
+
 ## Authority rule
 
 The repository source/tests and current dependency lock are authoritative for current behavior. These docs explain architecture and maintenance intent; they must not override live code or upstream package contracts.

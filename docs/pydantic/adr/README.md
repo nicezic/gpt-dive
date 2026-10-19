@@ -2,6 +2,8 @@
 
 This directory contains **long-lived GPT Dive-specific architecture decisions about Pydantic AI / Pydantic AI Harness integration**.
 
+Cross-domain decision ownership: [GPT Dive ADR index](../../ADR.md).
+
 It does not replace the normal implementation docs in `docs/pydantic/`.
 
 ## Admission rule

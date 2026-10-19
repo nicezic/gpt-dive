@@ -1,12 +1,12 @@
 ---
-title: ADR — Code Mode Host Filesystem Policy
+title: ADR 0004 — Code Mode Host Filesystem Policy
 created: 2026-08-14
 updated: 2026-08-16
 type: decision
 status: accepted
 ---
 
-# ADR — Code Mode Host Filesystem Policy
+# ADR 0004 — Code Mode Host Filesystem Policy
 
 ## Decision
 

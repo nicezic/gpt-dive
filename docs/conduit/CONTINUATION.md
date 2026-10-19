@@ -62,6 +62,4 @@ Runtime stabilization and live acceptance come first. After that, resume the pla
 - `docs/runtime/adr/0004-always-durable-code-mode-runtime.md`
   - Authority for the shared Execution/Task identity and lifecycle now consumed here.
 - `docs/conduit/adr/0001-conversation-driven-task-pull.md`
-  - Preserves why conversation-driven refresh and non-destructive retrieval exist; its historical collect naming is superseded by current `get`.
-- `docs/conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md`
-  - Preserves the accepted cross-surface awareness and OEP direction.
+  - Conversation-driven refresh, cross-surface TrackedTasks/OEP, and non-destructive `get`; historical collect/ack is no longer the public contract.

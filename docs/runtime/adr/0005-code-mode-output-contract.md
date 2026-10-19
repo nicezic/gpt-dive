@@ -1,57 +1,46 @@
 ---
-title: ADR 0005 — Code Mode Output Contract
+title: ADR 0005 — Monty Data and MCP Output Boundary
 created: 2026-08-29
-updated: 2026-10-10
+updated: 2026-10-20
 type: decision
 status: accepted
 ---
 
-# ADR 0005 — Local Reduction and Code Mode Output
+# ADR 0005 — Monty Data and MCP Output Boundary
 
-**Decision:** Code Mode는 여러 capability의 큰 결과를 **Monty 프로그램 내부에서 선별·조합한 후 작은 최종 표현식만** 호출자에게 전달하는 programmable reduction boundary다. 출력을 예쁘게 꾸미는 것보다 AI가 단순한 계약으로 정확히 후속 행동하는 것이 우선이다.
+## Decision
+
+**Monty 내부의 Capability 결과는 AI에게 자동 출력하지 않고, 중간 데이터로 온전하게 보존한다. 크기 제한은 최종 MCP 응답 경계에만 적용한다.** Code Mode는 큰 파일·로그를 내부에서 비교/축약하고 마지막 JSON-safe 표현식만 반환하는 programmable reduction boundary다.
 
 ~~~text
-await capability A/B/C → intermediate data stays inside Monty
-                            ↓
-                    filter / combine / inspect
-                            ├─ optional print() → console/progress
-                            └─ final expression → result
-
-Execution/Task lifecycle → ADR 0004 (별도 계층)
-TrackedTasks awareness  → Conduit ADR 0002 (별도 계층)
+Capability 결과(내부 데이터, 자동 절단 금지)
+   → Monty 분석·선별·조합
+   → 마지막 expression = result
+   → MCP 최종 응답: 출력 상한과 불완전성 안내
+   → ChatGPT context
 ~~~
 
-## Why / observed failures
+- `status=completed`는 실행 완료이지 **응답이 전부 전달됐다는 보장**이 아니다. 출력이 잘리면 별도 표시와 다음 조회 지침이 있어야 한다.
+- 현재 구현의 상한·`output_truncated`·`output_guidance`는 `src/gpt_dive/mcp_models.py`와 [Runtime CONTEXT](../CONTEXT.md)가 소유한다. ADR은 상한 숫자를 고정하지 않는다.
+- 잘린 미리보기에는 시작·중간 생략·끝 경고를 넣어 사람이든 AI든 불완전성을 쉽게 식별하게 한다. 구체 경고 문구와 Head/Tail 비율은 현행 코드가 소유한다.
+- 큰 구조화된 최종 결과는 전송용 preview로 바뀔 수 있다. 잘린 응답을 완전한 원문/JSON이나 덮어쓰기 입력으로 사용해서는 안 된다.
+- `task(get)`도 같은 최종 전송 제한을 받는다. 이를 반복 호출하는 것은 축약·복구 수단이 아니다.
+- 결과의 원문 구간은 기존 Execution 보존 파일을 읽는 Code Mode `read_execution_result` Capability로 조회하며, `next_offset`을 사용한다. 별도의 MCP Tool·Task·DB는 만들지 않는다.
+- `print()`는 최종 결과 전달 수단이 아니다. 현행 Code Mode는 print 출력을 AI 결과로 전달하지 않는다.
+- `run_command`의 stdout/stderr와 최종 Monty `result`는 서로 다른 데이터다. 실행 요약·증거의 소유권은 [ADR 0008](0008-raw-execution-evidence-recovery.md)에서 구분한다.
+- 출력 필드의 어휘는 `status`, `result`, `error`로 일관되게 사용한다. `tracked_tasks`는 result 안이 아닌 별도 인지 필드다.
 
-과거 Code Mode는 capability 결과와 `print()` 출력, 최종 결과를 중복 전달해 model context를 부풀렸다. `result.result.result`와 불필요한 metadata는 모델의 필드 선택·분기 오류를 유발했다. 초기 TrackedTasks는 `content[]`에 주입되었지만 실제 ChatGPT connector에서는 보이지 않는 경우가 있었다. 이는 출력 계산과 Task awareness의 **서로 다른 문제**다.
+## Why
 
-## Contract
+과거 구현에서 capability 결과와 print, 최종 값을 중복 중계해 컨텍스트를 낭비하고 필드 오판을 유발했다. 2026-10 파일 손상 사례에서는 중간 `read_file` 데이터가 AI 출력 제한보다 먼저 잘려 파일 전체로 오인됐다. AI를 위한 출력 상한을 내부 데이터의 완전성과 혼동하면 안 된다.
 
-1. **Capability return:** Monty 내부 값이다. 각각을 자동으로 model-visible output에 중계하지 않는다.
-2. **`asyncio.gather()`:** 독립된 비동기 호출에 사용한다. 의존 작업은 순차적으로 await한다.
-3. **`print()`:** 명시적 console/progress. 최종 result에 stdout 덤프를 자동 첨부하지 않는다.
-4. **Final expression:** 정상 프로그램 결과이며 string/list/dict 같은 JSON-safe 값으로 반환한다.
-5. **Bounding:** 큰 intermediate value는 Monty 안에서 그대로 다룰 수 있어야 한다. Web-facing 제한이나 spill 정책은 **최종 결과 경계**에 적용하며, retained result와 preview를 혼동하지 않는다.
-6. **동일 결과:** inline 완료와 나중의 `task(get)`는 동일 Execution의 result를 조회한다. Publication은 결과 의미를 바꾸지 않는다.
-7. **단순 public shape:** 실제 소스 `src/gpt_dive/app.py`의 Pydantic union을 기준으로 `status = completed | running | failed`와 `execution_id`를 사용한다. 완료는 `result`, 진행 중은 `guidance`, 실패는 `error{code,message,detail,recovery}` 및 행동 지침을 담는다.
-8. **Awareness:** `tracked_tasks`는 필요할 때 top-level sibling으로 추가되는 부가 정보이며 프로그램 `result` 안에 넣지 않는다. 항목이 없으면 현재 Pydantic 직렬화에서는 필드를 생략할 수 있다.
-9. **Diagnostic:** 실패의 `execution_id`와 구체적 오류 증거를 보존한다. 실패 후 기존 실행의 부작용을 확인하기 전에 무조건 retry하지 않는다.
-10. **SDK wrapper:** model-facing structured output에 의미 없는 중첩 래퍼를 하나 더 추가하지 않는다. 현재 실물 schema를 검증한다.
+## Rejected
 
-## Rejected alternatives
+- 모든 Capability 반환값을 Web 컨텍스트 크기에 맞게 자르기: Monty 내부 계산과 파일 무결성 침해.
+- 모든 stdout 또는 print를 최종 `result`에 재주입: 중복 출력과 의미 혼란.
+- 별도 transcript·spill 프레임워크를 선제 도입: 관찰된 필요보다 복잡하다.
+- Task 상태와 프로그램 결과를 한 객체로 합치기: 실행 수명과 전송 의미 혼합.
 
-- 모든 capability 반환을 자동 출력: local reduction 효과 상실.
-- `print()` 누적분을 final stdout에 재주입: console/result 혼동과 중복 토큰.
-- 먼저 범용 ordered transcript/event subsystem 구축: 확인된 필요보다 복잡성 증가.
-- 모든 capability에 Web-facing truncate/spill 강제: Monty의 중간 계산 불능.
-- Task awareness와 프로그램 출력을 하나의 프로토콜로 합치기: 서로 다른 수명·권위 혼합.
-- 출력에 과도한 execution metadata 및 nested `result` envelope 넣기: 모델 오류 표면 확대.
+## Ownership
 
-## Authority and historical note
-
-- [ADR 0004](0004-always-durable-code-mode-runtime.md) — durable lifecycle 소유.
-- [Conduit ADR 0002](../../conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md) — passive Task awareness.
-- [Tool output limits](../../pydantic/tool-output-limits.md) — 별도 SubAgent 정책과 미구현 final spill.
-- `src/gpt_dive/app.py`와 `src/gpt_dive/code_runtime.py` — **현재** 응답 필드와 Monty 실행 구현.
-
-이 ADR은 여러 번의 output shape 리뉴얼을 거쳤다. 과거 `kind: completed|task|error`와 `output` 필드 등의 이전 wire 계약, 2026-08-31 connector 관찰, 교정된 토론 원문은 Git 이력으로 복원 가능하지만 현재 호출 계약으로 쓰지 않는다.
+[ADR 0011](0011-read-file-raw-default-and-monty-alignment.md)은 파일 원문 읽기, [ADR 0004](0004-always-durable-code-mode-runtime.md)는 실행 수명, [architecture](../architecture.md)는 현재 구현 경계를 소유한다. 옛 print/console 명칭과 출력 설계 변경 근거는 Git 이력에 있다.

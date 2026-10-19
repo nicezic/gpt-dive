@@ -1,7 +1,7 @@
 ---
-title: ADR 0006 — Automatic TrackedTasks Projection
+title: ADR 0006 — Passive TrackedTasks Awareness
 created: 2026-08-30
-updated: 2026-10-11
+updated: 2026-10-20
 type: decision
 status: accepted
 ---
@@ -14,7 +14,7 @@ status: accepted
 start background Execution → Task published
    │
    └─ SOL continues other work
-        └─ later @dive/@c result carries TrackedTasks
+        └─ later supported tool result carries TrackedTasks
              └─ inspect task(get) only when useful
                   └─ explicit task(dismiss) after handling
 ~~~
@@ -38,7 +38,7 @@ start background Execution → Task published
 
 ## Evidence / reference
 
-- [Conduit ADR 0002](../../conduit/adr/0002-trackedtasks-refresh-and-opportunistic-evidence-pickup.md) — 원래 OEP 동기.
+- [Conduit ADR 0001](../../conduit/adr/0001-conversation-driven-task-pull.md) — 원래 OEP 동기.
 - [Runtime architecture](../architecture.md) — 현재 실행·Task projection 동작.
 - `src/gpt_dive/app.py` — 정확한 `tracked_tasks` 출력 schema/조건.
 

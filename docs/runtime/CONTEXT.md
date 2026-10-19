@@ -80,7 +80,7 @@ _피할 표현_: Job list; Execution list; Web-facing projection을 Task store �
 
 **CodeModeOutput**은 Code Mode 실행 및 Task 조회(`task(get)`)가 반환하는 단일화된 공개 출력 계약이다. Discriminator는 실행 상태를 가리키는 **`status`**다.
 
-- `status="completed"`: 실행 완료. `result`에 최종 프로그램 결과 전달.
+- `status="completed"`: 실행 완료. `result`에 최종 프로그램 결과 전달. MCP 공개 결과가 32KiB를 초과하면 output_truncated=true와 output_guidance가 함께 전달된다. 실행 성공과 출력 완전성은 별개다. 잘린 결과는 `output_guidance`와 동일한 세 단계 경고(🚨 1/3, 2/3, 3/3)로 Head 최대 30KiB/Tail 최대 1KiB 미리보기만 표시하며, 중간은 생략된다. 이 미리보기는 파일 쓰기·편집 앵커로 사용 금지다. 보존된 원본 결과가 필요하면 새 Code Mode의 `read_execution_result(execution_id, offset, limit)`로 일부만 재조회하고 `next_offset`으로 이어간다. 재실행은 하지 않는다.
 - `status="running"`: 백그라운드 진행 중. `state="running"`, `elapsed_seconds`, 그리고 `task(get)`을 안내하는 `guidance` 제공.
 - `status="failed"`: 거절·실패. `error: {category, code, message, detail, recovery}`와 `guidance` 제공. **수락 전 입력 거절은 `execution_id`가 없다**. 수락된 실행에는 반드시 ID가 있다.
 

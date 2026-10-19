@@ -1,86 +1,36 @@
 ---
-title: ADR 0011 — Read File Raw Text Default & Monty Wire Alignment
+title: ADR 0011 — Lossless Raw File Read for Monty
 created: 2026-09-06
-updated: 2026-09-06
+updated: 2026-10-20
 type: decision
 status: accepted
 ---
 
-# ADR 0011 — Read File Raw Text Default & Monty Wire Alignment
-
-## Goal
-
-Code Mode 안에서 `read_file`의 반환값을 `json.loads` 파싱이나 `edit_file`의 `old_text` 등 후속 파이프라인에 즉시 전달할 수 있도록 데이터 불일치(Impedance Mismatch)를 제거하고, multiline exception 시 발생하던 upstream Monty wire protocol 직렬화 버그(#631)를 해결하여 안정적인 에러 피드백을 보장한다.
-
-```text
-[과거: 연쇄 실패 및 에러 마스킹]
-read_file(줄번호+헤더 강제) ──> edit_file(old_text 매칭 실패: ValueError) ──> Monty Wire Crash (Issue #631)
-                                                                                  │
-                                에이전트가 원인을 모른 채 read_file 기피 & cat 도피 ◄─────┘
-
-[현재: 원자적 raw 텍스트 & 안정적 예외 전파]
-read_file(raw 텍스트 기본값) ──> edit_file / json.loads 즉시 호환
-                                └─ 만약 예외 발생 시 ──> Monty 0.0.23+ 정상 Traceback 반환
-```
-
-## Context & Problem
-
-### 1. Chat Prompt Tool vs Code Mode의 Impedance Mismatch
-* **문제**: Harness의 기존 `read_file`은 대화형 LLM에게 줄번호를 보여주기 위해 만들어진 뷰어였다 (`[path | lines | hash]` 헤더 및 각 줄 앞에 `\t1:` 접두사 추가).
-* **결과**: Python 코드 안에서 `read_file`을 호출할 때:
-  1. `json.loads(await read_file("config.json"))` 실행 시 `JSONDecodeError` 발생.
-  2. `content = await read_file(...)`로 읽은 텍스트를 `edit_file(target, old_text=content, new_text=...)`로 넘기면 줄번호 접두사 때문에 원문 불일치(`ValueError: old_text not found`) 발생.
-
-### 2. Upstream Monty Wire Protocol Crash (Issue #631)
-* **문제**: `edit_file` 등 multiline 함수 호출에서 `ValueError` 예외가 발생할 때, `pydantic-monty <= 0.0.21`은 예외 AST span 계산 시 `StackFrame.end.column < start.column`이 되어 Pydantic 유효성 검증 실패로 런타임 프로세스 자체가 크래시됨.
-* **증상**: 에이전트는 `old_text not found`라는 진짜 원인을 보지 못하고 `RuntimeError: Monty runner failed`만 수신.
-* **오판 유도**: 에이전트는 `read_file` 또는 Monty 자체가 불안정하다고 판단하여 `run_command("cat ...")`으로 우회하는 악순환 발생.
-
----
+# ADR 0011 — Lossless Raw File Read for Monty
 
 ## Decision
 
-### 1. `read_file` 기본값을 Raw Text로 전환
-[`code_capabilities.py`](file:///home/nicezic/gpt-dive/src/gpt_dive/code_capabilities.py)의 `read_file` 인터페이스를 개편하여 기본적으로 순수 파일 원문을 반환한다.
+`read_file(path)` 기본 모드는 **줄번호·헤더·잘림 안내가 섞이지 않은 원문 텍스트**를 Monty 내부에 전달한다. `json.loads`, 파싱, `edit_file(old_text=...)`의 입력으로 직접 사용하기 때문이다. AI-facing MCP 출력 제한을 이 내부 문자열에 적용하지 않는다([ADR 0005](0005-code-mode-output-contract.md)).
 
-```text
-read_file(path, offset=1, limit=None, line_numbers=False, raw=None)
-├─ line_numbers=False (기본값) ──→ 순수 파일 원문 반환 (offset/limit line slicing 지원)
-└─ line_numbers=True (또는 raw=False) ──→ 헤더 및 줄번호 포맷팅 반환 (사람/프롬프트 점검용)
-```
+- `offset=0`이 시작 위치다. `offset`과 `limit`은 **0-based 줄 오프셋 / 줄 수** 기준이며, raw 결과도 동일하다.
+- `line_numbers=True` 또는 `raw=False`는 Harness의 번호·메타데이터가 추가된 **표시용 뷰**다. 편집 앵커·전체 파일 원문으로 사용하지 않는다.
+- raw 읽기는 원문 바이트를 UTF-8로 엄격히 해석한다. NUL 바이트나 유효하지 않은 UTF-8을 안내 문자열·대체 문자로 조용히 변형하지 않고 오류로 거부한다.
+- 큰 파일은 메모리 보호를 위해 읽기 **전에** 크기 검사를 한다. 정확한 제한값은 `code_capabilities.py`/현재 architecture 문서가 소유한다.
+- `write_file`과 `edit_file` 및 `expected_hash` 충돌 검사는 기존 Pydantic Harness를 재사용한다.
 
-- `offset`과 `limit`은 raw 모드에서도 1-indexed 라인 슬라이싱으로 정확히 작동한다.
-- 하위 호환성을 위해 `raw: bool | None` 인자도 지원하되, `line_numbers: bool`을 권위 있는 canonical 매개변수로 삼는다.
+## Why
 
-### 2. Upstream 패키지 최신화
-- `pydantic-monty >= 0.0.23`: multiline exception의 column span 직렬화 버그(#631) 수정본 반영.
-- `pydantic-ai-harness >= 0.29.0`, `mcp >= 2.1.1`: 최신 도구 체인 및 예외 체이닝(`UnexpectedToolError.__cause__`) 정합성 확보.
+Harness의 기본 파일 뷰어는 사람/LLM에게 줄번호와 hash를 보여 주므로 raw 파서나 `edit_file`의 정확한 텍스트와 다르다. 2026-10 사고에서는 raw 읽기가 파일 전체를 메모리에 읽은 뒤 256KiB를 잘라 안내 문구와 함께 반환했고, 잘린 문자열이 완전한 파일로 오인되어 쓰기 손상이 발생했다. 이 조기 절단을 제거했다.
 
-### 3. SQLite 중심의 에러 감사(Audit) 체제 확립
-- 에러 케이스를 매 턴마다 마크다운 파일(`ERROR_CASE.md`)에 수기 기록하던 방식을 폐지.
-- SQLite SSOT(`~/.local/state/gpt-dive/runtime.sqlite3`의 `executions` 테이블)를 단일 진실 공급원으로 삼고, 주기적 감사 쿼리를 통해 체계적으로 트러블슈팅을 수행한다.
+잘못된 UTF-8을 U+FFFD로 대체하거나 바이너리 파일에 설명 문장을 정상 반환하면 동일한 데이터 오인 위험이 있다. 엄격한 실패가 안전하다.
 
----
+## Rejected
 
-## Consequences
+- Harness의 줄번호 뷰를 raw 기본값으로 사용: 파싱과 문자열 앵커가 실패한다.
+- 내부 raw 값에 출력용 cap/preview 문자열 삽입: 데이터 무결성 훼손.
+- 별도 바이너리 형식 감지 라이브러리: NUL+UTF-8 검사가 현재 범위에 충분하다.
+- 잘못된 인코딩을 추측해 자동 수정: 원본 의미가 바뀔 수 있다.
 
-1. **기계 소비 정합성 확보**:
-   - `json.loads(await read_file(...))` 및 AST/정규식 파싱이 별도 strip 없이 100% 작동.
-   - `read_file` $\rightarrow$ `edit_file` 앵커 전달 파이프라인의 원문 일치 보장.
-2. **토큰 소모 최적화**:
-   - 줄번호 및 메타데이터 헤더 오버헤드가 제거되어 파일 읽기 토큰 소모량이 약 20% 절감됨.
-3. **안정적인 장애 격리**:
-   - multiline 예외 발생 시에도 Monty가 크래시되지 않고 정확한 파이썬 Traceback(`ValueError: old_text not found ...`)을 모델에게 반환하여 자가 교정(self-healing)이 가능해짐.
-4. **선택적 줄번호 검토 유지**:
-   - 모델이 코드 위치 파악을 위해 줄번호가 명시적으로 필요한 경우 `line_numbers=True` 옵션으로 언제든 포맷팅 뷰를 호출 가능.
+## Compatibility / evidence
 
----
-
-## References
-
-- [`src/gpt_dive/code_capabilities.py`](file:///home/nicezic/gpt-dive/src/gpt_dive/code_capabilities.py#L89-L115)
-  - `read_file` raw 텍스트 기본 구현 및 `line_numbers` 처리 로직.
-- [`tests/test_code_runtime.py`](file:///home/nicezic/gpt-dive/tests/test_code_runtime.py#L308-L325)
-  - raw 기본값, `line_numbers=True`, offset/limit 슬라이싱 단위 테스트.
-- [Upstream Issue `pydantic/monty#631`](https://github.com/pydantic/monty/issues/631)
-  - Wire protocol `StackFrame.end.column` 직렬화 검증 실패 및 픽스.
+원래 ADR 0011이 다룬 Monty 멀티라인 예외 전파 문제는 [upstream issue 631](https://github.com/pydantic/monty/issues/631)와 Git 이력에 남는다. 이 결정은 현재 파일 읽기 무결성으로 범위를 명확히 했다. [architecture](../architecture.md)에 실제 제한과 표시용 경로가 기록된다. 테스트는 `tests/test_code_runtime.py`가 소유한다.

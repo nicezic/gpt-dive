@@ -71,7 +71,7 @@ Conduit
 | Provider aliases and Pydantic AI integration | [Providers](docs/pydantic/providers.md) |
 | Conduit Room and collaborative discussion | [Room README](docs/conduit/room/README.md) |
 | Service operation, restart, evidence, troubleshooting | [Runtime operations](docs/runtime/operations.md) and [timeouts](docs/runtime/timeouts.md) |
-| Rationale for durable execution choices | [Runtime ADRs](docs/runtime/adr) |
+| Architecture decisions and ownership | [ADR index](docs/ADR.md) |
 
 For **current behavior**, prefer source, tests, and the live MCP contract over historical plans, ADR records, or previous-session handoffs. Wiki preload configuration determines what a new AI session actually receives; repository docs are not loaded automatically.
 

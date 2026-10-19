@@ -125,7 +125,7 @@ Other 4
 
 ### Filesystem 경계
 
-Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다. `read_file`은 기본적으로 헤더·줄번호 없는 원문 텍스트(`line_numbers=False`)를 반환해 `json.loads`와 `edit_file(old_text=...)`에 그대로 전달할 수 있다(ADR 0011). `code_file_read.py`의 raw adapter가 Harness와 동일한 공개 `WorkspaceBackend.read_bytes()`를 사용하고, 실제 `edit_file`·`write_file` 및 충돌 방지용 `expected_hash`는 Harness가 담당한다. 줄번호가 필요할 때만 `line_numbers=True`를 사용한다(이 결과는 `old_text`에 사용할 수 없음). `offset`은 **0-based 줄 오프셋**이며, 256 KiB를 넘는 raw 결과의 절단 안내문은 파일 내용이 아니므로 `offset`/`limit`으로 실제 편집 구간을 다시 읽어야 한다.
+Relative path는 `cwd`에서 해석한다. FileSystem과 Monty의 host-backed OS는 일반 OS permission 범위에서 host read/write를 허용하되, 공통 credential/secret pattern은 차단한다. Recursive search는 너무 넓은 root인 `/`와 `/mnt/c`를 거부한다. `read_file`은 기본적으로 헤더·줄번호 없는 원문 텍스트(`line_numbers=False`)를 반환해 `json.loads`와 `edit_file(old_text=...)`에 그대로 전달할 수 있다(ADR 0011). `code_file_read.py`의 raw adapter가 Harness와 동일한 공개 `WorkspaceBackend.read_bytes()`를 사용하고, 실제 `edit_file`·`write_file` 및 충돌 방지용 `expected_hash`는 Harness가 담당한다. 줄번호가 필요할 때만 `line_numbers=True`를 사용한다(이 결과는 `old_text`에 사용할 수 없음). `offset`은 **0-based 줄 오프셋**이며, raw read_file은 Monty 내부에 256KiB 절단 없이 전체 원문을 제공한다. 단 1GB 이상 파일은 메모리 보호를 위해 읽기 전에 거부한다. MCP 최종 응답만 32KiB로 제한되며 초과 시 output_truncated와 output_guidance로 불완전한 응답을 알린다. 이 경우 Head 최대 30KiB/Tail 최대 1KiB의 경고 미리보기와 `read_execution_result`의 안전한 재조회 offset을 함께 안내한다.
 
 ### Direct command 경계
 

@@ -1,86 +1,42 @@
 ---
-title: ADR — Conversation-Driven Task Pull for ChatGPT Web
+title: ADR 0001 — Conversation-Driven Task Awareness
 created: 2026-08-16
-updated: 2026-08-28
+updated: 2026-10-20
 type: decision
 status: accepted
 ---
 
-# ADR — Conversation-Driven Task Pull for ChatGPT Web
-
-> Runtime renewal note: the pull model and non-destructive retrieval remain accepted. The current API names are `get(execution_id)` and terminal `dismiss(execution_id)`; historical `collect`/`ack` and `task_id` wording below records the canary, not the live contract.
+# ADR 0001 — Conversation-Driven Task Awareness
 
 ## Decision
 
-Use **conversation-driven task pull** as Conduit's task-refresh model for ChatGPT Web.
+ChatGPT Web의 사용자 대화와 일반 도구 호출을 **Task 상태를 다시 보는 자연스러운 기회**로 사용한다. 별도 서버 push나 매번 명시적인 polling 호출을 필수로 만들지 않는다. 이 결정은 옛 Conduit ADR 0001의 conversation-driven pull과 ADR 0002의 cross-surface TrackedTasks/OEP를 통합한다.
 
-A normal Web SOL turn may start detached work through `@c`, continue reasoning in the same user turn, and call `@c` again later in that turn or on a later user Enter. Every successful `@c` call returns a compact task snapshot, so completed work is rediscovered through ordinary conversation activity rather than server-initiated wake-up.
+~~~text
+Task를 가진 Execution 시작 → SOL은 다른 일 진행
+    → 후속 정상 도구 호출에 compact TrackedTasks snapshot
+    → 필요할 때 기존 execution_id로 결과 조회
+    → 활용하거나 terminal 상태에서 dismiss
+~~~
 
-```text
-user Enter
-   ↓
-@c start
-   ↓
-detached task: running
-   ↓
-SOL continues reasoning
-   ↓
-@c sync / collect / emit
-   ↓
-compact snapshot: running / done
-```
+- Task/Execution 상태와 ID는 **GPT Dive Runtime의 SQLite**가 소유한다([Runtime ADR 0004](../../runtime/adr/0004-always-durable-code-mode-runtime.md)).
+- Conduit는 대화 프로토콜·이벤트 전달과 화면을 소유한다. 별도 `TaskStore`, `task_id`, duplicate execution authority를 만들지 않는다.
+- 완료 결과 조회는 비파괴적이며, 의도한 정리만 `dismiss`한다.
+- Passive awareness의 실제 carrier, 제공되는 MCP 도구, 필드 생략 규칙은 [Runtime ADR 0006](../../runtime/adr/0006-tracked-tasks-connector-projection.md)과 현재 schema가 소유한다.
+- 외부 worker가 달라도 결합은 **상태·결과 경계**에서만 한다. 새로운 공통 worker 실행기나 자동 background 전환을 만들지 않는다.
+- Opportunistic Evidence Pickup(OEP)은 알림을 받은 AI가 근거를 필요할 때 검토·중복 제거·활용한다는 운영 원칙이지 자동 내용 수집을 보장하는 새 서비스가 아니다.
 
-Server push is not required for the target workflow. Lack of ChatGPT Web negotiation of `io.modelcontextprotocol/tasks` is therefore not a blocker for this Conduit path.
+## Why
 
-## Context
+2026-08-16 실험에서는 같은 대화에서 `@c`를 두 번 호출하는 방식으로 독립 실행의 완료를 발견했고, 비파괴적 결과 재조회가 가능함을 관찰했다. 다음 설계에서는 평범한 `@dive` 호출에도 상태를 보여 주려 했으나, 일부 MCP `content[]` 주입은 ChatGPT 측에서 보이지 않았다. 실제 모델에 보이는 경로로 투영해야 한다.
 
-GPT Dive already owns durable local execution through ExecutionManager. Conduit is the Web-facing conversation/task plane and should reuse that runtime rather than recreate it.
+## Rejected
 
-The design goal is to preserve one productive ChatGPT Web SOL reasoning flow while detached local or external work continues concurrently. The user's next conversation turn is an acceptable and intentional refresh boundary.
+- 서버 push/특별한 주기적 poll을 기본 계약으로 강제.
+- Conduit 전용 durable 작업 DB·ACK/collect 수명주기·두 번째 Task ID.
+- 이 원칙 하나로 이질적인 worker를 전부 통합하는 실행 프레임워크.
+- Task 수가 많을 것이라는 가정만으로 queue·cap·dedupe 체계를 선제 도입.
 
-## Live evidence
+## Ownership
 
-Fresh-session acceptance on 2026-08-16 proved the core tool loop from one user Enter:
-
-```text
-@c start
-  → detached task returned immediately: running
-
-SOL reasoning
-  → continued in the same turn
-
-@c sync
-  → same task snapshot: done
-```
-
-This directly demonstrated:
-
-```text
-c1 → SOL reasoning → c2
-```
-
-A later live semantics check on 2026-08-16 also confirmed the v0 retention direction:
-
-- the same completed task was collected twice successfully;
-- both reads returned the same completed result;
-- completed tasks remained present in later compact snapshots, including tasks retained across later user turns.
-
-## Task semantics carried by this decision
-
-- `@c` remains the stable Web-facing namespace.
-- One primary action is performed per `@c` call.
-- Every successful call carries a compact task snapshot.
-- Snapshots expose small correlation/status fields, not full repeated results.
-- `collect` is non-destructive in v0. Duplicate reads are preferable to creating a result-loss window.
-- Ordinary `@c` calls and user turns are the intentional refresh cadence.
-- Redis remains the event/fan-out transport; it does not own Conduit domain semantics.
-
-## Consequences
-
-Conduit does not need a push-notification subsystem merely to make detached work useful in ChatGPT Web. Completed work may wait until the next ordinary `@c` interaction and still remain discoverable.
-
-The protocol should evolve from real workflow pressure while keeping the Web-facing surface small. In particular, this ADR does not justify hiding all GPT Dive execution behind Conduit or adding speculative fallback paths.
-
-## Non-goals
-
-This decision does not define long-term archive/cleanup policy, myWeb UI behavior, durable database policy, GBrain ingestion, or a generic replacement for MCP Tasks. Those remain separate future concerns and should be designed only when concrete workflow pressure exists.
+현재 Conduit 구현: [CONTINUATION](../CONTINUATION.md), [Context](../CONTEXT.md). 과거 canary의 `collect/ack` 용어는 더 이상 현재 공개 계약이 아니다. 당시 관찰과 보다 넓은 OEP 제안은 이전 ADR 0001/0002의 Git 이력에 보존한다.

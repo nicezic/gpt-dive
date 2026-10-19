@@ -1,14 +1,14 @@
 ---
-title: TODO — Top-level Durable AGY Worker MCP Surface
+title: Plan — Top-level Durable AGY Worker MCP Surface
 created: 2026-08-30
-updated: 2026-10-10
-type: decision
-status: accepted
+updated: 2026-10-20
+type: plan
+status: planned
 ---
 
-# TODO — Durable AGY Worker MCP Surface
+# Plan — Durable AGY Worker MCP Surface
 
-**Accepted design; not implemented as a public tool.** `agy_worker` currently lives behind Code Mode. This proposal is a narrow exception to [ADR 0004](0004-always-durable-code-mode-runtime.md)'s default of not exposing individual AI capabilities as new MCP tools. It exists to let an independent MCP-native orchestrator such as Zed delegate read-only repo investigation without writing Monty.
+**Design accepted for planning, but not implemented as a public tool.** `agy_worker` currently lives behind Code Mode. This proposal is a narrow exception to [ADR 0004](../../docs/runtime/adr/0004-always-durable-code-mode-runtime.md)'s default of not exposing individual AI capabilities as new MCP tools. It exists to let an independent MCP-native orchestrator such as Zed delegate read-only repo investigation without writing Monty.
 
 ~~~text
 code_mode Execution → await agy_worker ─┐
@@ -53,4 +53,4 @@ External native-agent orchestration cannot reliably call an inner `agy_worker` a
 - Check parent Code Mode execution still awaits its child without spawning a nested Task.
 - Confirm service restart/recovery and no replay of side-effectful work.
 
-**Status reminder:** this is a preserved design candidate, not evidence of an installed fifth GPT Dive MCP tool. Current MCP tool names and runtime budgets live in `src/gpt_dive/app.py` and [operations](../operations.md).
+**Status reminder:** this is a preserved design candidate, not evidence of an installed fifth GPT Dive MCP tool. Current MCP tool names and runtime budgets live in `src/gpt_dive/app.py` and [operations](../../docs/runtime/operations.md).
