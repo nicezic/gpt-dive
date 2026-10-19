@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +11,15 @@ from pydantic_monty import MontyRuntimeError, MontyTypingError
 
 import gpt_dive.code_capabilities as capabilities_module
 from gpt_dive.code_capabilities import build_code_registry, code_runtime
+from gpt_dive.code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from gpt_dive.code_runtime import CallableRegistry
 from gpt_dive.command_runtime import runtime_record
 from gpt_dive.execution_store import ExecutionStore, generate_execution_id
+from gpt_dive.mcp_models import CodeModeCompleted
 
 EXPECTED_CAPABILITIES = {
     "read_file",
+    "read_execution_result",
     "write_file",
     "edit_file",
     "list_directory",
@@ -88,6 +92,77 @@ def test_registry_has_the_renewed_fifteen_capabilities(tmp_path: Path) -> None:
     for name in ("agy_worker", "subagent_call", "peer_review"):
         assert "timeout" not in descriptions[name]["signature"]
     assert "declaration" in descriptions["run_command"]
+
+
+def test_read_execution_result_recovers_full_72k_without_rerunning(
+    tmp_path: Path,
+) -> None:
+    store = ExecutionStore(tmp_path / "runtime.sqlite3")
+    execution_id = generate_execution_id()
+    original = "한글✅" * 8192  # exactly 72 KiB of UTF-8
+    retained_path = tmp_path / "retained.stdout"
+    retained_path.write_text(
+        json.dumps(
+            {"v": CODE_MODE_WORKER_PROTOCOL, "ok": True, "result": original},
+            ensure_ascii=False,
+        )
+    )
+    store.create(
+        execution_id=execution_id,
+        kind="code_mode",
+        label="retained test",
+        cwd=None,
+        backend="popen",
+        systemd_unit=None,
+        work_timeout_seconds=120,
+        cleanup_timeout_seconds=10,
+        request_path=tmp_path / "request2.json",
+        artifact_dir=tmp_path / "artifacts2",
+        stdout_path=retained_path,
+        stderr_path=tmp_path / "stderr2.log",
+        outcome_path=tmp_path / "outcome2.json",
+    )
+    assert store.claim(execution_id, worker_pid=1000000, worker_start_ticks=None)
+    store.finish(execution_id, exit_code=0)
+    offset = 0
+    parts = []
+    while True:
+        chunk = asyncio.run(
+            code_runtime.run(
+                "part = await read_execution_result(execution_id=PAYLOAD, offset="
+                + str(offset)
+                + ")\npart",
+                registry_for_test(tmp_path),
+                payload=execution_id,
+            )
+        )
+        assert chunk["total_bytes"] == len(original.encode("utf-8"))
+        assert (
+            CodeModeCompleted(execution_id="paging", result=chunk).output_truncated
+            is None
+        )
+        parts.append(chunk["content"])
+        if chunk["next_offset"] is None:
+            break
+        assert chunk["next_offset"] > offset
+        offset = chunk["next_offset"]
+    assert "".join(parts) == original
+    assert len(parts) == 3
+    # Byte boundaries reject a location inside the 3-byte Hangul character.
+    import pytest
+
+    with pytest.raises(MontyRuntimeError):
+        run_code(
+            tmp_path,
+            "await read_execution_result(execution_id=PAYLOAD, offset=1)",
+            payload=execution_id,
+        )
+    with pytest.raises(MontyRuntimeError):
+        run_code(
+            tmp_path,
+            "await read_execution_result(execution_id=PAYLOAD, offset=0, limit=1)",
+            payload=execution_id,
+        )
 
 
 def test_registry_renders_typed_run_command_contract_without_breaking_positional_calls(
@@ -334,19 +409,38 @@ await edit_file("settings.txt", old_text=numbered, new_text="wrong")
     assert target.read_text() == 'first\nsetting = "old"\n'
 
 
-def test_raw_read_caps_bytes_and_continues_by_offset(tmp_path: Path) -> None:
-    (tmp_path / "large.txt").write_text(("x" * 80 + "\n") * 4000)
-    first = run_code(tmp_path, "await read_file('large.txt')")
-    assert len(first.encode("utf-8")) <= 256 * 1024
-    assert "offset=3234" in first
-    rest = run_code(tmp_path, "await read_file('large.txt', offset=3234)")
-    assert rest == ("x" * 80 + "\n") * (4000 - 3234)
-    assert "capped" not in rest
+def test_raw_read_over_256k_is_complete_in_monty(tmp_path: Path) -> None:
+    content = ("x" * 80 + "\n") * 4000
+    (tmp_path / "large.txt").write_text(content)
+    assert run_code(tmp_path, "await read_file('large.txt')") == content
+    assert run_code(tmp_path, "await read_file('large.txt', offset=3234)") == (
+        "".join(content.splitlines(keepends=True)[3234:])
+    )
 
 
-def test_raw_read_detects_binary_and_blocks_secret_symlinks(tmp_path: Path) -> None:
+def test_read_file_rejects_1gb_before_loading(tmp_path: Path) -> None:
+    target = tmp_path / "huge.txt"
+    with target.open("wb") as f:
+        f.truncate(1_000_000_000)
+    for mode in ("", ", line_numbers=True"):
+        with pytest.raises(MontyRuntimeError, match="1 GB"):
+            run_code(tmp_path, f"await read_file('huge.txt'{mode})")
+
+
+def test_raw_read_rejects_nontext_and_blocks_secret_symlinks(tmp_path: Path) -> None:
     (tmp_path / "binary.bin").write_bytes(b"a\x00b")
-    assert "Binary file: 3 bytes" in run_code(tmp_path, "await read_file('binary.bin')")
+    with pytest.raises(MontyRuntimeError, match="Binary file"):
+        run_code(tmp_path, "await read_file('binary.bin')")
+
+    (tmp_path / "late-nul.bin").write_bytes(b"x" * 9000 + b"\x00")
+    with pytest.raises(MontyRuntimeError, match="Binary file"):
+        run_code(tmp_path, "await read_file('late-nul.bin')")
+
+    invalid = tmp_path / "invalid.txt"
+    invalid.write_bytes(b"hello\xffworld")
+    with pytest.raises(MontyRuntimeError, match="not valid UTF-8"):
+        run_code(tmp_path, "await read_file('invalid.txt')")
+    assert invalid.read_bytes() == b"hello\xffworld"
 
     (tmp_path / ".env").write_text("TOKEN=secret")
     (tmp_path / "env-link").symlink_to(".env")

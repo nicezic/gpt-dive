@@ -143,6 +143,8 @@ def test_code_mode_description_exposes_compact_execution_contract() -> None:
             "status",
             "execution_id",
             "result",
+            "output_truncated",
+            "output_guidance",
             "tracked_tasks",
             "tracked_tasks_guidance",
         },
@@ -811,7 +813,7 @@ def test_explicit_bootstrap_resets_periodic_reminder_counter(monkeypatch) -> Non
     assert len(third_after_reset.content) == 2
 
 
-def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None:
+def test_code_mode_output_bounded_at_32k_for_large_payload(monkeypatch) -> None:
     async def fake_code_mode(**_: Any) -> app.CodeModeOutcome:
         return app.CodeModeCompleted(
             execution_id="large1",
@@ -833,12 +835,94 @@ def test_code_mode_output_bounded_at_128k_for_large_payload(monkeypatch) -> None
     result = asyncio.run(call())
     structured = result.structured_content
     assert structured["status"] == "completed"
-    assert "output truncated at 128 KiB" in structured["result"]
-    assert "execution_id: large1" in structured["result"]
-    assert len(structured["result"].encode("utf-8")) <= 128 * 1024 + 200
+    assert "output truncated at 32 KiB" in structured["result"]
+    assert structured["output_truncated"] is True
+    assert "read-only" in structured["output_guidance"]
+    assert structured["execution_id"] == "large1"
+    assert len(structured["result"].encode("utf-8")) <= 32 * 1024
+    for i in (1, 2, 3):
+        assert structured["result"].count(f"WARNING {i}/3") == 2
+        assert f"WARNING {i}/3" in structured["output_guidance"]
+    assert structured["result"].startswith("🚨🚨🚨 WARNING 1/3")
+    assert structured["result"].endswith("🚨🚨🚨")
+    assert (
+        structured["result"].index("WARNING 1/3")
+        < structured["result"].index("WARNING 2/3")
+        < structured["result"].index("WARNING 3/3")
+    )
 
 
-def test_code_mode_output_preserves_structured_type_when_under_128k(
+def test_large_json_result_is_explicitly_marked_incomplete() -> None:
+    outcome = app.CodeModeCompleted(
+        execution_id="largejson", result={"data": "x" * 40000}
+    )
+    assert isinstance(outcome.result, str)
+    assert len(outcome.result.encode("utf-8")) <= 32 * 1024
+    assert outcome.output_truncated is True
+    assert "read-only" in outcome.output_guidance
+
+
+def test_truncated_result_head_30k_tail_1k_and_utf8() -> None:
+    from gpt_dive.mcp_models import (
+        _OUTPUT_WARNING_1,
+        _OUTPUT_WARNING_2,
+        _OUTPUT_WARNING_3,
+    )
+
+    source = "한" * 20000 + "끝맺음✅"
+    output = app.CodeModeCompleted(execution_id="T2zqDA", result=source)
+    assert output.output_truncated is True
+    assert output.output_guidance
+    assert output.result.startswith(_OUTPUT_WARNING_1)
+    assert output.result.endswith(_OUTPUT_WARNING_3)
+
+    # Repeated warnings delimit two raw-data sections.
+    head = output.result.split(_OUTPUT_WARNING_1 + "\n\n", 1)[1].split(
+        "\n\n" + _OUTPUT_WARNING_2, 1
+    )[0]
+    tail = output.result.split(_OUTPUT_WARNING_2 + "\n\n", 1)[1].split(
+        "\n\n" + _OUTPUT_WARNING_3, 1
+    )[0]
+    assert source.startswith(head)
+    assert source.endswith(tail)
+    assert tail.endswith("끝맺음✅")
+    assert 30 * 1024 - 3 <= len(head.encode("utf-8")) <= 30 * 1024
+    assert 1024 - 3 <= len(tail.encode("utf-8")) <= 1024
+    assert f"offset={len(head.encode('utf-8'))}" in output.output_guidance
+    assert "execution_id='T2zqDA'" in output.output_guidance
+    assert len(output.result.encode("utf-8")) <= 32 * 1024
+
+
+def test_truncation_flag_is_not_inferred_from_user_text() -> None:
+    literal = "some content ... (output truncated at 32 KiB; execution_id: fake)"
+    output = app.CodeModeCompleted(execution_id="short", result=literal)
+    assert output.result == literal
+    assert output.output_truncated is None
+    assert output.output_guidance is None
+
+    source = app.CodeModeCompleted(execution_id="repeat", result="H" * 40000 + "TAIL")
+    repeated = app.CodeModeCompleted.model_validate(source.model_dump())
+    assert repeated.result == source.result
+    assert repeated.output_truncated is True
+    assert repeated.output_guidance == source.output_guidance
+
+
+def test_task_get_uses_same_truncation_warnings(monkeypatch) -> None:
+    async def fake_task(request: app.TaskRequest) -> app.TaskOutcome:
+        assert request.action == "get"
+        return app.CodeModeCompleted(execution_id="large1", result="A" * 50000 + "END")
+
+    monkeypatch.setattr(app, "task", fake_task)
+    result = asyncio.run(
+        _call_tool("task", {"request": {"action": "get", "execution_id": "large1"}})
+    )
+    assert result.structured_content["output_truncated"] is True
+    assert result.structured_content["result"].count("WARNING 3/3") == 2
+    assert "END" in result.structured_content["result"]
+    assert len(result.structured_content["result"].encode()) <= 32 * 1024
+
+
+def test_code_mode_output_preserves_structured_type_when_under_32k(
     monkeypatch,
 ) -> None:
     payload = {"key": "value", "items": [1, 2, 3]}

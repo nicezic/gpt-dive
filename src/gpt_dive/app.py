@@ -51,7 +51,6 @@ from .mcp_models import (
     TaskRequest,
     TrackedTaskView,
     WslExecWorkOutput,
-    _bound_code_mode_result,
     _code_mode_output,
     _CodeModePublicOutput,
     _task_action_failure,
@@ -210,12 +209,12 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
     try:
         evidence_rows = executions.store.list_run_command_evidence(execution_id)
     except KeyError, sqlite3.Error:
-        return _bound_code_mode_result(result, execution_id)
+        return result
     if not evidence_rows or any(
         row.get("exit_code") is None or row.get("duration_ms") is None
         for row in evidence_rows
     ):
-        return _bound_code_mode_result(result, execution_id)
+        return result
 
     lines = [f"id: {execution_id}", ""]
     for row in evidence_rows:
@@ -239,7 +238,11 @@ def _render_code_mode_completed_result(execution_id: str, result: Any) -> Any:
             ]
         )
     lines.extend(["", "----", _processed_output_text(result)])
-    return _bound_code_mode_result("\n".join(lines), execution_id)
+    rendered = "\n".join(lines)
+    # Retained result paging uses the original Monty result, not this evidence header.
+    if len(rendered.encode("utf-8")) > 32 * 1024:
+        return result
+    return rendered
 
 
 async def _periodic_reminder_middleware(
@@ -1119,12 +1122,13 @@ async def _mcp_code_mode(
     if isinstance(primary, CodeModeRunning):
         _record_session_task(ctx, primary.execution_id)
 
-    if isinstance(primary, CodeModeCompleted):
-        primary = primary.model_copy(
-            update={
+    if isinstance(primary, CodeModeCompleted) and not primary.output_truncated:
+        primary = CodeModeCompleted.model_validate(
+            {
+                **primary.model_dump(),
                 "result": _render_code_mode_completed_result(
                     primary.execution_id, primary.result
-                )
+                ),
             }
         )
     tracked_tasks = await _tracked_tasks_snapshot(ctx=ctx)
@@ -1230,12 +1234,13 @@ async def _mcp_task(
     ):
         _discard_session_task(ctx, request.execution_id)
 
-    if isinstance(outcome, CodeModeCompleted):
-        outcome = outcome.model_copy(
-            update={
+    if isinstance(outcome, CodeModeCompleted) and not outcome.output_truncated:
+        outcome = CodeModeCompleted.model_validate(
+            {
+                **outcome.model_dump(),
                 "result": _render_code_mode_completed_result(
                     outcome.execution_id, outcome.result
-                )
+                ),
             }
         )
     return _TaskPublicOutcome(root=outcome)

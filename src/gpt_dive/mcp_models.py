@@ -9,7 +9,6 @@ from pydantic import (
     Field,
     RootModel,
     TypeAdapter,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -18,31 +17,69 @@ from .code_mode_errors import RecoveryAction, category_for, recovery_for
 from .code_mode_errors import guidance_for as _code_mode_error_guidance
 from .execution_store import EXECUTION_ID_PATTERN
 
-_CODE_MODE_RESULT_MAX_BYTES = 128 * 1024  # 128 KiB
+_CODE_MODE_RESULT_MAX_BYTES = 32 * 1024  # result preview, including warnings
 _ERROR_DETAIL_MAX_CHARS = 4096
 
+_OUTPUT_WARNING_1 = (
+    "🚨🚨🚨 WARNING 1/3 — OUTPUT TRUNCATED (output truncated at 32 KiB) 🚨🚨🚨"
+)
+_OUTPUT_WARNING_2 = "🚨🚨🚨 WARNING 2/3 — CONTENT OMITTED 🚨🚨🚨"
+_OUTPUT_WARNING_3 = "🚨🚨🚨 WARNING 3/3 — STOP BEFORE WRITING 🚨🚨🚨"
 
-def _bound_code_mode_result(result: Any, execution_id: str | None = None) -> Any:
+
+def _bound_code_mode_result(result: Any) -> tuple[Any, int | None]:
     if isinstance(result, str):
-        encoded = result.encode("utf-8", errors="replace")
-        if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
-            return result
-        prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-        marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-        return prefix + marker
-
-    try:
-        serialized = json.dumps(result, ensure_ascii=False)
-    except Exception:
-        return result
-
+        serialized = result
+    else:
+        try:
+            serialized = json.dumps(result, ensure_ascii=False)
+        except Exception:
+            return result, None
     encoded = serialized.encode("utf-8", errors="replace")
     if len(encoded) <= _CODE_MODE_RESULT_MAX_BYTES:
-        return result
+        return result, None
 
-    prefix = encoded[:_CODE_MODE_RESULT_MAX_BYTES].decode("utf-8", errors="ignore")
-    marker = f"\n\n... (output truncated at 128 KiB; execution_id: {execution_id or 'unknown'})"
-    return prefix + marker
+    before = (
+        f"{_OUTPUT_WARNING_1}\n"
+        "INCOMPLETE RESULT. NEVER USE THIS PREVIEW TO WRITE OR EDIT FILES.\n"
+        "HEAD (UP TO 30 KiB) FOLLOWS.\n"
+        f"{_OUTPUT_WARNING_1}\n\n"
+    )
+    middle = (
+        f"\n\n{_OUTPUT_WARNING_2}\n"
+        "MIDDLE CONTENT IS MISSING. HEAD AND TAIL ARE NOT CONTIGUOUS.\n"
+        "TAIL (UP TO 1 KiB) FOLLOWS.\n"
+        f"{_OUTPUT_WARNING_2}\n\n"
+    )
+    after = (
+        f"\n\n{_OUTPUT_WARNING_3}\n"
+        "RETRIEVE MISSING DATA WITH read_execution_result. NEVER RERUN SIDE EFFECTS.\n"
+        f"{_OUTPUT_WARNING_3}"
+    )
+    overhead = len((before + middle + after).encode("utf-8"))
+    tail_budget = 1024
+    head_budget = min(30 * 1024, _CODE_MODE_RESULT_MAX_BYTES - overhead - tail_budget)
+    head = encoded[:head_budget].decode("utf-8", errors="ignore")
+    tail = encoded[-tail_budget:].decode("utf-8", errors="ignore")
+    return before + head + middle + tail + after, len(head.encode("utf-8"))
+
+
+def _truncation_guidance(execution_id: str, next_offset: int) -> str:
+    return (
+        f"{_OUTPUT_WARNING_1}\n"
+        f"{_OUTPUT_WARNING_2}\n"
+        f"{_OUTPUT_WARNING_3}\n"
+        "The execution completed, but the response is incomplete. "
+        "Head and tail are NOT adjacent. NEVER use the preview as full file content "
+        "or a write/edit anchor.\n"
+        "SAFE READ-ONLY RECOVERY (NEW code_mode call):\n"
+        "part = await read_execution_result("
+        f"execution_id={execution_id!r}, offset={next_offset})\n"
+        "part\n"
+        "Continue with part['next_offset'] until it is None. "
+        "Use read-only retrieval from offset=0 instead if you cannot verify the exact source head. "
+        "Do not rerun side-effecting commands; task(get) has the same limit."
+    )
 
 
 ExecutionState = Literal[
@@ -66,6 +103,12 @@ class CodeModeCompleted(_ClosedModel):
     status: Literal["completed"] = "completed"
     execution_id: str
     result: Any
+    output_truncated: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    output_guidance: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     tracked_tasks: list[TrackedTaskView] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -73,11 +116,15 @@ class CodeModeCompleted(_ClosedModel):
         default=None, exclude_if=lambda value: value is None
     )
 
-    @field_validator("result", mode="after")
-    @classmethod
-    def _validate_result(cls, v: Any, info: ValidationInfo) -> Any:
-        exec_id = info.data.get("execution_id") if info.data else None
-        return _bound_code_mode_result(v, exec_id)
+    @model_validator(mode="after")
+    def _limit_public_result(self) -> CodeModeCompleted:
+        if self.output_truncated:
+            return self
+        self.result, next_offset = _bound_code_mode_result(self.result)
+        if next_offset is not None:
+            self.output_truncated = True
+            self.output_guidance = _truncation_guidance(self.execution_id, next_offset)
+        return self
 
 
 _CODE_MODE_RUNNING_GUIDANCE = (

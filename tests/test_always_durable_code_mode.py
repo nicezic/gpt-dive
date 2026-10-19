@@ -96,6 +96,8 @@ async def wait_task_ready(
                 "status",
                 "execution_id",
                 "result",
+                "output_truncated",
+                "output_guidance",
                 "tracked_tasks",
                 "tracked_tasks_guidance",
             },

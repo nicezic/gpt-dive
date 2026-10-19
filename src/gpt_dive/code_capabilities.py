@@ -4,6 +4,7 @@ import asyncio
 import base64
 import functools
 import gzip
+import json
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -13,6 +14,7 @@ from pydantic_ai_harness import FileSystem
 from .agy_worker import DEFAULT_MODEL as DEFAULT_AGY_MODEL
 from .agy_worker import invoke_agy_worker
 from .code_file_read import read_raw_file
+from .code_mode_protocol import CODE_MODE_WORKER_PROTOCOL
 from .code_runtime import CallableRegistry, MontyCodeRuntime
 from .command_runtime import (
     RuntimeRecord,
@@ -23,7 +25,8 @@ from .command_runtime import (
     run_command as run_runtime_command,
 )
 from .conduit.room import emit_sol_response
-from .filesystem_policy import harness_denied_patterns
+from .execution_store import is_valid_execution_id
+from .filesystem_policy import harness_denied_patterns, is_secret_path
 from .model_call import invoke_model_call
 from .subagent_runtime import invoke_subagent
 
@@ -40,6 +43,12 @@ class RunCommandResult(TypedDict):
     stderr: str
     duration_ms: int
     truncated: bool
+
+
+class ReadExecutionResultPage(TypedDict):
+    content: str
+    next_offset: int | None
+    total_bytes: int
 
 
 def code_mode_home_root() -> Path:
@@ -96,14 +105,23 @@ def build_code_registry(
     ) -> str:
         """Read a text file. Returns exact raw text content by default.
 
-        Raw output is capped at 256 KiB: use offset/limit to obtain exact
-        snippets for editing. A truncation notice is not file content.
+        Raw reads return complete text. Files of 1 GB or larger are rejected
+        before loading; use offset/limit for narrower reads of smaller files.
 
         Relative paths use cwd; host reads are allowed anywhere except credential/secret paths.
         Set line_numbers=True (or raw=False) to include line numbers and metadata header for visual inspection.
         """
         show_line_numbers = line_numbers if raw is None else (not raw)
         resolved_path = resolve_path(path)
+        if (
+            not is_secret_path(resolved_path, home=home)
+            and resolved_path.is_file()
+            and resolved_path.stat().st_size >= 1_000_000_000
+        ):
+            raise ValueError(
+                f"read_file refuses files of 1 GB or larger: {path}. "
+                "Inspect a targeted byte range with run_command instead."
+            )
         if show_line_numbers:
             return await filesystem_toolset.read_file(
                 str(resolved_path), offset=offset, limit=limit, workspace=workspace
@@ -116,6 +134,64 @@ def build_code_registry(
             offset=offset,
             limit=limit,
         )
+
+    async def read_execution_result(
+        *, execution_id: str, offset: int = 0, limit: int = 24576
+    ) -> ReadExecutionResultPage:
+        """Read a UTF-8 byte range of a retained, completed Code Mode result.
+
+        Read-only; NEVER reruns the original execution. Continue at next_offset
+        until it is None. The page is bounded to avoid a second MCP truncation.
+        """
+        if not is_valid_execution_id(execution_id):
+            raise ValueError("invalid execution_id")
+        if offset < 0 or not 1 <= limit <= 24576:
+            raise ValueError("offset must be >= 0 and limit must be 1..24576")
+
+        source = record["store"].get(execution_id)
+        if source["kind"] != "code_mode" or source["state"] != "completed":
+            raise ValueError("no completed Code Mode result for execution_id")
+        try:
+            envelope = json.loads(
+                Path(source["stdout_path"]).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ValueError("retained Code Mode result is unavailable") from exc
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("v") != CODE_MODE_WORKER_PROTOCOL
+            or envelope.get("ok") is not True
+            or "result" not in envelope
+        ):
+            raise ValueError("retained Code Mode result is invalid")
+
+        original = envelope["result"]
+        serialized = (
+            original
+            if isinstance(original, str)
+            else json.dumps(original, ensure_ascii=False)
+        )
+        data = serialized.encode("utf-8")
+        total = len(data)
+        if offset > total or (offset < total and data[offset] & 0xC0 == 0x80):
+            raise ValueError(
+                "offset must be at a valid UTF-8 boundary within the result"
+            )
+
+        end = min(offset + limit, total)
+        while True:
+            while end < total and end > offset and data[end] & 0xC0 == 0x80:
+                end -= 1
+            if end == offset and offset < total:
+                raise ValueError("limit is too small for a UTF-8 character")
+            page: ReadExecutionResultPage = {
+                "content": data[offset:end].decode("utf-8"),
+                "next_offset": end if end < total else None,
+                "total_bytes": total,
+            }
+            if len(json.dumps(page, ensure_ascii=False).encode("utf-8")) <= 30 * 1024:
+                return page
+            end = offset + (end - offset) // 2
 
     async def list_directory(path: str = ".") -> str:
         """List a directory. Relative paths use cwd; host reads are allowed anywhere except credential/secret paths."""
@@ -284,6 +360,7 @@ def build_code_registry(
         )
 
     registry.register("read_file", read_file)
+    registry.register("read_execution_result", read_execution_result)
     registry.register("write_file", write_file)
     registry.register("edit_file", edit_file)
     registry.register("list_directory", list_directory)
