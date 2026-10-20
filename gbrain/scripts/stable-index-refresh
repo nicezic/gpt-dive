@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+from typing import NoReturn
 
 STABLE_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
@@ -32,22 +33,10 @@ SOURCES: dict[str, SourcePolicy] = {
             "pydantic_ai_slim/",
             "pydantic_graph/",
             "pydantic_evals/",
+            "src/pydantic_ai_harness/",
             "examples/pydantic_ai_examples/",
             "docs/",
             "tests/",
-            "agent_docs/",
-        ),
-        allowed_extensions=frozenset({".py", ".md", ".mdx"}),
-    ),
-    "pydantic-ai-harness": SourcePolicy(
-        source_id="pydantic-ai-harness",
-        repo=HOME / "ref" / "pydantic-ai-harness",
-        remote="https://github.com/pydantic/pydantic-ai-harness.git",
-        roots=(
-            "pydantic_ai_harness/",
-            "docs/",
-            "tests/",
-            "integration_tests/",
             "agent_docs/",
         ),
         allowed_extensions=frozenset({".py", ".md", ".mdx"}),
@@ -81,7 +70,7 @@ SOURCES: dict[str, SourcePolicy] = {
 }
 
 
-def fail(message: str, code: int = 2) -> "NoReturn":
+def fail(message: str, code: int = 2) -> NoReturn:
     print(f"STABLE_INDEX_ERROR: {message}", file=sys.stderr)
     raise SystemExit(code)
 
@@ -277,17 +266,11 @@ def run_self_test() -> None:
             "pydantic_ai_slim/pydantic_ai/agent.py",
             "pydantic_graph/pydantic_graph/graph.py",
             "pydantic_evals/pydantic_evals/dataset.py",
+            "src/pydantic_ai_harness/pydantic_ai_harness/code_mode/_capability.py",
             "examples/pydantic_ai_examples/pydantic_ai_examples/weather_agent.py",
             "docs/agents.md",
             "tests/test_agent.py",
             "agent_docs/documentation.md",
-        ],
-        "pydantic-ai-harness": [
-            "pydantic_ai_harness/code_mode/_capability.py",
-            "docs/index.md",
-            "tests/test_code_mode.py",
-            "integration_tests/redis/test_live_redis.py",
-            "agent_docs/overview.md",
         ],
         "pydantic-ai-monty": [
             "crates/monty/src/lib.rs",
@@ -306,12 +289,6 @@ def run_self_test() -> None:
             "pyproject.toml",
             "scripts/release.py",
             "unrelated_new_root/new_feature.py",
-        ],
-        "pydantic-ai-harness": [
-            "docs/nav.json",
-            "pyproject.toml",
-            "scripts/maintenance.py",
-            "unrelated_new_root/feature.py",
         ],
         "pydantic-ai-monty": [
             "Cargo.toml",
@@ -350,7 +327,6 @@ def selected_sources(name: str) -> list[SourcePolicy]:
     if name == "all":
         return [
             SOURCES["pydantic-ai"],
-            SOURCES["pydantic-ai-harness"],
             SOURCES["pydantic-ai-monty"],
         ]
     return [SOURCES[name]]
@@ -365,7 +341,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--source",
-        choices=("all", "pydantic-ai", "pydantic-ai-harness", "pydantic-ai-monty"),
+        choices=("all", "pydantic-ai", "pydantic-ai-monty"),
         default="all",
         help="source to refresh (default: all)",
     )

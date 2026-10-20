@@ -1,8 +1,8 @@
 # GBrain Stable Index Filter
 
-Updated: 2026-08-20 KST
-Status: active production policy; Filter v2 three-source expansion
-Filter version: 2
+Updated: 2026-10-20 KST
+Status: active filter policy for two upstream repositories (Core + Harness, Monty)
+Filter version: 3
 
 ## Purpose
 
@@ -10,7 +10,7 @@ This document is the **Index Filter SSOT** for the user's stable Pydantic GBrain
 
 It answers one question:
 
-> Which files from the latest stable Pydantic AI / Harness / Monty releases are worth putting into semantic retrieval?
+> Which files from the latest stable Pydantic AI (including Harness) / Monty releases are worth putting into semantic retrieval?
 
 Installation, database reconstruction, provider/model configuration, quota guards, and recovery remain in `~/gpt-dive/gbrain/docs/reconstruction.md`. Retrieval usage remains in `~/wiki/workflow/search.md`.
 
@@ -34,8 +34,7 @@ GBrain is a retrieval layer, not a mirror of every file in the upstream reposito
 
 Normal indexing follows the latest **stable release tag** of:
 
-- `pydantic/pydantic-ai`
-- `pydantic/pydantic-ai-harness`
+- `pydantic/pydantic-ai` (Core + Harness)
 - `pydantic/monty`
 
 Do not use moving `main` as the canonical corpus target.
@@ -62,6 +61,7 @@ Approved roots:
 pydantic_ai_slim/**
 pydantic_graph/**
 pydantic_evals/**
+src/pydantic_ai_harness/**
 examples/pydantic_ai_examples/**
 docs/**
 tests/**
@@ -73,36 +73,11 @@ Why these roots:
 - `pydantic_ai_slim/`: Core implementation and provider/runtime behavior.
 - `pydantic_graph/`: graph/runtime implementation used by the ecosystem.
 - `pydantic_evals/`: eval implementation and contracts.
+- `src/pydantic_ai_harness/`: Harness implementation after the upstream repository merger; `docs/harness/` is covered by `docs/`.
 - `examples/pydantic_ai_examples/`: official executable usage examples.
 - `docs/`: official user-facing behavior and API guidance.
 - `tests/`: executable behavioral evidence and regression contracts.
 - `agent_docs/`: upstream agent-facing operational/reference guidance with direct development value.
-
-## Source: `pydantic-ai-harness`
-
-Checkout:
-
-```text
-~/ref/pydantic-ai-harness
-```
-
-Approved roots:
-
-```text
-pydantic_ai_harness/**
-docs/**
-tests/**
-integration_tests/**
-agent_docs/**
-```
-
-Why these roots:
-
-- `pydantic_ai_harness/`: Harness implementation.
-- `docs/`: official capability/API behavior.
-- `tests/`: executable unit-level behavior.
-- `integration_tests/`: real integration behavior where it provides stronger evidence than unit tests alone.
-- `agent_docs/`: upstream agent-facing development/reference material.
 
 ## Source: `pydantic-ai-monty`
 
@@ -149,7 +124,6 @@ Approved extensions are source-specific:
 
 ```text
 pydantic-ai          .py .md .mdx
-pydantic-ai-harness  .py .md .mdx
 pydantic-ai-monty    .rs .py .md .mdx
 ```
 
@@ -226,16 +200,13 @@ These are policy examples, not frozen upstream filenames.
 PASS  pydantic-ai          pydantic_ai_slim/pydantic_ai/.../*.py
 PASS  pydantic-ai          pydantic_graph/.../*.py
 PASS  pydantic-ai          pydantic_evals/.../*.py
+PASS  pydantic-ai          src/pydantic_ai_harness/.../*.py
+PASS  pydantic-ai          docs/harness/.../*.md
 PASS  pydantic-ai          examples/pydantic_ai_examples/.../*.py
 PASS  pydantic-ai          docs/.../*.md
 PASS  pydantic-ai          tests/.../test_*.py
 PASS  pydantic-ai          agent_docs/.../*.md
 
-PASS  pydantic-ai-harness  pydantic_ai_harness/.../*.py
-PASS  pydantic-ai-harness  docs/.../*.md
-PASS  pydantic-ai-harness  tests/.../test_*.py
-PASS  pydantic-ai-harness  integration_tests/.../test_*.py
-PASS  pydantic-ai-harness  agent_docs/.../*.md
 
 PASS  pydantic-ai-monty    crates/monty/src/.../*.rs
 PASS  pydantic-ai-monty    crates/monty-runtime/src/.../*.rs
@@ -256,10 +227,6 @@ FAIL  pydantic-ai          pyproject.toml
 FAIL  pydantic-ai          scripts/release.sh
 FAIL  pydantic-ai          unrelated_new_root/new_feature.py
 
-FAIL  pydantic-ai-harness  docs/nav.json
-FAIL  pydantic-ai-harness  pyproject.toml
-FAIL  pydantic-ai-harness  scripts/maintenance.py
-FAIL  pydantic-ai-harness  unrelated_new_root/feature.py
 
 FAIL  pydantic-ai-monty    Cargo.toml
 FAIL  pydantic-ai-monty    Cargo.lock
@@ -291,7 +258,7 @@ Important current CLI constraints:
 
 - `--exclude` is repeatable.
 - `--exclude` cannot be combined with `sync --all`.
-- filtered maintenance therefore runs `pydantic-ai`, `pydantic-ai-harness`, and `pydantic-ai-monty` separately.
+- filtered maintenance therefore runs `pydantic-ai` and `pydantic-ai-monty` separately.
 - exclusion does not remove an already-indexed page merely because it is newly excluded.
 
 The implementation mechanism may evolve, but its resulting file set must remain equivalent to this policy.
@@ -319,7 +286,7 @@ A clean rebuild is justified when a material index-shape invariant changes, incl
 
 The initial adoption of Filter version 1 was such a migration because previously indexed low-value config/code pages could remain under conservative exclusion semantics.
 
-Filter version 2 adds Monty as a new physical source and gives that source a Rust-aware allowlist. Because Monty had no pre-existing pages in the production brain, this additive source expansion does not by itself require rebuilding Core/Harness vectors when the embedding model, dimensions, and chunker remain unchanged.
+Filter version 3 folds the merged Harness code/docs into the `pydantic-ai` source policy and removes the standalone Harness checkout. Existing GBrain pages, source IDs, and embeddings are retained as historical data until a separately authorized index migration; this policy change alone does not run sync, delete source records, or consume embedding quota.
 
 ## Cost / execution boundary
 
@@ -342,9 +309,9 @@ If the guard fails or provider behavior is uncertain, keep the refreshed unembed
 A candidate corpus passes this filter when:
 
 ```text
-1. sources are only the intended stable pydantic-ai + pydantic-ai-harness + pydantic-ai-monty registrations
+1. new filesystem-backed sources come only from the intended two upstream repositories (`pydantic-ai`, `pydantic-ai-monty`); preexisting Harness-indexed records are not silently deleted
 2. every indexed filesystem-backed page maps to an approved root/content class
-3. Core/Harness code is Python; Monty code may be Rust or Python only inside its approved roots
+3. Core/Harness code is Python in the merged `pydantic-ai` policy; Monty code may be Rust or Python only inside its approved roots
 4. cassette/config/generated/fuzz/benchmark bulk is absent
 5. representative PASS paths are indexable
 6. representative FAIL paths are not indexed
