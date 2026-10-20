@@ -159,6 +159,58 @@ def test_tracked_tasks_guidance_resets_when_tasks_disappear_or_change() -> None:
     assert app._tracked_tasks_guidance(ctx, [first]) == app._TRACKED_TASKS_GUIDANCE
 
 
+def test_tracked_tasks_guidance_immediately_reacts_to_completion() -> None:
+    ctx: Any = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
+    running = app.TrackedTaskView(
+        execution_id="abc123",
+        label="build",
+        state="running",
+        reason=None,
+        elapsed_seconds=2,
+    )
+    completed = running.model_copy(update={"state": "completed"})
+    failed = running.model_copy(update={"state": "failed", "reason": "error"})
+
+    assert app._tracked_tasks_guidance(ctx, [running]) == app._TRACKED_TASKS_GUIDANCE
+    assert app._tracked_tasks_guidance(ctx, [running]) is None
+    assert (
+        app._tracked_tasks_guidance(ctx, [completed])
+        == app._TRACKED_TASKS_TERMINAL_GUIDANCE
+    )
+    assert app._tracked_tasks_guidance(ctx, [completed]) is None
+    assert (
+        app._tracked_tasks_guidance(ctx, [failed])
+        == app._TRACKED_TASKS_TERMINAL_GUIDANCE
+    )
+
+
+def test_tracked_tasks_guidance_covers_mixed_running_and_finished() -> None:
+    ctx: Any = SimpleNamespace(
+        session=SimpleNamespace(_connection=SimpleNamespace(state={}))
+    )
+    running = app.TrackedTaskView(
+        execution_id="abc123",
+        label="build",
+        state="running",
+        reason=None,
+        elapsed_seconds=2,
+    )
+    completed = app.TrackedTaskView(
+        execution_id="def456",
+        label="test",
+        state="completed",
+        reason=None,
+        elapsed_seconds=10,
+    )
+    output = app._tracked_tasks_guidance(ctx, [running, completed])
+    assert output is not None
+    assert "task(get)" in output
+    assert "now" in output
+    assert "independent work" in output
+
+
 def test_active_tasks_are_projected_before_terminal_backlog(tmp_path: Path) -> None:
     manager = manager_for_test(tmp_path / "executions")
     completed = manager.start("true", label="old done", publish=True)

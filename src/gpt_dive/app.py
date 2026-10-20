@@ -471,17 +471,19 @@ async def _wait_for_execution(
 
 
 _TRACKED_TASKS_GUIDANCE = (
-    "Passive Task HUD: while running, prioritize independent work, code self-review, and "
-    "next-step planning. Observe tracked_tasks in subsequent tool results; never loop task(get). "
-    "If only waiting remains, report the running state instead of polling. For a credible "
-    "ETA over 10 minutes, consider supported scheduled self-wake-up. "
-    "Terminal state -> get once -> verify -> dismiss."
+    "Task running: preserve execution_id and inform the user. Continue independent work "
+    "instead of repeatedly polling task(get). If waiting is unavoidable, report the "
+    "current state and consider a scheduled follow-up for a credible long ETA."
+)
+_TRACKED_TASKS_TERMINAL_GUIDANCE = (
+    "Task finished: use task(get) with the existing execution_id now to recover the "
+    "result or error. Report the outcome; dismiss only after recovery if useful."
 )
 
 
 _SESSION_TASKS_STATE_KEY = "published_task_ids"
 _SESSION_TASK_GUIDANCE_COUNT_KEY = "tracked_tasks_guidance_count"
-_SESSION_TASK_GUIDANCE_IDS_KEY = "tracked_tasks_guidance_ids"
+_SESSION_TASK_GUIDANCE_SIGNATURE_KEY = "tracked_tasks_guidance_signature"
 _TRACKED_TASKS_GUIDANCE_INTERVAL = 9
 
 
@@ -542,19 +544,30 @@ def _tracked_tasks_guidance(
     tracked_tasks: list[TrackedTaskView],
 ) -> str | None:
     state = _session_state(ctx)
-    if state is None:
-        return _TRACKED_TASKS_GUIDANCE if tracked_tasks else None
-
     if not tracked_tasks:
-        state.pop(_SESSION_TASK_GUIDANCE_COUNT_KEY, None)
-        state.pop(_SESSION_TASK_GUIDANCE_IDS_KEY, None)
+        if state is not None:
+            state.pop(_SESSION_TASK_GUIDANCE_COUNT_KEY, None)
+            state.pop(_SESSION_TASK_GUIDANCE_SIGNATURE_KEY, None)
         return None
 
-    task_ids = tuple(sorted(task.execution_id for task in tracked_tasks))
-    if state.get(_SESSION_TASK_GUIDANCE_IDS_KEY) != task_ids:
-        state[_SESSION_TASK_GUIDANCE_IDS_KEY] = task_ids
+    active = any(task.state in {"accepted", "running"} for task in tracked_tasks)
+    terminal = any(task.state not in {"accepted", "running"} for task in tracked_tasks)
+    guidance = " ".join(
+        text
+        for include, text in (
+            (terminal, _TRACKED_TASKS_TERMINAL_GUIDANCE),
+            (active, _TRACKED_TASKS_GUIDANCE),
+        )
+        if include
+    )
+    if state is None:
+        return guidance
+
+    signature = tuple(sorted((task.execution_id, task.state) for task in tracked_tasks))
+    if state.get(_SESSION_TASK_GUIDANCE_SIGNATURE_KEY) != signature:
+        state[_SESSION_TASK_GUIDANCE_SIGNATURE_KEY] = signature
         state[_SESSION_TASK_GUIDANCE_COUNT_KEY] = 0
-        return _TRACKED_TASKS_GUIDANCE
+        return guidance
 
     calls = int(state.get(_SESSION_TASK_GUIDANCE_COUNT_KEY, 0)) + 1
     if calls < _TRACKED_TASKS_GUIDANCE_INTERVAL:
@@ -562,7 +575,7 @@ def _tracked_tasks_guidance(
         return None
 
     state[_SESSION_TASK_GUIDANCE_COUNT_KEY] = 0
-    return _TRACKED_TASKS_GUIDANCE
+    return guidance
 
 
 def _code_mode_work_outcome(
