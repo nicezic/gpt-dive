@@ -471,9 +471,9 @@ async def _wait_for_execution(
 
 
 _TRACKED_TASKS_GUIDANCE = (
-    "Task running: preserve execution_id and inform the user. Continue independent work "
-    "instead of repeatedly polling task(get). If waiting is unavoidable, report the "
-    "current state and consider a scheduled follow-up for a credible long ETA."
+    "Task running: preserve execution_id and inform the user. Continue independent work. "
+    "Use task(get) when a status check is needed; if repeated checks are needed, use "
+    "roughly 100-second intervals unless the user specifies another cadence."
 )
 _TRACKED_TASKS_TERMINAL_GUIDANCE = (
     "Task finished: use task(get) with the existing execution_id now to recover the "
@@ -1035,6 +1035,10 @@ async def _mcp_wsl_exec(
     name="code_mode",
     title="Pydantic Monty Code Mode",
     description=(
+        "One code_mode call normally performs one host operation: one capability, or "
+        "one run_command with one shell task. Count code, PAYLOAD and shell contents "
+        "together; short code wrapping many commands is still batching. Inspect the result "
+        "before choosing another operation. "
         "Execute Pydantic Monty through the registered capabilities below. "
         "Work is tracked by an always-durable Execution; label and code are required. "
         "delivery='auto' waits up to the bounded inline delivery window and otherwise returns "
@@ -1047,12 +1051,16 @@ async def _mcp_wsl_exec(
         "task tool to retrieve results when needed. "
         "Prefer registered capabilities, inspect CAPABILITIES instead of inventing "
         "arguments. The generated declarations below are the first-call capability contract; "
-        "CAPABILITIES is runtime reflection/fallback. Use PAYLOAD for data. Batch independent "
-        "operations for one decision (asyncio.gather only for independent work). Inspect "
-        "results before a result-dependent next call. The final JSON-safe expression is result; "
+        "CAPABILITIES is runtime reflection/fallback. Prefer PAYLOAD for long or "
+        "multiline text and shell commands; keep Monty code short. Judge batching by "
+        "the actual operations, not PAYLOAD length. Use asyncio.gather only for "
+        "independent I/O with a clear benefit. "
+        "The final JSON-safe expression is result; "
         "print() is ignored. "
-        "On tool-use errors, separate confirmed facts from unknowns, identify suspect assumptions, "
-        "and explain the proposed correction before retrying. "
+        "If an upstream safety check blocks a call, run bootstrap again, compare "
+        "code, PAYLOAD and shell actions with the user instructions, report which "
+        "instructions were broken and the actual error, then fix the call and "
+        "continue the original task. "
         "invalid_request means no Execution was accepted (no execution_id); "
         "MontyTypingError means Monty rejected the code before execution; check diagnostics[].\n\n"
         "Available Monty capabilities (generated from the live callable contract):\n```python\n"
@@ -1074,8 +1082,9 @@ async def _mcp_code_mode(
         Field(
             min_length=1,
             description=(
-                "Monty/Python orchestration. Call registered capabilities directly; keep opaque "
-                "or multiline data in payload/PAYLOAD and inspect CAPABILITIES when uncertain."
+                "Monty/Python orchestration. Normally one registered capability per call. "
+                "Prefer PAYLOAD for long or multiline input, including shell commands. "
+                "Keep each call to one actual task; inspect CAPABILITIES when uncertain."
             ),
         ),
     ],
