@@ -225,7 +225,8 @@ CodeModeOutcome = CodeModeOutput
 
 
 class _CodeModePublicOutput(RootModel[CodeModeOutput]):
-    pass
+    # MCP requires outputSchema to declare type=object; every union member is an object.
+    model_config = ConfigDict(json_schema_extra={"type": "object"})
 
 
 class WslExecWorkOutput(BaseModel):
@@ -342,7 +343,8 @@ TaskOutcome = (
 
 
 class _TaskPublicOutcome(RootModel[TaskOutcome]):
-    pass
+    # MCP requires outputSchema to declare type=object; every union member is an object.
+    model_config = ConfigDict(json_schema_extra={"type": "object"})
 
 
 def _task_view(value: dict[str, Any]) -> TaskView:
