@@ -12,7 +12,7 @@ WORKER_ERROR_MESSAGES = {
 
 _NEXT_STEPS = {
     "invalid_request": "Correct the request fields; no new Execution was accepted.",
-    "MontyTypingError": "Correct the reported Monty diagnostics; the supplied code did not execute.",
+    "MontyTypingError": "Correct the reported Monty diagnostics; the supplied code did not execute. A `CoroutineType` diagnostic means a capability call is missing `await`; run_command returns a dict, so read result[\"stdout\"], not result.stdout.",
     "execution_error": "Inspect error.detail and the submitted code/capability result; check prior side effects before a corrected call.",
     "non_json_result": "Return a JSON-safe final expression (string, number, list, or dict); the program may already have had side effects.",
     "worker_protocol_error": "Inspect retained worker stderr/outcome for this execution_id; do not infer that user code did not run.",
